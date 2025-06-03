@@ -1,0 +1,170 @@
+java -cp /home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/jdbc-binding/conf:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/conf:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/lib/HdrHistogram-2.1.4.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/lib/jackson-mapper-asl-1.9.4.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/lib/mysql-connector-j-9.0.0.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/lib/jackson-core-asl-1.9.4.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/lib/htrace-core4-4.1.0-incubating.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/lib/core-0.17.0.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/jdbc-binding/lib/commons-lang-2.4.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/jdbc-binding/lib/geronimo-jms_1.1_spec-1.1.1.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/jdbc-binding/lib/jdbc-binding-0.17.0.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/jdbc-binding/lib/geronimo-jta_1.1_spec-1.1.1.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/jdbc-binding/lib/commons-collections-3.2.1.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/jdbc-binding/lib/serp-1.13.1.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/jdbc-binding/lib/openjpa-kernel-2.1.1.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/jdbc-binding/lib/commons-pool-1.5.4.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/jdbc-binding/lib/openjpa-lib-2.1.1.jar:/home/jin/csgc-artifacts/host/benchmarks/ycsb-0.17.0/jdbc-binding/lib/openjpa-jdbc-2.1.1.jar site.ycsb.Client -db site.ycsb.db.JdbcDBClient -P /home/jin/csgc-artifacts/host/benchmarks/myworkloads/ycsb/workloadf -P ../ycsb-0.17.0/jdbc-binding/conf/db.properties -p db.driver=com.mysql.jdbc.Driver -p db.url=jdbc:mysql://localhost:3306/ycsb_db -p db.user=ycsb_user -p db.passwd=1111 -p recordcount=1000000 -p fieldcount=16 -p fieldlength=64 -p minfieldlength=16 -p operationcount=1000000 -p readallfields=true -p writeallfields=false -threads 36 -s -t
+Command line: -db site.ycsb.db.JdbcDBClient -P /home/jin/csgc-artifacts/host/benchmarks/myworkloads/ycsb/workloadf -P ../ycsb-0.17.0/jdbc-binding/conf/db.properties -p db.driver=com.mysql.jdbc.Driver -p db.url=jdbc:mysql://localhost:3306/ycsb_db -p db.user=ycsb_user -p db.passwd=1111 -p recordcount=1000000 -p fieldcount=16 -p fieldlength=64 -p minfieldlength=16 -p operationcount=1000000 -p readallfields=true -p writeallfields=false -threads 36 -s -t
+YCSB Client 0.17.0
+
+Loading workload...
+Starting test.
+Loading class `com.mysql.jdbc.Driver'. This is deprecated. The new driver class is `com.mysql.cj.jdbc.Driver'. The driver is automatically registered via the SPI and manual loading of the driver class is generally unnecessary.
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+Adding shard node URL: jdbc:mysql://localhost:3306/ycsb_db
+2025-05-12 19:59:33:597 0 sec: 0 operations; est completion in 0 second 
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []Using shards: 1, batchSize:-1, fetchSize: -1
+
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []Using shards: 1, batchSize:-1, fetchSize: -1
+
+Using shards: 1, batchSize:-1, fetchSize: -1DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+
+Using shards: 1, batchSize:-1, fetchSize: -1DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+Using shards: 1, batchSize:-1, fetchSize: -1DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []Using shards: 1, batchSize:-1, fetchSize: -1
+
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+Using shards: 1, batchSize:-1, fetchSize: -1
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+2025-05-12 19:59:43:490 10 sec: 54123 operations; 5411.76 current ops/sec; est completion in 2 minutes [READ: Count=54149, Max=3205119, Min=105, Avg=3646.58, 90=3067, 99=5291, 99.9=324351, 99.99=3203071] [READ-MODIFY-WRITE: Count=43499, Max=3209215, Min=616, Avg=6673.12, 90=5295, 99=14583, 99.9=333567, 99.99=3207167] [UPDATE: Count=43574, Max=327935, Min=418, Avg=2760.36, 90=2701, 99=6935, 99.9=315647, 99.99=324863] 
+2025-05-12 19:59:53:488 20 sec: 132945 operations; 7882.99 current ops/sec; est completion in 2 minutes [READ: Count=78821, Max=1055743, Min=105, Avg=1941.98, 90=3177, 99=5235, 99.9=279039, 99.99=1053695] [READ-MODIFY-WRITE: Count=62957, Max=1059839, Min=636, Avg=5210.12, 90=5379, 99=9591, 99.9=377087, 99.99=1056767] [UPDATE: Count=62919, Max=1053695, Min=473, Avg=3269.67, 90=2715, 99=5739, 99.9=373503, 99.99=1042943] 
+2025-05-12 20:00:03:489 30 sec: 209542 operations; 7659.7 current ops/sec; est completion in 1 minute [READ: Count=76608, Max=404991, Min=102, Avg=1911.15, 90=3251, 99=5263, 99.9=297727, 99.99=384511] [READ-MODIFY-WRITE: Count=61326, Max=406527, Min=615, Avg=5265.12, 90=5431, 99=9767, 99.9=329471, 99.99=387327] [UPDATE: Count=61289, Max=383999, Min=447, Avg=3360.81, 90=2675, 99=5979, 99.9=321535, 99.99=370175] 
+2025-05-12 20:00:13:488 40 sec: 278410 operations; 6886.8 current ops/sec; est completion in 1 minute [READ: Count=68853, Max=405759, Min=103, Avg=2256.64, 90=3277, 99=11655, 99.9=298239, 99.99=402943] [READ-MODIFY-WRITE: Count=55246, Max=425983, Min=610, Avg=6085.91, 90=5615, 99=24191, 99.9=388863, 99.99=421631] [UPDATE: Count=55274, Max=421631, Min=455, Avg=3816.4, 90=2835, 99=20559, 99.9=357631, 99.99=419071] 
+2025-05-12 20:00:23:489 50 sec: 346035 operations; 6762.5 current ops/sec; est completion in 1 minute [READ: Count=67625, Max=383743, Min=97, Avg=2017.48, 90=3279, 99=20943, 99.9=255999, 99.99=380927] [READ-MODIFY-WRITE: Count=53849, Max=464895, Min=690, Avg=5979.63, 90=5859, 99=24959, 99.9=404479, 99.99=464639] [UPDATE: Count=53821, Max=464383, Min=500, Avg=3971.99, 90=2921, 99=21471, 99.9=374783, 99.99=462591] 
+2025-05-12 20:00:33:488 60 sec: 413307 operations; 6727.2 current ops/sec; est completion in 1 minute [READ: Count=67272, Max=379135, Min=94, Avg=2330.15, 90=3281, 99=21919, 99.9=309503, 99.99=360703] [READ-MODIFY-WRITE: Count=53819, Max=382463, Min=612, Avg=6272.86, 90=5971, 99=26639, 99.9=361983, 99.99=382207] [UPDATE: Count=53827, Max=366591, Min=424, Avg=3937.83, 90=3061, 99=21967, 99.9=350975, 99.99=366079] 
+2025-05-12 20:00:43:488 70 sec: 478170 operations; 6486.3 current ops/sec; est completion in 1 minute [READ: Count=64860, Max=403967, Min=105, Avg=2199.11, 90=3333, 99=20991, 99.9=276479, 99.99=382463] [READ-MODIFY-WRITE: Count=51950, Max=406015, Min=595, Avg=6344.41, 90=5979, 99=24943, 99.9=372735, 99.99=395263] [UPDATE: Count=51999, Max=396031, Min=460, Avg=4169.16, 90=3045, 99=21343, 99.9=336895, 99.99=392447] 
+2025-05-12 20:00:53:488 80 sec: 542855 operations; 6468.5 current ops/sec; est completion in 1 minute [READ: Count=64691, Max=382975, Min=103, Avg=2335.84, 90=3397, 99=27535, 99.9=277759, 99.99=364287] [READ-MODIFY-WRITE: Count=51808, Max=384511, Min=622, Avg=6344.44, 90=6043, 99=31615, 99.9=360191, 99.99=381439] [UPDATE: Count=51751, Max=382719, Min=460, Avg=3990.01, 90=2897, 99=28095, 99.9=356863, 99.99=380159] 
+2025-05-12 20:01:03:488 90 sec: 599948 operations; 5709.3 current ops/sec; est completion in 1 minute [READ: Count=57087, Max=403711, Min=105, Avg=2572.85, 90=3329, 99=28655, 99.9=318975, 99.99=401919] [READ-MODIFY-WRITE: Count=45800, Max=405247, Min=672, Avg=7305.89, 90=6039, 99=34815, 99.9=390911, 99.99=404479] [UPDATE: Count=45828, Max=404223, Min=497, Avg=4686.79, 90=3039, 99=29215, 99.9=387839, 99.99=401407] 
+2025-05-12 20:01:13:488 100 sec: 659746 operations; 5979.8 current ops/sec; est completion in 52 seconds [READ: Count=59809, Max=448255, Min=99, Avg=2258.84, 90=3337, 99=27807, 99.9=341759, 99.99=444671] [READ-MODIFY-WRITE: Count=47668, Max=464127, Min=621, Avg=6798.95, 90=5951, 99=31455, 99.9=440575, 99.99=462591] [UPDATE: Count=47640, Max=462079, Min=447, Avg=4580.81, 90=2999, 99=28447, 99.9=439039, 99.99=459007] 
+2025-05-12 20:01:23:488 110 sec: 713449 operations; 5370.3 current ops/sec; est completion in 45 seconds [READ: Count=53689, Max=514303, Min=103, Avg=2610.36, 90=3323, 99=28911, 99.9=466431, 99.99=513279] [READ-MODIFY-WRITE: Count=43040, Max=540159, Min=616, Avg=7919.07, 90=6067, 99=33119, 99.9=516351, 99.99=538623] [UPDATE: Count=43066, Max=539647, Min=460, Avg=5241.5, 90=3041, 99=29375, 99.9=506367, 99.99=537087] 
+2025-05-12 20:01:33:488 120 sec: 764345 operations; 5089.6 current ops/sec; est completion in 37 seconds [READ: Count=50900, Max=531967, Min=100, Avg=2952.39, 90=3319, 99=34271, 99.9=447743, 99.99=528383] [READ-MODIFY-WRITE: Count=40626, Max=564735, Min=633, Avg=7893.06, 90=6035, 99=38399, 99.9=528383, 99.99=563199] [UPDATE: Count=40600, Max=560639, Min=456, Avg=4916.62, 90=3015, 99=34399, 99.9=498687, 99.99=560639] 
+2025-05-12 20:01:43:488 130 sec: 813629 operations; 4928.4 current ops/sec; est completion in 30 seconds [READ: Count=49288, Max=582143, Min=99, Avg=2886.97, 90=3353, 99=34975, 99.9=491775, 99.99=548863] [READ-MODIFY-WRITE: Count=39528, Max=610303, Min=643, Avg=8608.98, 90=6063, 99=38815, 99.9=589311, 99.99=610303] [UPDATE: Count=39528, Max=590847, Min=485, Avg=5667.7, 90=3065, 99=35263, 99.9=579583, 99.99=590335] 
+2025-05-12 20:01:53:488 140 sec: 862875 operations; 4924.6 current ops/sec; est completion in 23 seconds [READ: Count=49243, Max=575487, Min=101, Avg=2744.1, 90=3365, 99=35135, 99.9=474111, 99.99=570879] [READ-MODIFY-WRITE: Count=39276, Max=577535, Min=645, Avg=8205.03, 90=6207, 99=39263, 99.9=509951, 99.99=572927] [UPDATE: Count=39276, Max=572415, Min=493, Avg=5454.83, 90=3143, 99=35423, 99.9=506111, 99.99=570367] 
+2025-05-12 20:02:03:488 150 sec: 912171 operations; 4929.6 current ops/sec; est completion in 15 seconds [READ: Count=49312, Max=592895, Min=107, Avg=2941.45, 90=3381, 99=36127, 99.9=484607, 99.99=591871] [READ-MODIFY-WRITE: Count=39491, Max=618495, Min=658, Avg=8313.09, 90=6079, 99=39871, 99.9=549887, 99.99=618495] [UPDATE: Count=39491, Max=615935, Min=473, Avg=5612.86, 90=2973, 99=36415, 99.9=539135, 99.99=615935] 
+2025-05-12 20:02:13:489 160 sec: 961480 operations; 4930.9 current ops/sec; est completion in 7 second [READ: Count=49297, Max=606719, Min=105, Avg=2886.3, 90=3305, 99=37439, 99.9=467711, 99.99=603647] [READ-MODIFY-WRITE: Count=39327, Max=615423, Min=598, Avg=8612.5, 90=6035, 99=42399, 99.9=587775, 99.99=614399] [UPDATE: Count=39327, Max=612863, Min=437, Avg=5473, 90=3041, 99=38943, 99.9=569343, 99.99=611839] 
+2025-05-12 20:02:22:083 168 sec: 1000000 operations; 4481.68 current ops/sec; [READ: Count=38496, Max=620543, Min=96, Avg=2908.35, 90=3213, 99=40767, 99.9=464639, 99.99=591871] [READ-MODIFY-WRITE: Count=30859, Max=623615, Min=435, Avg=8657.63, 90=5979, 99=45279, 99.9=550911, 99.99=593919] [CLEANUP: Count=36, Max=3347, Min=117, Avg=457.83, 90=607, 99=3347, 99.9=3347, 99.99=3347] [UPDATE: Count=30859, Max=551935, Min=333, Avg=5768.7, 90=2951, 99=40863, 99.9=544255, 99.99=551423] 
+[OVERALL], RunTime(ms), 168595
+[OVERALL], Throughput(ops/sec), 5931.374002787746
+[TOTAL_GCS_G1_Young_Generation], Count, 26
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 120
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 0.07117648803345294
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 26
+[TOTAL_GC_TIME], Time(ms), 120
+[TOTAL_GC_TIME_%], Time(%), 0.07117648803345294
+[READ], Operations, 1000000
+[READ], AverageLatency(us), 2488.355613
+[READ], MinLatency(us), 94
+[READ], MaxLatency(us), 3205119
+[READ], 95thPercentileLatency(us), 3955
+[READ], 99thPercentileLatency(us), 27887
+[READ], Return=OK, 1000000
+[READ-MODIFY-WRITE], Operations, 800069
+[READ-MODIFY-WRITE], AverageLatency(us), 6889.657412048211
+[READ-MODIFY-WRITE], MinLatency(us), 435
+[READ-MODIFY-WRITE], MaxLatency(us), 3209215
+[READ-MODIFY-WRITE], 95thPercentileLatency(us), 7935
+[READ-MODIFY-WRITE], 99thPercentileLatency(us), 39807
+[CLEANUP], Operations, 36
+[CLEANUP], AverageLatency(us), 457.8333333333333
+[CLEANUP], MinLatency(us), 117
+[CLEANUP], MaxLatency(us), 3347
+[CLEANUP], 95thPercentileLatency(us), 661
+[CLEANUP], 99thPercentileLatency(us), 3347
+[UPDATE], Operations, 800069
+[UPDATE], AverageLatency(us), 4378.994842944796
+[UPDATE], MinLatency(us), 333
+[UPDATE], MaxLatency(us), 1053695
+[UPDATE], 95thPercentileLatency(us), 4091
+[UPDATE], 99thPercentileLatency(us), 34879
+[UPDATE], Return=OK, 800069

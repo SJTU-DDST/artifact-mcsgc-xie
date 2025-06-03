@@ -1,0 +1,18 @@
+[  749.741421] f2fs_build_segment_manager: NR_CURSEG_TYPE: 8, CURSEG_HOT_DATA: 0
+[  749.741572] F2FS-fs (nvme0n1): Found nat_bits in checkpoint
+[  749.853019] F2FS-fs (nvme0n1): Mounted with checkpoint version = 33f55699
+[  872.902395] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  872.967411] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  872.967927] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  873.016132] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  873.154743] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  873.263659] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  873.264959] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  873.265768] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  873.266430] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  873.320095] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  873.642031] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  873.963356] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  874.284558] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  874.655165] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity
+[  875.717120] [JW DBG] f2fs_write_discard_journals: discard seg exceeded cp pack capacity

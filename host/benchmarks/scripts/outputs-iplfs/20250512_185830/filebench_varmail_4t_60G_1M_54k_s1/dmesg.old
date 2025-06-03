@@ -1,0 +1,4 @@
+[ 6971.417303] f2fs_build_segment_manager: NR_CURSEG_TYPE: 8, CURSEG_HOT_DATA: 0
+[ 6971.417476] F2FS-fs (nvme0n1): Found nat_bits in checkpoint
+[ 6971.527876] F2FS-fs (nvme0n1): Mounted with checkpoint version = 554e6c01
+[ 6986.561160] F2FS-fs (nvme0n1): inconsistent node block, nid:839, node_footer[nid:1775,ino:1775,ofs:0,cpver:1431202817,blkaddr:94534]

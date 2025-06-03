@@ -1,0 +1,3 @@
+[  521.433121] f2fs_build_segment_manager: NR_CURSEG_TYPE: 8, CURSEG_HOT_DATA: 0
+[  521.433265] F2FS-fs (nvme0n1): Found nat_bits in checkpoint
+[  521.545280] F2FS-fs (nvme0n1): Mounted with checkpoint version = 11dd6fab

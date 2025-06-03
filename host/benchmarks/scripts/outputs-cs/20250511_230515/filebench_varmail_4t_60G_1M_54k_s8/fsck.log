@@ -1,0 +1,28 @@
+Info: MKFS version
+  "Linux version 6.1.54-csgc (root@ddst-52) (gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38) #1 SMP PREEMPT_DYNAMIC Tue Apr  8 12:49:22 CST 2025"
+Info: FSCK version
+  from "Linux version 6.1.54-csgc (root@ddst-52) (gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38) #1 SMP PREEMPT_DYNAMIC Tue Apr  8 12:49:22 CST 2025"
+    to "Linux version 6.1.54-csgc (root@ddst-52) (gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38) #1 SMP PREEMPT_DYNAMIC Tue Apr  8 12:49:22 CST 2025"
+Info: superblock features = 0 : 
+Info: superblock encrypt level = 0, salt = 00000000000000000000000000000000
+Info: Segments per section = 8
+Info: Sections per zone = 1
+Info: total FS sectors = 15679642 (61248 MB)
+Info: CKPT version = 17372b68
+Info: Checked valid nat_bits in checkpoint
+Info: checkpoint state = 1c5 :  trimmed nat_bits crc compacted_summary unmount
+
+[FSCK] Max image size: 416 MB, Free space: 60832 MB
+[FSCK] Unreachable nat entries                        [Ok..] [0x0]
+[FSCK] SIT valid block bitmap checking                [Ok..]
+[FSCK] Hard link checking for regular file            [Ok..] [0x0]
+[FSCK] valid_block_count matching with CP             [Ok..] [0x2]
+[FSCK] valid_node_count matching with CP (de lookup)  [Ok..] [0x1]
+[FSCK] valid_node_count matching with CP (nat lookup) [Ok..] [0x1]
+[FSCK] valid_inode_count matched with CP              [Ok..] [0x1]
+[FSCK] free segment_count matched with CP             [Ok..] [0x76da]
+[FSCK] next block offset is free                      [Ok..]
+[FSCK] fixing SIT types
+[FSCK] other corrupted bugs                           [Ok..]
+
+Done: 0.449628 secs

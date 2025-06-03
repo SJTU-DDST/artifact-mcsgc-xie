@@ -1,0 +1,10 @@
+Filebench Version 1.5-alpha3
+0.000: Allocated 177MB of shared memory
+0.001: File-server Version 3.0 personality successfully loaded
+0.001: Populating and pre-allocating filesets
+0.022: bigfileset populated: 54000 files, avg. dir. width = 40, avg. dir. depth = 3.0, 0 leafdirs, 54086.991MB total size
+0.022: Removing bigfileset tree (if exists)
+0.024: Pre-allocating directories in bigfileset tree
+0.037: Pre-allocating files in bigfileset tree
+14.904: Failed to pre-allocate file /mnt/openssd_f2fs/bigfileset/00000001/00000008/00000003/00000003/00000028/00000032/00000014/00000011/00000028/00000015/00000008: Invalid argument around line 70
+14.904: Failed to create filesets around line 70

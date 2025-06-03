@@ -1,0 +1,261 @@
+#!/bin/bash
+# common.sh -- common utilities and variables shared by filebench, fio and ycsb scripts
+
+DEBUGFS_PATH=/sys/kernel/debug/f2fs
+NVME_PATH=$(realpath ../../src/nvme-cli/nvme)   # path of nvme-cli
+CGROUP_NAME=host_gc
+FS_MODE=lfs
+BGGC_ONOFF=off
+FSYNC_MODE=strict
+VANILLA_F2FS_TOOLS_PATH=$(realpath ../../src/f2fs-tools-csgc)
+IPLFS_F2FS_TOOLS_PATH=$(realpath ../../src/f2fs-tools-iplfs)
+VANILLA_KERNEL_PATH=$(realpath ../../src/linux-csgc)
+IPLFS_KERNEL_PATH=$(realpath ../../src/linux-iplfs)
+WORKLOAD_PATH_BASE=$(realpath ../myworkloads)
+FILE_WRITER_DIR=$(realpath ../file_writer)
+DUMMY_FILE_NAME=testbigfile
+MNTPOINT=/mnt/openssd_f2fs
+
+check_kernel() {
+    local gc_mode=$1
+    local kernel_suffix
+    if [ "$gc_mode" = "iplfs" ]; then
+        kernel_suffix="iplfs"
+    else
+        kernel_suffix="csgc"
+    fi
+
+    if ! uname -r | grep -q $kernel_suffix ; then
+        echo "error: kernel not match, expect suffix: $kernel_suffix"
+        exit 1
+    fi
+    echo "kernel version check passed"
+}
+
+# find our openssd device by size, its size must <= 64G
+find_cs_device() {
+    local matching_devices
+    matching_devices=$(lsblk -o NAME,SIZE -n | awk '$1 ~ /nvme[0-9]n[0-9]/ && $2 ~ /[0-9]+(\.[0-9]+)?G/ {print $1}')
+    local device_count
+    device_count=$(echo "$matching_devices" | wc -l)
+    if [ $device_count -ne 1 ]; then
+        echo "error: hope only one device is has size XY[.Z]G, but found count: $device_count"
+        exit 1
+    fi
+    local devname
+    devname=$(echo "$matching_devices" | tr -d ' ')
+    echo "/dev/${devname}"
+}
+
+install_f2fs_tools() {
+    local gc_mode=$1
+    local f2fs_tools_src_path
+    if [ "$gc_mode" = "iplfs" ]; then
+        f2fs_tools_src_path=$IPLFS_F2FS_TOOLS_PATH
+    else
+        f2fs_tools_src_path=$VANILLA_F2FS_TOOLS_PATH
+    fi
+
+    pushd "${f2fs_tools_src_path}" > /dev/null
+
+    ls -a ./lib | grep -qE '\.libs' || (echo "build f2fs-tools for $gc_mode" && \
+    ./autogen.sh && ./configure && sudo make clean && sudo make)
+    
+    echo "install f2fs-tools for $gc_mode"
+    sudo make install > /dev/null
+    sudo ldconfig
+    echo "f2fs-tools installed"
+    popd > /dev/null
+}
+
+# load f2fs module from given path
+load_f2fs_module() {
+    local gc_mode=$1
+    local f2fs_ko_path
+    if [ "$gc_mode" = "iplfs" ]; then
+        f2fs_ko_path=${IPLFS_KERNEL_PATH}/fs/f2fs/f2fs.ko
+    else
+        f2fs_ko_path=${VANILLA_KERNEL_PATH}/fs/f2fs/f2fs.ko
+    fi
+    if ! lsmod | grep -q f2fs; then
+        sudo modprobe f2fs
+        sudo rmmod f2fs
+        sudo insmod "${f2fs_ko_path}"
+    fi
+}
+
+# umount device if mounted, clear dmesg
+prepare_device() {
+    local devpath=$1
+    local output_dir=$2
+    sudo umount "${devpath}" >/dev/null
+    sudo dmesg -c > "${output_dir}/dmesg.old"
+}
+
+# reset ssd config: FTL will be reset with new config, all previous contents in storage will be lost
+reset_ssd_config() {
+    local devpath=$1
+    local ssd_enable_l2p=$2
+    local ssd_enable_nand_lat=$3
+    local ssd_enable_dsm=$4
+    echo "Reset SSD config: l2p=${ssd_enable_l2p}, nand_lat=${ssd_enable_nand_lat}, dsm=${ssd_enable_dsm}"
+    sudo "${NVME_PATH}" ssd-admin "${devpath}" -o 1 --l2p "${ssd_enable_l2p}" --nand "${ssd_enable_nand_lat}" --dsm "${ssd_enable_dsm}"
+}
+
+reset_ssd_stat() {
+    local devpath=$1
+    sudo "${NVME_PATH}" ssd-admin "${devpath}" -o 2
+}
+
+get_ssd_stat() {
+    local devpath=$1
+    local output_path=$2
+    sudo "${NVME_PATH}" read "${devpath}" -s 123 -c 1 -z 4096 -t -L | tee -a "${output_path}"
+}
+
+umount_and_get_stat() {
+    local devpath=$1
+    local gc_mode=$2
+    local output_path=$3
+    local wait_time=5
+    
+    echo "sleep ${wait_time} seconds before umount and dmesg"
+    sleep ${wait_time}
+    
+    if [ "$gc_mode" != "iplfs" ]; then
+        echo "csgc status:" `cat ${DEBUGFS_PATH}/csgc_status`
+
+        echo "umount device"
+        sudo umount ${devpath}
+
+        dmesg | grep -E '<ORIGC STAT>' | tee -a ${output_path}
+        dmesg | grep -E '<CSGC STAT>' | tee -a ${output_path}
+        
+        dmesg | grep -oE 'f2fs csgc called [0-9]+ times'
+        dmesg | grep -oE 'f2fs csgc skip count: [0-9]+' | tee -a ${output_path}
+        dmesg | grep -oE 'f2fs csgc data page cached count: [0-9]+, dirty count [0-9]+, hole count: [0-9]+' | tee -a ${output_path}
+        dmesg | grep -oE 'f2fs csgc get dpage time: [0-9]+ ns, grab dpage time: [0-9]+ ns' | tee -a ${output_path}
+        dmesg | grep -oE 'AVG get time: [0-9]+ ns, grab time: [0-9]+ ns' | tee -a ${output_path}
+        dmesg | grep -oE 'f2fs gc data page hit count: [0-9]+, total req count: [0-9]+' | tee -a ${output_path}
+    else
+        echo "umount device"
+        sudo umount ${devpath}
+    fi
+
+    get_ssd_stat "${devpath}" "${output_path}"
+
+    sudo dmesg > $(dirname ${output_path})/dmesg.log
+}
+
+# format storage and mount 
+mkfs_and_mount() {
+    local devpath=$1
+    local mntpoint=$2
+    local segs_per_sec=$3
+    local discard_option=$4   # "discard" or "nodiscard"
+    local ssd_enable_l2p=$5   # 1=>conventional, 2=>sFTL, 3=>interval-mapping 
+    if [ $ssd_enable_l2p -eq 3 ]; then
+        # iplfs must run with these settings, otherwise it panics
+        segs_per_sec=1
+        discard_option="discard"
+    fi
+    echo "Formatting filesystem with segs_per_sec=${segs_per_sec}"
+    sudo mkfs.f2fs -f -s "${segs_per_sec}" "${devpath}"
+    if [ $ssd_enable_l2p -eq 2 ]; then # csgc, need to send fs-ready signal and mkfs again
+        sudo "${NVME_PATH}" fs-ready -f 1 "${devpath}"
+        # need to mkfs again, since when sFTL is enabled, fs-ready will reset the device
+        sudo mkfs.f2fs -f -s "${segs_per_sec}" "${devpath}"
+    fi
+    sudo mount -t f2fs -o mode="${FS_MODE}",background_gc="${BGGC_ONOFF}",fsync_mode=${FSYNC_MODE},"${discard_option}" "${devpath}" "${mntpoint}"
+    if [ $? -ne 0 ]; then
+        echo "mount failed"
+        exit 1
+    fi
+}
+
+# configure csgc settings
+setup_gc_config() {
+    local gc_mode=$1
+    local nr_cs_cores=$2
+    local csgc_sync=$3 
+    local csgc_max_count
+    if [ "$gc_mode" = "cs" ]; then
+        csgc_max_count=4294967295
+    else
+        csgc_max_count=0
+    fi
+    if [ "$gc_mode" != "iplfs" ]; then
+        echo "${csgc_max_count}" | sudo tee "${DEBUGFS_PATH}/csgc_max_count" >/dev/null
+        echo "${nr_cs_cores}" | sudo tee "${DEBUGFS_PATH}/nr_cs_cores" >/dev/null
+        echo "${csgc_sync}" | sudo tee "${DEBUGFS_PATH}/csgc_sync" >/dev/null
+    fi
+}
+
+setup_cgroup_mem() {
+    local use_cgroup=$1
+    local host_mem_usage=$2
+    if [ "${use_cgroup}" -eq 1 ]; then
+        if [ -d "/sys/fs/cgroup/${CGROUP_NAME}" ]; then
+            echo "found existing cgroup ${CGROUP_NAME}"
+        else
+            echo "creating cgroup ${CGROUP_NAME}"
+            sudo cgcreate -g memory:"${CGROUP_NAME}"
+        fi
+        echo "Setting host memory usage max = ${host_mem_usage}"
+        echo "${host_mem_usage}" | sudo tee /sys/fs/cgroup/"${CGROUP_NAME}"/memory.max >/dev/null
+    else
+        echo "No cgroup usage"
+    fi
+}
+
+prefill_storage_fio() {
+    local devpath=$1
+    local mntpoint=$2
+    local prefill_ratio=$3
+    local gc_mode=$4
+    local storage_size=$(blockdev --getsize64 ${devpath})
+    local prefill_size=$(echo "${storage_size} * ${prefill_ratio} / 1" | bc)
+    local prefill_size_human="$(echo "${prefill_size} / 1024 / 1024 / 1024" | bc)G"
+    local prefill_threads=10
+    local prefill_io_size=1M
+    local prefill_mode=collaborate
+    local prefill_use_fallocate=no
+    if [ "$gc_mode" = "iplfs" ]; then
+        # seems that collaborate mode does not work well with iplfs, 
+        # the size of the file and the actually written bytes are not as expected
+        prefill_threads=1
+        prefill_mode=independent
+    fi
+
+    echo "Prefilling storage, ratio=${prefill_ratio}, size=${prefill_size_human}"
+    ${FILE_WRITER_DIR}/build.sh
+    ${FILE_WRITER_DIR}/file_writer ${mntpoint} testbigfile 1 ${prefill_size} ${prefill_threads} ${prefill_io_size} ${prefill_mode} ${prefill_use_fallocate}
+    echo "Prefilled storage, size: <${prefill_size}>"
+}
+
+prefill_storage_ycsb() {
+    local devpath=$1
+    local mntpoint=$2
+    local prefill_ratio=$3
+    local gc_mode=$4
+    local storage_size=$(blockdev --getsize64 ${devpath})
+    local prefill_size=$(echo "${storage_size} * ${prefill_ratio} / 1" | bc)
+    local prefill_size_human="$(echo "${prefill_size} / 1024 / 1024 / 1024" | bc)G"
+    local prefill_threads=16
+    local prefill_numfiles=$prefill_threads
+    local prefill_io_size=1M
+    local prefill_mode=independent
+    local prefill_use_fallocate=no
+
+    if [ "$gc_mode" != "iplfs" ]; then
+        # csgc and ori somehow fails in independent mode...
+        prefill_numfiles=1
+        prefill_mode=collaborate
+    fi
+    
+    echo "Prefilling storage, ratio=${prefill_ratio}, size=${prefill_size_human}"
+    ${FILE_WRITER_DIR}/build.sh
+    ${FILE_WRITER_DIR}/file_writer ${mntpoint} testbigfile ${prefill_numfiles} ${prefill_size} ${prefill_threads} ${prefill_io_size} ${prefill_mode} ${prefill_use_fallocate}
+    echo "Prefilled storage, size: <${prefill_size}>"
+}
+

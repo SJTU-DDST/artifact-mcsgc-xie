@@ -1,0 +1,18 @@
+Filebench Version 1.5-alpha3
+0.000: Allocated 177MB of shared memory
+0.001: Varmail Version 3.0 personality successfully loaded
+0.001: Populating and pre-allocating filesets
+0.022: bigfileset populated: 54000 files, avg. dir. width = 10000, avg. dir. depth = 1.2, 0 leafdirs, 53943.302MB total size
+0.022: Removing bigfileset tree (if exists)
+0.024: Pre-allocating directories in bigfileset tree
+0.024: Pre-allocating files in bigfileset tree
+74.405: Waiting for pre-allocation to finish (in case of a parallel pre-allocation)
+74.405: Population and pre-allocation of filesets completed
+74.406: Starting 1 filereader instances
+75.427: Running...
+75.633: Failed to open file 26, /mnt/openssd_f2fs/bigfileset/00000001/00000027, with status 18: No such file or directory
+75.633: flowop openfile3 failed to open file 00000027
+75.633: filereaderthread-4: flowop openfile3-1 failed
+76.427: Run took 1 seconds...
+76.427: NO VALID RESULTS! Filebench run terminated prematurely around line 81
+76.427: Shutting down processes

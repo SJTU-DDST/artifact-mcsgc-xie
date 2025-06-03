@@ -1,0 +1,8 @@
+[  253.847811] f2fs_build_segment_manager: NR_CURSEG_TYPE: 8, CURSEG_HOT_DATA: 0
+[  253.847926] F2FS-fs (nvme0n1): Found nat_bits in checkpoint
+[  253.958289] F2FS-fs (nvme0n1): Mounted with checkpoint version = 3f2ca2bd
+[  390.517260] [JW DBG] generic_fadvise: POSIX_FADV_DONTNEED!! 
+[  390.619804] [JW DBG] generic_fadvise: POSIX_FADV_DONTNEED!! 
+[  390.619922] [JW DBG] generic_fadvise: POSIX_FADV_DONTNEED!! 
+[  390.619951] [JW DBG] generic_fadvise: POSIX_FADV_DONTNEED!! 
+[  390.619956] [JW DBG] generic_fadvise: POSIX_FADV_DONTNEED!! 

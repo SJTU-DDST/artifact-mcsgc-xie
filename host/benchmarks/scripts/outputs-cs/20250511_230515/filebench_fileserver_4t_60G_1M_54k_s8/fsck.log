@@ -1,0 +1,38 @@
+Info: MKFS version
+  "Linux version 6.1.54-csgc (root@ddst-52) (gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38) #1 SMP PREEMPT_DYNAMIC Tue Apr  8 12:49:22 CST 2025"
+Info: FSCK version
+  from "Linux version 6.1.54-csgc (root@ddst-52) (gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38) #1 SMP PREEMPT_DYNAMIC Tue Apr  8 12:49:22 CST 2025"
+    to "Linux version 6.1.54-csgc (root@ddst-52) (gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0, GNU ld (GNU Binutils for Ubuntu) 2.38) #1 SMP PREEMPT_DYNAMIC Tue Apr  8 12:49:22 CST 2025"
+Info: superblock features = 0 : 
+Info: superblock encrypt level = 0, salt = 00000000000000000000000000000000
+Info: Segments per section = 8
+Info: Sections per zone = 1
+Info: total FS sectors = 15679642 (61248 MB)
+Info: CKPT version = 64429270
+Info: Checked valid nat_bits in checkpoint
+Info: checkpoint state = c5 :  nat_bits crc compacted_summary unmount
+[FSCK] Check node 4458 / 44589 (10.00%)
+[FSCK] Check node 8916 / 44589 (20.00%)
+[FSCK] Check node 13374 / 44589 (30.00%)
+[FSCK] Check node 17832 / 44589 (40.00%)
+[FSCK] Check node 22290 / 44589 (50.00%)
+[FSCK] Check node 26748 / 44589 (60.00%)
+[FSCK] Check node 31206 / 44589 (70.00%)
+[FSCK] Check node 35664 / 44589 (80.00%)
+[FSCK] Check node 40122 / 44589 (90.00%)
+[FSCK] Check node 44580 / 44589 (100.00%)
+
+[FSCK] Max image size: 48256 MB, Free space: 12992 MB
+[FSCK] Unreachable nat entries                        [Ok..] [0x0]
+[FSCK] SIT valid block bitmap checking                [Ok..]
+[FSCK] Hard link checking for regular file            [Ok..] [0x0]
+[FSCK] valid_block_count matching with CP             [Ok..] [0xbaf7f2]
+[FSCK] valid_node_count matching with CP (de lookup)  [Ok..] [0xae2d]
+[FSCK] valid_node_count matching with CP (nat lookup) [Ok..] [0xae2d]
+[FSCK] valid_inode_count matched with CP              [Ok..] [0xae2d]
+[FSCK] free segment_count matched with CP             [Ok..] [0x3c9]
+[FSCK] next block offset is free                      [Ok..]
+[FSCK] fixing SIT types
+[FSCK] other corrupted bugs                           [Ok..]
+
+Done: 7.444355 secs

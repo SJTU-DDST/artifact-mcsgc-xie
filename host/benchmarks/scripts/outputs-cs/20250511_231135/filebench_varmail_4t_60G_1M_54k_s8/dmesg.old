@@ -1,0 +1,23 @@
+[ 8510.222848] DEBUG_CSGC:checkpoint cleared prefree segments
+[ 8523.948842] F2FS-fs (nvme0n1): Found nat_bits in checkpoint
+[ 8524.056278] F2FS-fs (nvme0n1): Mounted with checkpoint version = 17372b65
+[ 8529.282892] DEBUG_CSGC:ckpt ready to clear prefree segments
+[ 8529.282905] DEBUG_CSGC:checkpoint cleared prefree segments
+[ 8529.282929] <ORIGC STAT> origc called 0 times, segs freed: 0, blocks migrated: 0, bytes read: 0, bytes write: 0, avg blocks migrated 0, avg time[gc: 0 ns, seg migration: 0 ns, block migration: 0 ns]
+[ 8529.282937] <CSGC STAT> f2fs csgc called 0 times, segs freed: 0, blocks migrated: 0, bytes read: 0, bytes write: 0, avg blocks migrated 0, avg time[gc: 0 ns, seg migration: 0 ns, block migration: 0 ns]
+[ 8529.282944] f2fs csgc data page cached count: 0, dirty count 0, hole count: 0
+[ 8529.282947] f2fs csgc get dpage time: 0 ns, grab dpage time: 0 ns
+[ 8529.282950] AVG get time: 0 ns, grab time: 0 ns
+[ 8529.282952] f2fs gc data page hit count: 0, total req count: 0, hit rate(x1000): 0
+[ 8529.282955] f2fs csgc add inode count: 0, put inode count: 0
+[ 8529.282958] f2fs csgc skip count: 0
+[ 8529.283498] DEBUG_CSGC:ckpt ready to clear prefree segments
+[ 8529.283504] DEBUG_CSGC:checkpoint cleared prefree segments
+[ 8529.283694] DEBUG_CSGC:ckpt ready to clear prefree segments
+[ 8529.283698] DEBUG_CSGC:checkpoint cleared prefree segments
+[ 8583.290653] systemd-journald[1007]: /var/log/journal/854abda5a0ed442281aa59fcced08e7a/user-2311.journal: Journal file corrupted, rotating.
+[ 8583.341730] systemd-journald[1007]: /var/log/journal/854abda5a0ed442281aa59fcced08e7a/user-2311.journal: Journal file corrupted, rotating.
+[ 8583.401003] systemd-journald[1007]: /var/log/journal/854abda5a0ed442281aa59fcced08e7a/system.journal: Journal file corrupted, rotating.
+[ 8583.467210] systemd-journald[1007]: /var/log/journal/854abda5a0ed442281aa59fcced08e7a/system.journal: Journal file corrupted, rotating.
+[ 8583.531257] systemd-journald[1007]: /var/log/journal/854abda5a0ed442281aa59fcced08e7a/system.journal: Journal file corrupted, rotating.
+[ 8583.607173] systemd-journald[1007]: /var/log/journal/854abda5a0ed442281aa59fcced08e7a/system.journal: Journal file corrupted, rotating.
