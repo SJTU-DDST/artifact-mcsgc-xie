@@ -1,0 +1,5 @@
+**/output*/
+*.log
+*.png
+*.pdf
+/test_data_imporatant/
