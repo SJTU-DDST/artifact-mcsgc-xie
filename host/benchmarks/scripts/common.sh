@@ -9,12 +9,12 @@ BGGC_ONOFF=off
 FSYNC_MODE=strict
 VANILLA_F2FS_TOOLS_PATH=$(realpath ../../src/f2fs-tools-csgc)
 IPLFS_F2FS_TOOLS_PATH=$(realpath ../../src/f2fs-tools-iplfs)
-VANILLA_KERNEL_PATH=$(realpath ../../src/linux-csgc)
+VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc/linux-cs
 IPLFS_KERNEL_PATH=$(realpath ../../src/linux-iplfs)
 WORKLOAD_PATH_BASE=$(realpath ../myworkloads)
 FILE_WRITER_DIR=$(realpath ../file_writer)
 DUMMY_FILE_NAME=testbigfile
-MNTPOINT=/mnt/openssd_f2fs
+MNTPOINT=/home/xin/ssd/mnt
 
 check_kernel() {
     local gc_mode=$1

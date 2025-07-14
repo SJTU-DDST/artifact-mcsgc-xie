@@ -4,7 +4,19 @@
 # gc_mode="iplfs"    # iplfs
 # gc_mode="cs"       # csgc
 light_evaluation=0
-gc_mode=$1
+#gc_mode=$1
+mcsgc_mode=$1
+# determine gc_mode based on mcsgc_mode
+if [[ "$mcsgc_mode" == "mcsgc" || "$mcsgc_mode" == "csgc" ]]; then
+  gc_mode="cs"
+elif [[ "$mcsgc_mode" == "ori" || "$mcsgc_mode" == "iplfs" ]]; then
+  gc_mode="$mcsgc_mode"
+else
+  echo "Error: unsupported mode '$mcsgc_mode'."
+  exit 1
+fi
+echo "gc_mode=$gc_mode"
+
 source $2
 
 pushd $(dirname $0) > /dev/null
@@ -23,7 +35,7 @@ current_time=$(date +"%Y%m%d_%H%M%S")
 echo "Running evaluation for $gc_mode..."
 
 # for gc_mode in "${gc_modes[@]}"; do
-    output_path_base="./outputs-${gc_mode}/${current_time}"
+    output_path_base="./outputs-${mcsgc_mode}/${current_time}"
     mkdir -p "${output_path_base}"
     case "${gc_mode}" in 
         "ori")
