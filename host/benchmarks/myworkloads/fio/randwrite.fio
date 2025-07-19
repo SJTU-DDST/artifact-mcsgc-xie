@@ -1,6 +1,6 @@
 [global]
 ioengine=libaio
-bs=64K
+bs=4K
 group_reporting 
 ;directory=/mnt/openssd_f2fs
 openfiles=1

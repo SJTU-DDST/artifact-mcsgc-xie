@@ -26,7 +26,7 @@ mkdir -p ${output_path}
 echo 0 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
 echo 20 > /proc/sys/kernel/panic # dont panic! wait 20s before reboot if kernel panics
 
-# load_f2fs_module $gc_mode
+load_f2fs_module $gc_mode
 install_f2fs_tools $gc_mode
 prepare_device "${devpath}" "${output_path}"
 reset_ssd_config "${devpath}" "${ssd_enable_l2p}" "${ssd_enable_nand_lat}" "${ssd_enable_dsm}"

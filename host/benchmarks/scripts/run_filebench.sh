@@ -8,6 +8,9 @@ if [ $light_evaluation -eq 1 ]; then
 else
     runtime=300
 fi
+echo "runtime=${runtime}"
+echo "=================================================="
+sleep 5
 check_kernel $gc_mode
 devpath=$(find_cs_device)
 
@@ -23,7 +26,7 @@ mkdir -p ${output_path}
 echo 0 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
 echo 20 > /proc/sys/kernel/panic # dont panic! wait 20s before reboot if kernel panics
 
-# load_f2fs_module $gc_mode
+load_f2fs_module $gc_mode
 install_f2fs_tools $gc_mode
 prepare_device "${devpath}" "${output_path}"
 reset_ssd_config "${devpath}" "${ssd_enable_l2p}" "${ssd_enable_nand_lat}" "${ssd_enable_dsm}"
@@ -37,6 +40,11 @@ tmp_workload_path="${WORKLOAD_PATH_BASE}/${workload_type}/${bmname}_tmp.f"
 cp ${workload_path} ${tmp_workload_path}
 sed -i "s|__DATA_PATH_PLACEHOLDER__|${mntpoint}|g" ${tmp_workload_path}
 sed -i "s|__RUNTIME_PLACEHOLDER__|${runtime}|g" ${tmp_workload_path}
+
+echo "tmp_path = ${tmp_workload_path}"
+echo "======================================================="
+echo "runtime = ${runtime}"
+sleep 5
 
 reset_ssd_stat "${devpath}"
 if [ ${use_cgroup} -eq 1 ]; then

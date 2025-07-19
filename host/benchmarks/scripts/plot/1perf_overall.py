@@ -7,7 +7,7 @@ from utils import *
 
 # should run in "host/benchmarks/scripts"
 
-fig_path = "figs/1perf_overall.pdf"
+fig_path = "figs/1perf_overall.png"
 fig_size = (10, 2.3)
 
 origc_label = 'F2FS'
@@ -176,4 +176,4 @@ ax1.set_yticks(range(0, int(y_max + 1), 1))
 ax1.legend()
 
 plt.tight_layout()
-plt.savefig(fig_path, bbox_inches="tight" , format="pdf")
+plt.savefig(fig_path, bbox_inches="tight" , format="png")

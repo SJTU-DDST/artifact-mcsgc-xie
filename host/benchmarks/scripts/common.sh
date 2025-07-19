@@ -70,17 +70,26 @@ install_f2fs_tools() {
 
 # load f2fs module from given path
 load_f2fs_module() {
+    echo "NOTE: begin load f2fs module"
+    echo "=============================================================================="
+    sleep 2
     local gc_mode=$1
     local f2fs_ko_path
     if [ "$gc_mode" = "iplfs" ]; then
         f2fs_ko_path=${IPLFS_KERNEL_PATH}/fs/f2fs/f2fs.ko
     else
         f2fs_ko_path=${VANILLA_KERNEL_PATH}/fs/f2fs/f2fs.ko
+        echo "NOTE: set f2fs_ko_path"
+        echo "=============================================================================="
     fi
     if ! lsmod | grep -q f2fs; then
         sudo modprobe f2fs
         sudo rmmod f2fs
+        echo "prepare insmod"
         sudo insmod "${f2fs_ko_path}"
+        echo "NOTE: finish insmod, the f2fs is ${f2fs_ko_path}"
+        echo "=============================================================================="
+        sleep 5
     fi
 }
 

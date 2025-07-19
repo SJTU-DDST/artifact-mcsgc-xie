@@ -27,8 +27,8 @@
 
 # set $dir=/mnt/openssd_f2fs
 # set $runtime=300
-set $dir=__DATA_PATH_PLACEHOLDER__
-set $runtime=__RUNTIME_PLACEHOLDER__
+set $dir=/home/xin/ssd/mnt
+set $runtime=300
 set $nfiles=54000
 set $meandirwidth=40
 set $filesize=cvar(type=cvar-uniform,parameters=lower:524288;upper:1572864) # min:512KiB max:1536KiB
@@ -67,4 +67,4 @@ define process name=filereader,instances=1
 
 echo  "File-server Version 3.0 personality successfully loaded"
 
-psrun -5 300
+run $runtime
