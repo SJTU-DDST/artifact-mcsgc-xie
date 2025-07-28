@@ -8,8 +8,12 @@ if [ $light_evaluation -eq 1 ]; then
     runtime=180
 else
     io_size_per_thread="20G"
-    runtime=300
+    runtime=200
+    echo "NOTICE: runtime=200"
+    sleep 5
+    echo "============================="
 fi
+
 nthreads="4"
 check_kernel $gc_mode
 devpath=$(find_cs_device)
@@ -38,25 +42,46 @@ setup_cgroup_mem "${use_cgroup}" "${host_mem_usage}"
 echo "======================================================="
 # exit 0
 
-prefill_outputs="$(prefill_storage_fio "${devpath}" "${mntpoint}" "${prefill_ratio}" "${gc_mode}")" && echo "${prefill_outputs}"
-prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
-
-fio_flags="
-    --directory=${mntpoint}
-    --alloc-size=16m 
-    --filesize=${prefill_size} 
-    --size=${io_size_per_thread}
-    --numjobs=${nthreads} 
-    --random_distribution=${random_distribution} 
-    --time_based=${fio_timebased} 
-"
 if [ $fio_timebased -eq 1 ]; then
     runtime_flag="--runtime=${runtime}"
 else
     runtime_flag=""
 fi
-    
+
+fio_flags="
+--time_based=${fio_timebased}
+"
+
+# only do prefill and build fio_flags when not the special bmname
+if [ "${bmname}" != "rw16t4file10GB" ] && [ "${bmname}" != "rw8t2file10G_prefill90" && [ "${bmname}" != "rw8t2file5G_prefill90"]; then
+    # prefill step
+    prefill_outputs="$(prefill_storage_fio "${devpath}" "${mntpoint}" "${prefill_ratio}" "${gc_mode}")" && echo "${prefill_outputs}"
+    prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
+
+    # build fio_flags as before
+    fio_flags="
+        --directory=${mntpoint}
+        --alloc-size=16m
+        --filesize=${prefill_size}
+        --size=${io_size_per_thread}
+        --numjobs=${nthreads}
+        --random_distribution=${random_distribution}
+        --time_based=${fio_timebased}
+    "
+fi
+
+echo "================ FIO WORKLOAD SUMMARY ================"
+echo "bmname:               ${bmname}"
+echo "workload_path:        ${workload_path}"
+echo "runtime_flag:         ${runtime_flag}"
+echo "fio_flags:            ${fio_flags}"
+[ -n "${prefill_size}" ] && echo "prefill_size:         ${prefill_size}"
+echo "======================================================="
+
+
 reset_ssd_stat "${devpath}"
+
+echo "=============begin fio============="
 
 if [ ${use_cgroup} -eq 1 ]; then
     sudo cgexec -g memory:${CGROUP_NAME} fio ${fio_flags} ${runtime_flag} ${workload_path} 2>&1 | tee -a ${output_path}/${workload_type}.log

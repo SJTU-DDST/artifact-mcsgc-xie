@@ -1,0 +1,57 @@
+[global]
+ioengine=libaio
+direct=1
+thread=1
+group_reporting=1
+randrepeat=0
+
+; -------- Prefill stage (run both prefill jobs in parallel) --------
+[prefill_g1]
+rw=write
+bs=1M
+iodepth=128
+numjobs=4
+filename=/home/xin/ssd/mnt/g1.dat
+filesize=25G
+size=25G
+io_size=23040M        ; 90% of 25G = 22.5G = 23040M
+fallocate=none
+
+[prefill_g2]
+rw=write
+bs=1M
+iodepth=128
+numjobs=4
+filename=/home/xin/ssd/mnt/g2.dat
+filesize=25G
+size=25G
+io_size=23040M        ; 90% of 25G
+fallocate=none
+stonewall              ; barrier before test phase
+
+; -------- Test phase: 8 threads, 4 per file, 4K randwrite --------
+; Group 1: 4 threads share g1.dat, each writes 10G in the first 10G region
+[g1]
+new_group
+rw=randwrite
+bs=4k
+iodepth=32
+numjobs=4
+filename=/home/xin/ssd/mnt/g1.dat
+filesize=25G
+offset=0
+size=10G              ; constrain region to [0, 10G)
+io_size=10G           ; and make each thread write 10G
+
+; Group 2: 4 threads share g2.dat, each writes 10G in the first 10G region
+[g2]
+new_group
+rw=randwrite
+bs=4k
+iodepth=32
+numjobs=4
+filename=/home/xin/ssd/mnt/g2.dat
+filesize=25G
+offset=0
+size=10G
+io_size=10G

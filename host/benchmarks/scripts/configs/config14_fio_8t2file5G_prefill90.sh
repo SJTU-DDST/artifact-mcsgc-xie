@@ -1,0 +1,7 @@
+#!/bin/bash
+
+workloads=("fio:rw8t2file5G_prefill90")
+random_distributions=("random")
+prefill_ratios=("0.86")
+segs_per_sec_list=("8")
+fio_timebased=1
