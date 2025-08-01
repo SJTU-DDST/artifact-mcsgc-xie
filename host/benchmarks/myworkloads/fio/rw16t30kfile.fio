@@ -1,0 +1,22 @@
+[global]
+ioengine=libaio
+
+thread=1
+group_reporting=1
+
+
+[random_write_16t_300s]
+new_group
+rw=randwrite
+direct=0
+bs=4k
+iodepth=16
+numjobs=16
+;time_based=1
+;runtime=60
+size=100% 
+nrfiles=30000
+openfiles=64           ; keep this reasonable vs "ulimit -n"
+filename_format=/home/xin/ssd/mnt/smallfiles.$filenum
+filesize=1M
+file_service_type=random:16

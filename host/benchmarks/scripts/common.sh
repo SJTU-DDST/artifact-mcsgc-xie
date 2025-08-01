@@ -217,6 +217,24 @@ setup_cgroup_mem() {
     fi
 }
 
+prefill_smallfiles_filewriter() {
+    local mntpoint=$1
+    local threads=${2:-16}          # you can tune this (e.g., 16~32)
+    local io_size=${3:-1M}
+    local use_fallocate=${4:-no}    # set to "yes" if you also want preallocation
+    local num_files=30000
+    local total_bytes=$(( num_files * 1024 * 1024 ))
+    local total_size_human="${num_files}M"
+
+    echo "Prefilling small files: count=${num_files}, each=1M, total=${total_size_human}"
+    ${FILE_WRITER_DIR}/build.sh
+    ${FILE_WRITER_DIR}/file_writer "${mntpoint}" "smallfiles." "${num_files}" "${total_size_human}" "${threads}" "${io_size}" independent "${use_fallocate}" || return 1
+    echo "Prefilled smallfiles, total_bytes: <${total_bytes}>"
+    for i in $(seq 1 "$num_files"); do
+        mv "${mntpoint}/smallfiles.${i}" "${mntpoint}/smallfiles.$((i-1))"
+    done
+}
+
 prefill_storage_fio() {
     local devpath=$1
     local mntpoint=$2
