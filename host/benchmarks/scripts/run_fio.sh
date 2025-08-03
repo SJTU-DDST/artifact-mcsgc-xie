@@ -71,29 +71,40 @@ if [ "${bmname}" == "randwrite" ]; then
     "
 fi
 
-if [ "${bmname}" == "rw16t55kfile" ]; then
-    echo "into if rw16t55kfile"
-    prefill_outputs="$(prefill_smallfiles_filewriter "${mntpoint}")" && echo "${prefill_outputs}"
-    prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
+echo "bmname=${bmname}"
+
+if [[ "${bmname}" == rw*file ]]; then
+    echo "Pattern matched: rw*file"
+
+    # Extract the number before 'file' (supports 123 or 123k/123K)
+    if [[ "${bmname}" =~ ^rw.*([0-9]+[kK]?)file$ ]]; then
+        spec="${BASH_REMATCH[1]}"
+        if [[ "${spec}" =~ ^([0-9]+)[kK]$ ]]; then
+            num_files=$(( ${BASH_REMATCH[1]} * 1000 ))
+        elif [[ "${spec}" =~ ^[0-9]+$ ]]; then
+            num_files=${spec}
+        else
+            echo "Invalid file count spec extracted from bmname: ${spec}" >&2
+            exit 1
+        fi
+
+        if (( num_files <= 0 )); then
+            echo "Invalid num_files (<=0) after parsing: ${num_files}" >&2
+            exit 1
+        fi
+
+        echo "Extracted num_files=${num_files}"
+        prefill_outputs="$(prefill_smallfiles_filewriter "${mntpoint}" "${num_files}")" || exit 1
+        echo "${prefill_outputs}"
+        prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
+    else
+        echo "Failed to extract number before 'file' from bmname: ${bmname}" >&2
+        exit 1
+    fi
+else
+    echo "bmname does not match 'rw*file': ${bmname}"
 fi
 
-if [ "${bmname}" == "rw16t50kfile" ]; then
-    echo "into if rw16t50kfile"
-    prefill_outputs="$(prefill_smallfiles_filewriter "${mntpoint}")" && echo "${prefill_outputs}"
-    prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
-fi
-
-if [ "${bmname}" == "rw16t30kfile" ]; then
-    echo "into if rw16t30kfile"
-    prefill_outputs="$(prefill_smallfiles_filewriter "${mntpoint}")" && echo "${prefill_outputs}"
-    prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
-fi
-
-if [ "${bmname}" == "rw16t40kfile" ]; then
-    echo "into if rw16t40kfile"
-    prefill_outputs="$(prefill_smallfiles_filewriter "${mntpoint}")" && echo "${prefill_outputs}"
-    prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
-fi
 
 
 echo "================ FIO WORKLOAD SUMMARY ================"
