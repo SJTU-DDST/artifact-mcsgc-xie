@@ -97,17 +97,26 @@ echo "fio_flags:            ${fio_flags}"
 [ -n "${prefill_size}" ] && echo "prefill_size:         ${prefill_size}"
 echo "======================================================="
 
-sudo cgexec -g memory:${CGROUP_NAME} fio \
-    --parse-only \
-    --showcmd \
-    --debug=filesetup,parse \
-    ${fio_flags} \
-    ${runtime_flag} \
-    ${workload_path} 2>&1 | tee -a ${output_path}/${workload_type}.log
-echo "======================================================="
-sleep 5
-
 reset_ssd_stat "${devpath}"
+
+sudo cgexec -g memory:${CGROUP_NAME} fio \
+    --debug=parse,file \
+    --status-interval=5 \
+    --time_based=1 --runtime=60 \
+    ${workload_path} 2>&1 | tee -a ${output_path}/${workload_type}.log
+
+echo "==========end fio =========================="
+umount_and_get_stat "${devpath}" "${gc_mode}" "${output_path}/stat.log"
+
+if [ ${fsck_after_run} -ne 0 ]; then
+    echo "run fsck"
+    sudo fsck.f2fs ${devpath} > ${output_path}/fsck.log
+    echo "finished fsck"
+fi
+
+chown -R $(whoami):$(whoami) ${output_path}
+echo "prepare exit"
+exit 0
 
 echo "=============begin fio============="
 

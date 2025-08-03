@@ -4,3 +4,6 @@
 *.pdf
 /test_data_imporatant/
 host/benchmarks/scripts/plot/__pycache__/
+*.o
+*.lo
+**/.libs/
