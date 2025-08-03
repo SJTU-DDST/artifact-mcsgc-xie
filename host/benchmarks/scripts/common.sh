@@ -9,7 +9,8 @@ BGGC_ONOFF=off
 FSYNC_MODE=strict
 VANILLA_F2FS_TOOLS_PATH=$(realpath ../../src/f2fs-tools-csgc)
 IPLFS_F2FS_TOOLS_PATH=$(realpath ../../src/f2fs-tools-iplfs)
-VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc/linux-cs
+#VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc/linux-cs
+VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc-real/linux-cs
 IPLFS_KERNEL_PATH=$(realpath ../../src/linux-iplfs)
 WORKLOAD_PATH_BASE=$(realpath ../myworkloads)
 FILE_WRITER_DIR=$(realpath ../file_writer)
@@ -85,8 +86,13 @@ load_f2fs_module() {
     if ! lsmod | grep -q f2fs; then
         sudo modprobe f2fs
         sudo rmmod f2fs
+        echo "please make sure the path is correct: ${f2fs_ko_path}"
+        sleep 5
         echo "prepare insmod"
-        sudo insmod "${f2fs_ko_path}"
+        if ! sudo insmod "${f2fs_ko_path}"; then
+            echo " fail insmod ${f2fs_ko_path}"
+            exit 1
+        fi
         echo "NOTE: finish insmod, the f2fs is ${f2fs_ko_path}"
         echo "=============================================================================="
         sleep 5
@@ -222,7 +228,7 @@ prefill_smallfiles_filewriter() {
     local threads=${2:-16}          # you can tune this (e.g., 16~32)
     local io_size=${3:-1M}
     local use_fallocate=${4:-no}    # set to "yes" if you also want preallocation
-    local num_files=30000
+    local num_files=40000
     local total_bytes=$(( num_files * 1024 * 1024 ))
     local total_size_human="${num_files}M"
 

@@ -7,7 +7,7 @@ group_reporting=1
 filename_format=/home/xin/ssd/mnt/smallfiles.$filenum
 filesize=1M
 
-nrfiles=50000 ; TONOTICE
+nrfiles=40000
 
 [random_write_16t_300s]
 new_group
@@ -18,6 +18,6 @@ iodepth=16
 numjobs=16
 ;time_based=1
 ;runtime=60
-size=50000M ; TONOTICE
+size=40000M
 openfiles=64           ; keep this reasonable vs "ulimit -n"
 file_service_type=random:16

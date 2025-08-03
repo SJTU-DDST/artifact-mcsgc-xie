@@ -8,8 +8,8 @@ if [ $light_evaluation -eq 1 ]; then
     runtime=180
 else
     io_size_per_thread="20G"
-    runtime=60
-    echo "NOTICE: runtime=60"
+    runtime=10
+    echo "NOTICE: runtime=10"
     sleep 5
     echo "============================="
 fi
@@ -50,6 +50,7 @@ fi
 
 fio_flags="
 --time_based=${fio_timebased}
+--status-interval=1
 "
 
 # only do prefill and build fio_flags when not the special bmname
@@ -88,6 +89,12 @@ if [ "${bmname}" == "rw16t30kfile" ]; then
     prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
 fi
 
+if [ "${bmname}" == "rw16t40kfile" ]; then
+    echo "into if rw16t40kfile"
+    prefill_outputs="$(prefill_smallfiles_filewriter "${mntpoint}")" && echo "${prefill_outputs}"
+    prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
+fi
+
 
 echo "================ FIO WORKLOAD SUMMARY ================"
 echo "bmname:               ${bmname}"
@@ -98,25 +105,6 @@ echo "fio_flags:            ${fio_flags}"
 echo "======================================================="
 
 reset_ssd_stat "${devpath}"
-
-sudo cgexec -g memory:${CGROUP_NAME} fio \
-    --debug=parse,file \
-    --status-interval=5 \
-    --time_based=1 --runtime=60 \
-    ${workload_path} 2>&1 | tee -a ${output_path}/${workload_type}.log
-
-echo "==========end fio =========================="
-umount_and_get_stat "${devpath}" "${gc_mode}" "${output_path}/stat.log"
-
-if [ ${fsck_after_run} -ne 0 ]; then
-    echo "run fsck"
-    sudo fsck.f2fs ${devpath} > ${output_path}/fsck.log
-    echo "finished fsck"
-fi
-
-chown -R $(whoami):$(whoami) ${output_path}
-echo "prepare exit"
-exit 0
 
 echo "=============begin fio============="
 

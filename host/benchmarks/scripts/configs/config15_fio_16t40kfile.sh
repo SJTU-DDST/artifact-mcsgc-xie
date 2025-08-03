@@ -1,6 +1,6 @@
 #!/bin/bash
 
-workloads=("fio:rw16t30kfile")
+workloads=("fio:rw16t40kfile")
 random_distributions=("random")
 prefill_ratios=("0.86")
 segs_per_sec_list=("8")
