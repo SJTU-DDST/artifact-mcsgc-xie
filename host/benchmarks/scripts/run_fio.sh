@@ -8,8 +8,8 @@ if [ $light_evaluation -eq 1 ]; then
     runtime=180
 else
     io_size_per_thread="20G"
-    runtime=10
-    echo "NOTICE: runtime=10"
+    runtime=180
+    echo "NOTICE: runtime=${runtime}"
     sleep 5
     echo "============================="
 fi
@@ -52,6 +52,11 @@ fio_flags="
 --time_based=${fio_timebased}
 --status-interval=1
 "
+str_debug="mCSGC prepare to run prefill_storage_fio in bash"
+ts_local=$(date '+%b %e %H:%M:%S')
+host_local=$(hostname)
+ts_upt=$(awk '{ printf "%.6f", $1 }' /proc/uptime)
+sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern.log
 
 # only do prefill and build fio_flags when not the special bmname
 if [ "${bmname}" == "randwrite" ]; then
@@ -76,31 +81,42 @@ echo "bmname=${bmname}"
 if [[ "${bmname}" == rw*file ]]; then
     echo "Pattern matched: rw*file"
 
-    # Extract the number before 'file' (supports 123 or 123k/123K)
-    if [[ "${bmname}" =~ ^rw.*([0-9]+[kK]?)file$ ]]; then
-        spec="${BASH_REMATCH[1]}"
-        if [[ "${spec}" =~ ^([0-9]+)[kK]$ ]]; then
-            num_files=$(( ${BASH_REMATCH[1]} * 1000 ))
-        elif [[ "${spec}" =~ ^[0-9]+$ ]]; then
-            num_files=${spec}
-        else
-            echo "Invalid file count spec extracted from bmname: ${spec}" >&2
-            exit 1
-        fi
+    # 1. Remove trailing 'file'
+    spec="${bmname%file}"            # e.g. "rw16t50k"
 
-        if (( num_files <= 0 )); then
-            echo "Invalid num_files (<=0) after parsing: ${num_files}" >&2
-            exit 1
-        fi
+    # 2. Extract numeric spec at the end: digits or digits+'k'
+    #    Pattern [!0-9kK] matches any character not 0-9, k, or K.
+    #    '##*[!0-9kK]' strips from the left up to and including the last such character.
+    spec="${spec##*[!0-9kK]}"       # e.g. "50k" or "200"
 
-        echo "Extracted num_files=${num_files}"
-        prefill_outputs="$(prefill_smallfiles_filewriter "${mntpoint}" "${num_files}")" || exit 1
-        echo "${prefill_outputs}"
-        prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
-    else
-        echo "Failed to extract number before 'file' from bmname: ${bmname}" >&2
+    # 3. Validate format: must be pure digits or digits+'k'
+    if [[ ! "$spec" =~ ^[0-9]+([kK])?$ ]]; then
+        echo "Invalid numeric spec extracted: '${spec}'" >&2
         exit 1
     fi
+
+    # 4. Compute the final num_files
+    if [[ "${spec}" =~ [kK]$ ]]; then
+        # Remove trailing k/K then multiply by 1000
+        num_files=$(( ${spec%[kKk]} * 1000 ))
+    else
+        num_files=$(( spec ))        # Convert directly to integer
+    fi
+
+    # 5. Re-validate the value
+    if (( num_files <= 0 )); then
+        echo "Parsed num_files <= 0: ${num_files}" >&2
+        exit 1
+    fi
+
+    echo "Extracted num_files=${num_files}"
+
+    prefill_size=$(
+  prefill_smallfiles_filewriter "${mntpoint}" "${num_files}" \
+    | tee >(grep -vF 'writing file: /home/xin/ssd/mnt/' >&2) \
+    | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p'
+    ) || exit 1
+
 else
     echo "bmname does not match 'rw*file': ${bmname}"
 fi
@@ -118,6 +134,12 @@ echo "======================================================="
 reset_ssd_stat "${devpath}"
 
 echo "=============begin fio============="
+
+str_debug="mCSGC prepare to run filebench/fio in bash"
+ts_local=$(date '+%b %e %H:%M:%S')
+host_local=$(hostname)
+ts_upt=$(awk '{ printf "%.6f", $1 }' /proc/uptime)
+sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern.log
 
 if [ ${use_cgroup} -eq 1 ]; then
     sudo cgexec -g memory:${CGROUP_NAME} fio ${fio_flags} ${runtime_flag} ${workload_path} 2>&1 | tee -a ${output_path}/${workload_type}.log

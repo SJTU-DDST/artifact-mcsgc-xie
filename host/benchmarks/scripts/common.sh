@@ -230,20 +230,25 @@ prefill_smallfiles_filewriter() {
     local io_size=${4:-1M}
     local use_fallocate=${5:-no}    # set to "yes" if you also want preallocation
 
-    local total_bytes=$(( num_files * 1024 * 1024 ))  # 1 MiB per file
-    local total_size_human="${num_files}M"
+    # per-file size in MB
+    local size_per_file=${6:-1}
+
+    # compute totals
+    local total_bytes=$(( num_files * size_per_file * 1024 * 1024 ))
+    local total_size_human="$(( num_files * size_per_file ))M"
 
      # echo all parameters for verification
     echo "Parameters for prefill_smallfiles_filewriter():"
     echo "  mntpoint       = ${mntpoint}"
     echo "  num_files      = ${num_files}"
+    echo "  size_per_file  = ${size_per_file}M"
     echo "  threads        = ${threads}"
     echo "  io_size        = ${io_size}"
     echo "  use_fallocate  = ${use_fallocate}"
     echo "  total_size     = ${total_size_human}"
     echo "  total_bytes    = ${total_bytes}"
 
-    echo "Prefilling small files: count=${num_files}, each=1M, total=${total_size_human}"
+    echo "Prefilling small files: count=${num_files}, each=${size_per_file}M, total=${total_size_human}"
     ${FILE_WRITER_DIR}/build.sh
     ${FILE_WRITER_DIR}/file_writer "${mntpoint}" "smallfiles." "${num_files}" "${total_size_human}" "${threads}" "${io_size}" independent "${use_fallocate}" || return 1
     echo "Prefilled smallfiles, total_bytes: <${total_bytes}>"
@@ -252,6 +257,13 @@ prefill_smallfiles_filewriter() {
     for (( i=1; i<=num_files; i++ )); do
         mv "${mntpoint}/smallfiles.${i}" "${mntpoint}/smallfiles.$((i-1))"
     done
+     # verify created files
+    local total_created expected good_files size_bytes
+    expected=$num_files
+    total_created=$(find "${mntpoint}" -maxdepth 1 -type f -name 'smallfiles.*' | wc -l)
+    size_bytes=$(( size_per_file * 1024 * 1024 ))
+    good_files=$(find "${mntpoint}" -maxdepth 1 -type f -name 'smallfiles.*' -size "${size_bytes}c" | wc -l)
+    echo "Verification: expected files=${expected}, total found=${total_created}, correct size files=${good_files}"
 }
 
 
