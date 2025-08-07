@@ -14,6 +14,11 @@ else
     echo "============================="
 fi
 
+if [ -z "${should_prefill+x}" ]; then
+    should_prefill=0
+fi
+echo "NOTICE: should_prefill=${should_prefill}"
+
 nthreads="4"
 check_kernel $gc_mode
 devpath=$(find_cs_device)
@@ -110,12 +115,15 @@ if [[ "${bmname}" == rw*file ]]; then
     fi
 
     echo "Extracted num_files=${num_files}"
-
+    if [[ "${should_prefill}" -eq 1 ]]; then
     prefill_size=$(
   prefill_smallfiles_filewriter "${mntpoint}" "${num_files}" \
     | tee >(grep -vF 'writing file: /home/xin/ssd/mnt/' >&2) \
     | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p'
     ) || exit 1
+    else
+        echo "Prefill skipped: should_prefill=${should_prefill}"
+    fi
 
 else
     echo "bmname does not match 'rw*file': ${bmname}"

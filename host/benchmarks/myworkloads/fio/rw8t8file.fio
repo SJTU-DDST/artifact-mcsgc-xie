@@ -1,0 +1,23 @@
+[global]
+ioengine=libaio
+
+thread=1
+group_reporting=1
+
+filename_format=/home/xin/ssd/mnt/smallfiles.$filenum
+filesize=7380M ; TONOTICE
+
+nrfiles=8 ; TONOTICE
+
+[random_write_16t_300s]
+new_group
+rw=randwrite
+direct=0
+bs=4k
+iodepth=16
+numjobs=8
+;time_based=1
+;runtime=60
+size=59040M ; TONOTICE
+openfiles=8
+file_service_type=random

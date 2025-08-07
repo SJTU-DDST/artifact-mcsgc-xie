@@ -1,0 +1,15 @@
+Aug  6 00:35:00 ddst-52 kernel: [36784.990592] audit: type=1400 audit(1754411700.597:81): apparmor="STATUS" operation="profile_replace" profile="unconfined" name="snap.firefox.hook.disconnect-plug-host-hunspell" pid=40005 comm="apparmor_parser"
+Aug  6 00:35:00 ddst-52 kernel: [36784.991003] audit: type=1400 audit(1754411700.597:82): apparmor="STATUS" operation="profile_replace" profile="unconfined" name="snap.firefox.hook.post-refresh" pid=40007 comm="apparmor_parser"
+Aug  6 00:35:00 ddst-52 kernel: [36784.991324] audit: type=1400 audit(1754411700.598:83): apparmor="STATUS" operation="profile_replace" profile="unconfined" name="snap.firefox.hook.install" pid=40006 comm="apparmor_parser"
+Aug  6 00:35:00 ddst-52 kernel: [36785.005580] audit: type=1400 audit(1754411700.612:84): apparmor="STATUS" operation="profile_replace" profile="unconfined" name="snap.firefox.hook.configure" pid=40004 comm="apparmor_parser"
+Aug  6 00:35:00 ddst-52 kernel: [36785.271521] audit: type=1400 audit(1754411700.878:85): apparmor="STATUS" operation="profile_replace" profile="unconfined" name="snap.firefox.geckodriver" pid=40003 comm="apparmor_parser"
+Aug  6 00:35:00 ddst-52 kernel: [36785.283557] audit: type=1400 audit(1754411700.890:86): apparmor="STATUS" operation="profile_replace" profile="unconfined" name="snap-update-ns.firefox" pid=40001 comm="apparmor_parser"
+Aug  6 00:35:00 ddst-52 kernel: [36785.294380] audit: type=1400 audit(1754411700.901:87): apparmor="STATUS" operation="profile_replace" profile="unconfined" name="snap.firefox.firefox" pid=40002 comm="apparmor_parser"
+Aug  6 00:35:00 ddst-52 kernel: [36785.305697] audit: type=1400 audit(1754411700.912:88): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap-update-ns.mesa-2404" pid=40009 comm="apparmor_parser"
+Aug  7 21:18:02 ddst-52 kernel: [197751.569645] f2fs: no symbol version for module_layout
+Aug  7 21:18:02 ddst-52 kernel: [197751.569654] f2fs: loading out-of-tree module taints kernel.
+Aug  7 23:24:10 ddst-52 kernel: [205319.646131] F2FS-fs (nvme0n1): Found nat_bits in checkpoint
+Aug  7 23:24:10 ddst-52 kernel: [205319.751365] F2FS-fs (nvme0n1): Mounted with checkpoint version = 717c5349
+Aug  7 23:24:10 ddst-52 kernel: [205319.751374] mCSGC MOUNT: device=/dev/nvme0n1 mounted at /
+IN BASH Aug  7 23:24:11 ddst-52  [205338.850000] mCSGC prepare to run prefill_storage_fio in bash
+IN BASH Aug  7 23:24:11 ddst-52  [205338.880000] mCSGC prepare to run filebench/fio in bash
