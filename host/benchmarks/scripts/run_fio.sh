@@ -78,6 +78,7 @@ if [ "${bmname}" == "randwrite" ]; then
         --numjobs=${nthreads}
         --random_distribution=${random_distribution}
         --time_based=${fio_timebased}
+        --status-interval=1
     "
 fi
 

@@ -9,7 +9,7 @@ filesize=7380M ; TONOTICE
 
 nrfiles=8 ; TONOTICE
 
-[random_write_16t_300s]
+[random_write_8t_8file]
 new_group
 rw=randwrite
 direct=0
