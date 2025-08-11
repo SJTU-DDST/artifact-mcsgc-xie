@@ -138,7 +138,7 @@ umount_and_get_stat() {
     sleep ${wait_time}
     
     if [ "$gc_mode" != "iplfs" ]; then
-        echo "csgc status:" `cat ${DEBUGFS_PATH}/csgc_status`
+        echo "csgc status:" `cat ${DEBUGFS_PATH}/csgc_status` | tee -a ${output_path}
 
         echo "umount device"
         sudo umount ${devpath}

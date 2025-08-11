@@ -8,7 +8,7 @@ if [ $light_evaluation -eq 1 ]; then
     runtime=180
 else
     io_size_per_thread="20G"
-    runtime=180
+    runtime=420
     echo "NOTICE: runtime=${runtime}"
     sleep 5
     echo "============================="
@@ -55,7 +55,7 @@ fi
 
 fio_flags="
 --time_based=${fio_timebased}
---status-interval=1
+--status-interval=5
 "
 str_debug="mCSGC prepare to run prefill_storage_fio in bash"
 ts_local=$(date '+%b %e %H:%M:%S')
