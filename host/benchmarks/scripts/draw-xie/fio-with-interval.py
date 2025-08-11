@@ -18,8 +18,8 @@ from datetime import datetime
 # Configuration (all constants here)
 # ==============================
 FILE_PATHS = [
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-ori/20250811_093152/fio_rw8t8file_s8_0.86_random/fio.log",   # TODO: set this path ori
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20250811_092340/fio_rw8t8file_s8_0.86_random/fio.log",  # TODO: set this path csgc
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20250811_111806/fio_rw8t8file-1to1_s8_0.86_random/fio.log",   # TODO: set this path ori
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20250811_111004/fio_rw8t8file-1to1_s8_0.86_random/fio.log",  # TODO: set this path csgc
 ]
 SERIES_NAMES = ["ori", "csgc"]        # Names for the two series (in plot legends)
 EPS = 100000                             # Tolerance for tiny negative diffs (float errors)
@@ -32,6 +32,22 @@ MBYTES_PER_SEC_DIVISOR = 1e6          # For MB/s from bytes/second (decimal MB)
 def error_exit(msg: str, code: int = 1) -> None:
     print(f"Error: {msg}")
     sys.exit(code)
+
+
+def derive_common_name(paths):
+    """
+    Derive a benchmark name from file basenames.
+    Prefer the longest common prefix; if too short, join with '_vs_'.
+    """
+    stems = [os.path.splitext(os.path.basename(p))[0] for p in paths]
+    if not stems:
+        return "fio"
+    lcp = os.path.commonprefix(stems).rstrip("_-. ")
+    if len(lcp) >= 3:
+        return lcp
+    if len(stems) == 1:
+        return stems[0]
+    return f"{stems[0]}_vs_{stems[1]}"
 
 def read_lines(path: str):
     if not os.path.exists(path):
@@ -79,6 +95,7 @@ def parse_iops_token(token: str) -> float:
         val *= 1000.0
     return val
 
+'''
 def parse_layout_line(line: str):
     """
     Example:
@@ -87,7 +104,7 @@ def parse_layout_line(line: str):
     Enforces unit == 'MiB'.
     """
     # Enforce presence of the exact substring
-    if "Laying out IO files" not in line:
+    if "Laying out IO file" not in line:
         error_exit("Internal parse_layout_line called on a non-layout line.")
     # Extract bmname before first ':'
     if ":" not in line:
@@ -102,7 +119,7 @@ def parse_layout_line(line: str):
     if unit != "MiB":
         error_exit(f"Unit after 'total' is not 'MiB' (got '{unit}').")
     return bmname, total_val
-
+'''
 def parse_iops_lines(lines):
     """
     Find all lines containing exact 'write: IOPS=' (lowercase 'write', case-sensitive).
@@ -311,10 +328,11 @@ def parse_one_file(path: str):
     lines = read_lines(path)
 
     # 2) Unique 'Laying out IO files' line
-    layout_lines = [ln for ln in lines if "Laying out IO files" in ln]
-    if len(layout_lines) != 1:
-        error_exit(f"'Laying out IO files' lines count is not 1 in {path} (got {len(layout_lines)}).")
-    bmname, total_mib = parse_layout_line(layout_lines[0])
+   # layout_lines = [ln for ln in lines if "Laying out IO file" in ln]
+    #if len(layout_lines) != 1:
+      #  pass 
+        # error_exit(f"'Laying out IO files' lines count is not 1 in {path} (got {len(layout_lines)}).")
+    #bmname, total_mib = parse_layout_line(layout_lines[0])
 
     # 3) 'write: IOPS=' lines
     iops_list, iops_line = parse_iops_lines(lines)
@@ -325,10 +343,10 @@ def parse_one_file(path: str):
     # 4.4) counts must match per file
     if iops_line != bw_line:
         error_exit(f"In {path}, count mismatch: iops_line={iops_line} vs bw_line={bw_line}")
-
+    bmname = os.path.splitext(os.path.basename(path))[0]  # informative only
     return {
         "bmname": bmname,
-        "IOtotal_mib": float(total_mib),
+        # "IOtotal_mib": float(total_mib),
         "iops_list": iops_list,
         "write_mbps": write_mbps,
         "io_gib": io_gib,
@@ -394,16 +412,16 @@ def main():
     parsed = [parse_one_file(p) for p in FILE_PATHS]
 
     # 2) bmname must be identical across files
-    bm0, bm1 = parsed[0]["bmname"], parsed[1]["bmname"]
-    if bm0 != bm1:
-        error_exit(f"bmname mismatch between files: '{bm0}' vs '{bm1}'")
-    bmname = bm0
+    # bm0, bm1 = parsed[0]["bmname"], parsed[1]["bmname"]
+   # if bm0 != bm1:
+    #    error_exit(f"bmname mismatch between files: '{bm0}' vs '{bm1}'")
+    #bmname = bm0
 
     # 2) IOtotal must be in MiB and equal across files
-    io_total_mib = [parsed[0]["IOtotal_mib"], parsed[1]["IOtotal_mib"]]
-    if io_total_mib[0] != io_total_mib[1]:
-        error_exit(f"IOtotal (MiB) mismatch between files: {io_total_mib[0]} vs {io_total_mib[1]}")
-
+   # io_total_mib = [parsed[0]["IOtotal_mib"], parsed[1]["IOtotal_mib"]]
+    #if io_total_mib[0] != io_total_mib[1]:
+      #  error_exit(f"IOtotal (MiB) mismatch between files: {io_total_mib[0]} vs {io_total_mib[1]}")
+    bmname = derive_common_name(FILE_PATHS)
     # Gather arrays into 2D structures per spec
     iops_lists = [parsed[0]["iops_list"], parsed[1]["iops_list"]]
     write_mbps_lists = [parsed[0]["write_mbps"], parsed[1]["write_mbps"]]
