@@ -8,7 +8,7 @@ if [ $light_evaluation -eq 1 ]; then
     runtime=180
 else
     io_size_per_thread="20G"
-    runtime=420
+    runtime=600
     echo "NOTICE: runtime=${runtime}"
     sleep 5
     echo "============================="
@@ -66,6 +66,8 @@ sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern
 # only do prefill and build fio_flags when not the special bmname
 if [ "${bmname}" == "randwrite" ]; then
     # prefill step
+    echo "NOTICE: bmname == randwrite, prepare do prefill"
+    echo "========================="
     prefill_outputs="$(prefill_storage_fio "${devpath}" "${mntpoint}" "${prefill_ratio}" "${gc_mode}")" && echo "${prefill_outputs}"
     prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
     echo "into if"
@@ -127,7 +129,8 @@ if [[ "${bmname}" == rw*file ]]; then
     fi
 
 else
-    echo "bmname does not match 'rw*file': ${bmname}"
+    echo "NOTICE: bmname does not match 'rw*file': ${bmname}"
+    echo "======================================================="
 fi
 
 

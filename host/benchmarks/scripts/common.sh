@@ -9,8 +9,20 @@ BGGC_ONOFF=off
 FSYNC_MODE=strict
 VANILLA_F2FS_TOOLS_PATH=$(realpath ../../src/f2fs-tools-csgc)
 IPLFS_F2FS_TOOLS_PATH=$(realpath ../../src/f2fs-tools-iplfs)
+
+kernel_version=$(uname -r)
+
+if [[ "$kernel_version" == "6.1.54-csgcmtdebug" ]]; then
+    VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc/linux-cs
+elif [[ "$kernel_version" == "6.1.54-csgcmt" ]]; then
+    VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc-real/linux-cs
+else
+    echo "Unsupported kernel version: $kernel_version"
+    exit 1
+fi
+
 #VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc/linux-cs
-VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc-real/linux-cs
+#VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc-real/linux-cs
 IPLFS_KERNEL_PATH=$(realpath ../../src/linux-iplfs)
 WORKLOAD_PATH_BASE=$(realpath ../myworkloads)
 FILE_WRITER_DIR=$(realpath ../file_writer)

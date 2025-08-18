@@ -18,7 +18,7 @@ from datetime import datetime
 # Configuration (all constants here)
 # ==============================
 FILE_PATHS = [
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20250811_111806/fio_rw8t8file-1to1_s8_0.86_random/fio.log",   # TODO: set this path ori
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/TOSTUDY/importantdata/outputs-mcsgc/20250812_211141/fio_rw8t8file-1to1_s8_0.86_random/fio.log",   # TODO: set this path ori
     "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20250811_111004/fio_rw8t8file-1to1_s8_0.86_random/fio.log",  # TODO: set this path csgc
 ]
 SERIES_NAMES = ["ori", "csgc"]        # Names for the two series (in plot legends)
@@ -141,6 +141,7 @@ def parse_iops_lines(lines):
     if count == 0:
         error_exit("No line with exact 'write: IOPS=' found.")
     return result, count
+
 
 def parse_write_lines(lines):
     """
@@ -447,8 +448,17 @@ def main():
         series.append(s)
 
     # 6) Plotting
+    # extract tags right after 'outputs-' from each file path
+    def _extract_outputs_tag(p: str) -> str:
+        m = re.search(r"/outputs-([^/]+)/", p)
+        if not m:
+            error_exit(f"Path does not contain 'outputs-<tag>': {p}")
+        return m.group(1)
+
+    tags = [_extract_outputs_tag(p) for p in FILE_PATHS]
     date_str = datetime.now().strftime("%Y%m%d")
-    base_tag = f"{bmname}_{SERIES_NAMES[0]}_{SERIES_NAMES[1]}_{date_str}"
+    base_tag = f"{bmname}_{tags[0]}_{tags[1]}_{SERIES_NAMES[0]}_{SERIES_NAMES[1]}_{date_str}"
+
 
     # 6.1 Instant BW plot (MB/s), annotate last io_with_time (GiB) per file
     ann_io_gib_last = [f"{io_gib_lists[0][-1]:.3f} GiB", f"{io_gib_lists[1][-1]:.3f} GiB"]
