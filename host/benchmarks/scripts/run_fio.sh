@@ -8,7 +8,7 @@ if [ $light_evaluation -eq 1 ]; then
     runtime=180
 else
     io_size_per_thread="20G"
-    runtime=600
+    runtime=7200
     echo "NOTICE: runtime=${runtime}"
     sleep 5
     echo "============================="
@@ -161,6 +161,12 @@ fi
 echo "======================================================="
 
 umount_and_get_stat "${devpath}" "${gc_mode}" "${output_path}/stat.log"
+
+str_debug="mCSGC finish umount in bash"
+ts_local=$(date '+%b %e %H:%M:%S')
+host_local=$(hostname)
+ts_upt=$(awk '{ printf "%.6f", $1 }' /proc/uptime)
+sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern.log
 
 if [ ${fsck_after_run} -ne 0 ]; then
     echo "run fsck"
