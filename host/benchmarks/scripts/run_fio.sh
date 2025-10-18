@@ -62,6 +62,9 @@ ts_local=$(date '+%b %e %H:%M:%S')
 host_local=$(hostname)
 ts_upt=$(awk '{ printf "%.6f", $1 }' /proc/uptime)
 sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern.log
+# send to /dev/kmsg so any running `dmesg -w >> kernel_log.txt` will capture it
+printf '<6>IN BASH %s %s [%s] %s\n' \
+  "$ts_local" "$host_local" "$ts_upt" "$str_debug" | sudo tee /dev/kmsg >/dev/null
 
 # only do prefill and build fio_flags when not the special bmname
 if [ "${bmname}" == "randwrite" ]; then
@@ -152,6 +155,10 @@ ts_local=$(date '+%b %e %H:%M:%S')
 host_local=$(hostname)
 ts_upt=$(awk '{ printf "%.6f", $1 }' /proc/uptime)
 sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern.log
+# send to /dev/kmsg so any running `dmesg -w >> kernel_log.txt` will capture it
+printf '<6>IN BASH %s %s [%s] %s\n' \
+  "$ts_local" "$host_local" "$ts_upt" "$str_debug" | sudo tee /dev/kmsg >/dev/null
+
 
 if [ ${use_cgroup} -eq 1 ]; then
     sudo cgexec -g memory:${CGROUP_NAME} fio ${fio_flags} ${runtime_flag} ${workload_path} 2>&1 | tee -a ${output_path}/${workload_type}.log
@@ -167,6 +174,9 @@ ts_local=$(date '+%b %e %H:%M:%S')
 host_local=$(hostname)
 ts_upt=$(awk '{ printf "%.6f", $1 }' /proc/uptime)
 sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern.log
+# send to /dev/kmsg so any running `dmesg -w >> kernel_log.txt` will capture it
+printf '<6>IN BASH %s %s [%s] %s\n' \
+  "$ts_local" "$host_local" "$ts_upt" "$str_debug" | sudo tee /dev/kmsg >/dev/null
 
 if [ ${fsck_after_run} -ne 0 ]; then
     echo "run fsck"

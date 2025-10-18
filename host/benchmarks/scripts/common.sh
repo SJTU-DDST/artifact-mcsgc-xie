@@ -193,7 +193,14 @@ mkfs_and_mount() {
         # need to mkfs again, since when sFTL is enabled, fs-ready will reset the device
         sudo mkfs.f2fs -f -s "${segs_per_sec}" "${devpath}"
     fi
-    sudo mount -t f2fs -o mode="${FS_MODE}",background_gc="${BGGC_ONOFF}",fsync_mode=${FSYNC_MODE},"${discard_option}" "${devpath}" "${mntpoint}"
+   sudo mount -t f2fs -o mode="${FS_MODE}",background_gc="${BGGC_ONOFF}",fsync_mode=${FSYNC_MODE},"${discard_option}" "${devpath}" "${mntpoint}"
+    #sudo mount -t f2fs -o mode="${FS_MODE}",background_gc="${BGGC_ONOFF}",fsync_mode=${FSYNC_MODE},"${discard_option}" "${devpath}" "${mntpoint}"
+
+    sudo cat /proc/mounts | grep " ${mntpoint} "
+
+    echo "wait 5 seconds for check mount"
+    echo "======================================================="
+    sleep 5
     if [ $? -ne 0 ]; then
         echo "mount failed"
         exit 1
