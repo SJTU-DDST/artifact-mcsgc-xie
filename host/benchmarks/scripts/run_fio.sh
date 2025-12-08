@@ -3,6 +3,11 @@
 source ./common.sh
 mntpoint=${MNTPOINT}
 
+workload_path="${WORKLOAD_PATH_BASE}/${workload_type}/${bmname}.fio"
+output_path=${output_path_base}/${workload_type}_${bmname}_s${segs_per_sec}_${prefill_ratio}_${random_distribution}
+mkdir -p ${output_path}
+exec > >(tee -a "${output_path}/terminal.log") 2>&1
+
 if [ $light_evaluation -eq 1 ]; then
     io_size_per_thread="20G"
     runtime=180
@@ -28,9 +33,7 @@ if [ "${ssd_enable_dsm}" -eq 1 ]; then
 else
     f2fs_enable_discard="nodiscard"
 fi
-workload_path="${WORKLOAD_PATH_BASE}/${workload_type}/${bmname}.fio"
-output_path=${output_path_base}/${workload_type}_${bmname}_s${segs_per_sec}_${prefill_ratio}_${random_distribution}
-mkdir -p ${output_path}
+
 
 echo 0 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
 echo 20 > /proc/sys/kernel/panic # dont panic! wait 20s before reboot if kernel panics
@@ -178,10 +181,15 @@ sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern
 printf '<6>IN BASH %s %s [%s] %s\n' \
   "$ts_local" "$host_local" "$ts_upt" "$str_debug" | sudo tee /dev/kmsg >/dev/null
 
+echo "If you want to manually run fsck later, you can use the command:"
+echo "sudo fsck.f2fs '${devpath}' > '${output_path}/fsck.log'"
+echo "======================================================="
 if [ ${fsck_after_run} -ne 0 ]; then
     echo "run fsck"
     sudo fsck.f2fs ${devpath} > ${output_path}/fsck.log
     echo "finished fsck"
+else
+    echo "do not run fsck in this bash, fsck_after_run=${fsck_after_run}"
 fi
 
 chown -R $(whoami):$(whoami) ${output_path}
