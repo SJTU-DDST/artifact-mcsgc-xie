@@ -180,9 +180,9 @@ sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern
 # send to /dev/kmsg so any running `dmesg -w >> kernel_log.txt` will capture it
 printf '<6>IN BASH %s %s [%s] %s\n' \
   "$ts_local" "$host_local" "$ts_upt" "$str_debug" | sudo tee /dev/kmsg >/dev/null
-
+echo "=============end fio============="
 echo "If you want to manually run fsck later, you can use the command:"
-echo "sudo fsck.f2fs '${devpath}' > '${output_path}/fsck.log'"
+echo "sudo bash -c \"fsck.f2fs '${devpath}' > '${output_path}/fsck.log'\""
 echo "======================================================="
 if [ ${fsck_after_run} -ne 0 ]; then
     echo "run fsck"

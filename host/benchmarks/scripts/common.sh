@@ -154,7 +154,7 @@ umount_and_get_stat() {
 
         echo "umount device"
         sudo umount ${devpath}
-
+        dmesg | grep -F 'UNMOUNT mCSGC. mCSGC time(ns)' | tee -a ${output_path}
         dmesg | grep -E '<ORIGC STAT>' | tee -a ${output_path}
         dmesg | grep -E '<CSGC STAT>' | tee -a ${output_path}
         
