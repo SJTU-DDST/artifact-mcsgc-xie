@@ -17,6 +17,7 @@ from datetime import datetime
 # ==============================
 # Configuration (all constants here)
 # ==============================
+"""
 FILE_PATHS = [
     "/home/xin/artifact-csgc/host/benchmarks/scripts/TOSTUDY/importantdata/outputs-mcsgc/20250812_211141/fio_rw8t8file-1to1_s8_0.86_random/fio.log",   # TODO: set this path ori
     "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20250811_111004/fio_rw8t8file-1to1_s8_0.86_random/fio.log",  # TODO: set this path csgc
@@ -26,7 +27,13 @@ FILE_PATHS = [
     "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgcdebug/20250818_193208/fio_rw8t8file-1to1_s8_0.86_random/fio.log",   # TODO: set this path ori
     "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgcdebug/20250818_143321/fio_rw8t8file-1to1_s8_0.86_random/fio.log",  # TODO: set this path csgc
 ]
-SERIES_NAMES = ["ori", "csgc"]        # Names for the two series (in plot legends)
+"""
+FILE_PATHS = [
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20251213_205447/fio_randwrite_s8_0.86_random/fio.log",   # TODO: set this path ori
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20251213_203222/fio_randwrite_s8_0.86_random/fio.log",  # TODO: set this path csgc
+]
+
+SERIES_NAMES = ["csgc", "mcsgc"]        # Names for the two series (in plot legends)
 EPS = 100000                             # Tolerance for tiny negative diffs (float errors)
 OUT_DIR = "./figs"                     # Output directory for figures
 MBYTES_PER_SEC_DIVISOR = 1e6          # For MB/s from bytes/second (decimal MB)

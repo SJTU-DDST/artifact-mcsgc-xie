@@ -16,6 +16,11 @@ if [[ "$kernel_version" == "6.1.54-csgcmtdebug" ]]; then
     VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc/linux-cs
 elif [[ "$kernel_version" == "6.1.54-csgcmt" ]]; then
     VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc-real/linux-cs
+elif [[ "$kernel_version" == "6.1.54-csgcmt-csgcmt" ]]; then
+    echo "now is csgcmt v2.0"
+    echo "=================================="
+    sleep 5
+    VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc-real/linux-cs
 else
     echo "Unsupported kernel version: $kernel_version"
     exit 1
