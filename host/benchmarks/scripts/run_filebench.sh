@@ -3,6 +3,15 @@
 source ./common.sh
 mntpoint=${MNTPOINT}
 
+output_path=${output_path_base}/${workload_type}_${bmname}_s${segs_per_sec}
+mkdir -p ${output_path}
+
+# Log all terminal output (stdout+stderr) to terminal.log under output_path
+terminal_log="${output_path}/terminal.log"
+: > "${terminal_log}"
+exec > >(tee -a "${terminal_log}") 2>&1
+echo "terminal_log=${terminal_log}"
+
 if [ $light_evaluation -eq 1 ]; then
     runtime=60
 else
@@ -20,8 +29,7 @@ else
     f2fs_enable_discard="nodiscard"
 fi
 workload_path="${WORKLOAD_PATH_BASE}/${workload_type}/${bmname}.f"
-output_path=${output_path_base}/${workload_type}_${bmname}_s${segs_per_sec}
-mkdir -p ${output_path}
+
 
 echo 0 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
 echo 20 > /proc/sys/kernel/panic # dont panic! wait 20s before reboot if kernel panics

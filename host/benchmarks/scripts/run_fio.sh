@@ -13,7 +13,7 @@ if [ $light_evaluation -eq 1 ]; then
     runtime=180
 else
     io_size_per_thread="20G"
-    runtime=7200
+    runtime=300
     echo "NOTICE: runtime=${runtime}"
     sleep 5
     echo "============================="

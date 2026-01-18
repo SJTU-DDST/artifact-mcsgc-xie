@@ -27,9 +27,15 @@ FILE_PATHS = [
     "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgcdebug/20250818_193208/fio_rw8t8file-1to1_s8_0.86_random/fio.log",   # TODO: set this path ori
     "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgcdebug/20250818_143321/fio_rw8t8file-1to1_s8_0.86_random/fio.log",  # TODO: set this path csgc
 ]
-"""
+
 FILE_PATHS = [
     "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20251213_205447/fio_randwrite_s8_0.86_random/fio.log",   # TODO: set this path ori
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20251213_203222/fio_randwrite_s8_0.86_random/fio.log",  # TODO: set this path csgc
+]
+"""
+
+FILE_PATHS = [
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20260114_042343/fio_randwrite_s8_0.86_random/fio.log",   # TODO: set this path ori
     "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20251213_203222/fio_randwrite_s8_0.86_random/fio.log",  # TODO: set this path csgc
 ]
 

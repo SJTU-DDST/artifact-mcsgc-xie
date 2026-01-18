@@ -98,6 +98,8 @@ load_f2fs_module() {
     else
         f2fs_ko_path=${VANILLA_KERNEL_PATH}/fs/f2fs/f2fs.ko
         echo "NOTE: set f2fs_ko_path"
+        echo "first please make sure the path is correct: ${f2fs_ko_path}"
+        sleep 5
         echo "=============================================================================="
     fi
     if ! lsmod | grep -q f2fs; then

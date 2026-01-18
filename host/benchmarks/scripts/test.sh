@@ -1,5 +1,14 @@
 #!/bin/bash
 
+str_debug="test begin in bash"
+ts_local=$(date '+%b %e %H:%M:%S')
+host_local=$(hostname)
+ts_upt=$(awk '{ printf "%.6f", $1 }' /proc/uptime)
+sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern.log
+# send to /dev/kmsg so any running `dmesg -w >> kernel_log.txt` will capture it
+printf '<6>IN BASH %s %s [%s] %s\n' \
+  "$ts_local" "$host_local" "$ts_upt" "$str_debug" | sudo tee /dev/kmsg >/dev/null
+
 # gc_mode="ori"      # vanilla f2fs
 # gc_mode="iplfs"    # iplfs
 # gc_mode="cs"       # csgc
@@ -92,3 +101,12 @@ echo "Running evaluation for $gc_mode..."
 # done
 
 popd > /dev/null
+
+str_debug="test finish in bash"
+ts_local=$(date '+%b %e %H:%M:%S')
+host_local=$(hostname)
+ts_upt=$(awk '{ printf "%.6f", $1 }' /proc/uptime)
+sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern.log
+# send to /dev/kmsg so any running `dmesg -w >> kernel_log.txt` will capture it
+printf '<6>IN BASH %s %s [%s] %s\n' \
+  "$ts_local" "$host_local" "$ts_upt" "$str_debug" | sudo tee /dev/kmsg >/dev/null

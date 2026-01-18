@@ -9,20 +9,23 @@ from matplotlib.gridspec import GridSpec
 
 # ================= 用户配置 =================
 # 要使用的数据点数量
-data_point_number = 60
+data_point_number = 30
 # 每条折线对应的日志文件路径列表
 
 input1_label = 'mCSGC'
 input1_paths = [
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20250714_125712/filebench_fileserver_4t_60G_1M_54k_period_s8/filebench.log"
+    #"/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20250714_125712/filebench_fileserver_4t_60G_1M_54k_period_s8/filebench.log"
     #"/home/xin/work-xie/csgc/xin_scripts/test_data_imporatant/mcsgc/findgctime/filebench.log"
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20251214_163756/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
 ]
-input2_label = 'CSGC'
+input2_label = 'v2-mCSGC'
 input2_paths = [
     #"/home/xin/work-xie/csgc/xin_scripts/outputs-cs-t2/20250623_115622/"
     #"filebench_fileserver_4t_60G_1M_54k_s8/filebench.log"
     #"/home/xin/work-xie/csgc/xin_scripts/test_data_imporatant/csgc/20250707_114643/filebench_fileserver_4t_60G_1M_54k_s8/filebench.log"
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20250714_115208/filebench_fileserver_4t_60G_1M_54k_period_s8/filebench.log"
+   # "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20250714_115208/filebench_fileserver_4t_60G_1M_54k_period_s8/filebench.log"
+   #"/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20251214_165157/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
+"/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20260114_043623/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
 ]
 
 
@@ -30,7 +33,7 @@ input2_paths = [
 
 
 # 输出图片（PNG格式）及大小
-fig_path = "./figs/compare_csgc-mcsgc40-0712.png"
+fig_path = "./figs/compare_csgc-mcsgc150filebench-1214.png"
 fig_size = (10, 2.3)
 
 # 对应的颜色和标记
