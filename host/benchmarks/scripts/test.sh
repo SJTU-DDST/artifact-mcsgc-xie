@@ -16,7 +16,7 @@ light_evaluation=0
 #gc_mode=$1
 mcsgc_mode=$1
 # determine gc_mode based on mcsgc_mode
-if [[ "$mcsgc_mode" == "mcsgc" || "$mcsgc_mode" == "csgc" || "$mcsgc_mode" == "mcsgcdebug" || "$mcsgc_mode" == "csgcdebug" || "$mcsgc_mode" == "mcsgcmakefile" ]]; then
+if [[ "$mcsgc_mode" == "mcsgc" || "$mcsgc_mode" == "csgc" || "$mcsgc_mode" == "mcsgcdebug" || "$mcsgc_mode" == "csgcdebug" || "$mcsgc_mode" == "mcsgcmakefile" || "$mcsgc_mode" == "mcsgcv2" ]]; then
   gc_mode="cs"
 elif [[ "$mcsgc_mode" == "ori" || "$mcsgc_mode" == "iplfs" ]]; then
   gc_mode="$mcsgc_mode"
@@ -110,3 +110,6 @@ sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern
 # send to /dev/kmsg so any running `dmesg -w >> kernel_log.txt` will capture it
 printf '<6>IN BASH %s %s [%s] %s\n' \
   "$ts_local" "$host_local" "$ts_upt" "$str_debug" | sudo tee /dev/kmsg >/dev/null
+
+sudo ./flush_dmesg_buffer.sh
+echo "Test script completed."

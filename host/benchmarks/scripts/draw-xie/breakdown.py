@@ -1,287 +1,435 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import argparse
-import math
 import os
 import re
 import sys
-from statistics import mean, median
-from typing import Dict, List, Tuple, Optional
+import math
+from collections import defaultdict, deque
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
-BREAKDOWN_MARKER = "sync_fs_time ="
-TAKES_SUBSTR_1 = "csgc"
-TAKES_SUBSTR_2 = "takes"
+STAT_KEYS = [
+    "section_sync_us",
+    "pre_queue_delay_us",
+    "pre_work_total_us",
+    "pre_sum_us",
+    "pre_node_list_us",
+    "pre_inode_lock_us",
+    "pre_data_lock_us",
+    "pre_cp_rwsem_lock_us",
+    "pre_node_pages_lock_us",
+    "pre_get_valid_blocks_us",
+    "pre_check_data_validness_us",
+    "pre_pack_prealloc_us",
+    "pre_request_trigger_us",
+    "pre_submit_completion_read_us",
+    "pre_tail_us",
+    "approx_gc_cs_ssd_us",
+    "post_queue_delay_us",
+    "post_update_meta_us",
+    "post_middle_work_us",
+    "approx_segment_total_us",
+    "segment_finish_offset_us",
+]
 
-RE_KV_US = re.compile(r"([A-Za-z0-9_]+)\s*=\s*(-?\d+)\s*us")
-RE_TAKES = re.compile(r"(?i)\btakes\b\s+(-?\d+)(?:\s*us)?")
+POST_EXTRA_KEYS = [
+    "post_work_from_free_csi_to_finish_time_us",
+    "f2fs_post_csgc_work_time_us",
+    "this_segment_gc_time_us",
+]
 
-DEFAULT_SCAN_AHEAD_LINES = 20
+SECTION_KEYS = [
+    "section_gc_time_us",
+]
+
+DO_CSGC_KEYS = [
+    "do_garbage_collect_cs_us",
+    "csgc_called",
+]
 
 
-def unique_path(dir_path: str, base_name: str, ext: str) -> str:
-    os.makedirs(dir_path, exist_ok=True)
-    candidate = os.path.join(dir_path, f"{base_name}{ext}")
-    if not os.path.exists(candidate):
-        return candidate
-    idx = 1
+RE_STAT = re.compile(
+    r"""
+    ^\[\s*\d+\.\d+\]\s+
+    (?P<tag>BUG:\s*)?mCSGCv2_STAT\s+
+    segno=(?P<segno>\d+)\s+
+    req_idx=(?P<req_idx>\d+)\s+
+    pid=(?P<pid>\d+)\s+
+    tgid=(?P<tgid>\d+)\s+
+    comm=(?P<comm>\S+)\s+
+    (?P<kv>.*)$
+    """,
+    re.VERBOSE,
+)
+
+RE_POST = re.compile(
+    r"""
+    ^\[\s*\d+\.\d+\]\s+
+    post\s+work\s+from\s+free\s+csi\s+to\s+the\s+finish\s+time\s*=\s*(?P<free_to_finish>\d+)\s+us,
+    f2fs_post_csgc_work\s+time\s*=\s*(?P<post_time>\d+)\s+us,\s+
+    this\s+segment\s+gc\s+time\s*=\s*(?P<seg_gc_time>\d+)\s+us,\s+
+    from\s+segno=(?P<segno>\d+),\s+
+    pid=(?P<pid>\d+)\s+tgid=(?P<tgid>\d+)\s+comm=(?P<comm>\S+)
+    """,
+    re.VERBOSE,
+)
+
+RE_SECTION = re.compile(
+    r"""
+    ^\[\s*\d+\.\d+\]\s+
+    section_gc_time\s*=\s*(?P<section_gc_time>\d+)\s+us,
+    from\s+pid=(?P<pid>\d+)\s+tgid=(?P<tgid>\d+)\s+comm=(?P<comm>\S+)
+    """,
+    re.VERBOSE,
+)
+
+RE_DO_CSGC = re.compile(
+    r"""
+    ^\[\s*\d+\.\d+\]\s+
+    do_garbage_collect_cs\s*=\s*(?P<do_time>\d+)\s+us,\s+
+    csgc_called\s*=\s*(?P<csgc_called>\d+)
+    from\s+pid=(?P<pid>\d+)\s+tgid=(?P<tgid>\d+)\s+comm=(?P<comm>\S+)
+    """,
+    re.VERBOSE,
+)
+
+
+def ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
+
+
+def unique_path(path: str) -> str:
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    i = 1
     while True:
-        candidate = os.path.join(dir_path, f"{base_name}_{idx}{ext}")
-        if not os.path.exists(candidate):
-            return candidate
-        idx += 1
+        cand = f"{base}_{i}{ext}"
+        if not os.path.exists(cand):
+            return cand
+        i += 1
 
 
-def nearest_rank_quantile(sorted_vals: List[float], q: float) -> float:
-    if not sorted_vals:
+def unique_dir(path: str) -> str:
+    if not os.path.exists(path):
+        return path
+    i = 1
+    while True:
+        cand = f"{path}_{i}"
+        if not os.path.exists(cand):
+            return cand
+        i += 1
+
+
+def safe_float_array(xs: List[Optional[int]]) -> np.ndarray:
+    arr = np.array([np.nan if (v is None) else float(v) for v in xs], dtype=float)
+    arr = arr[np.isfinite(arr)]
+    arr = arr[arr >= 0.0]
+    return arr
+
+
+def percentile(arr: np.ndarray, p: float) -> float:
+    if arr.size == 0:
         return float("nan")
-    n = len(sorted_vals)
-    q = max(0.0, min(1.0, q))
-    rank = int(math.ceil(q * n))
-    rank = max(1, min(n, rank))
-    return float(sorted_vals[rank - 1])
+    return float(np.percentile(arr, p))
 
 
-def top_fraction_mean(sorted_vals_asc: List[float], frac: float) -> float:
-    if not sorted_vals_asc:
+def top_k_mean(arr: np.ndarray, frac: float) -> float:
+    if arr.size == 0:
         return float("nan")
-    n = len(sorted_vals_asc)
-    k = int(math.ceil(frac * n))
-    k = max(1, min(n, k))
-    top_vals = sorted_vals_asc[-k:]
-    return float(mean(top_vals))
+    n = arr.size
+    k = max(1, int(math.ceil(frac * n)))
+    s = np.sort(arr)
+    top = s[-k:]
+    return float(np.mean(top))
 
 
-def pearson_corr(xs: List[float], ys: List[float]) -> float:
-    if len(xs) != len(ys) or len(xs) < 2:
-        return float("nan")
-    mx = mean(xs)
-    my = mean(ys)
-    num = 0.0
-    dx2 = 0.0
-    dy2 = 0.0
-    for x, y in zip(xs, ys):
-        dx = x - mx
-        dy = y - my
-        num += dx * dy
-        dx2 += dx * dx
-        dy2 += dy * dy
-    denom = math.sqrt(dx2 * dy2)
-    if denom == 0.0:
-        return float("nan")
-    return num / denom
+def summarize_metric(name: str, arr: np.ndarray) -> Dict[str, float]:
+    out = {
+        "count": float(arr.size),
+        "mean": float(np.mean(arr)) if arr.size else float("nan"),
+        "min": float(np.min(arr)) if arr.size else float("nan"),
+        "max": float(np.max(arr)) if arr.size else float("nan"),
+        "median": float(np.median(arr)) if arr.size else float("nan"),
+        "p80": percentile(arr, 80.0),
+        "top20_mean": top_k_mean(arr, 0.20),
+    }
+    return out
 
 
-def parse_breakdown_line(line: str) -> Dict[str, int]:
-    kvs: Dict[str, int] = {}
-    for m in RE_KV_US.finditer(line):
-        key = m.group(1)
-        val = int(m.group(2))
-        kvs[key] = val
-    return kvs
-
-
-def is_takes_line(line: str) -> bool:
-    low = line.lower()
-    return (TAKES_SUBSTR_1 in low) and (TAKES_SUBSTR_2 in low)
-
-
-def parse_takes_us(line: str) -> Optional[int]:
-    m = RE_TAKES.search(line)
-    if not m:
-        return None
-    return int(m.group(1))
-
-
-def plot_scatter_index(values: List[float], title: str, ylabel: str, out_path: str) -> None:
-    xs = list(range(len(values)))
+def scatter_index_plot(xs: List[Optional[int]], title: str, ylabel: str, out_path: str) -> None:
+    y = np.array([np.nan if v is None else float(v) for v in xs], dtype=float)
+    idx = np.arange(len(y), dtype=float)
+    m = np.isfinite(y)
+    idx = idx[m]
+    y = y[m]
     plt.figure()
-    plt.scatter(xs, values, s=6)
+    plt.scatter(idx, y, s=6)
     plt.title(title)
     plt.xlabel("sample_index")
     plt.ylabel(ylabel)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=200)
+    plt.savefig(out_path, dpi=150)
     plt.close()
 
 
-def plot_scatter_xy(xs: List[float], ys: List[float], title: str, xlabel: str, ylabel: str, out_path: str) -> None:
+def scatter_xy_plot(x: np.ndarray, y: np.ndarray, title: str, xlabel: str, ylabel: str, out_path: str) -> None:
+    m = np.isfinite(x) & np.isfinite(y)
+    x2 = x[m]
+    y2 = y[m]
     plt.figure()
-    plt.scatter(xs, ys, s=6)
+    plt.scatter(x2, y2, s=6)
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=200)
+    plt.savefig(out_path, dpi=150)
     plt.close()
 
 
-def summarize_metric(name: str, vals: List[int]) -> str:
-    if not vals:
-        return f"{name}: count=0"
-    s = sorted(float(v) for v in vals)
-    n = len(s)
-    avg = mean(s)
-    mn = s[0]
-    mx = s[-1]
-    med = median(s)
-    p80 = nearest_rank_quantile(s, 0.80)
-    top20 = top_fraction_mean(s, 0.20)
-    return (
-        f"{name}: count={n} mean={avg:.3f} min={mn:.3f} max={mx:.3f} "
-        f"median={med:.3f} p80={p80:.3f} top20_mean={top20:.3f}"
-    )
+def pearson_corr(x: np.ndarray, y: np.ndarray) -> float:
+    m = np.isfinite(x) & np.isfinite(y)
+    x2 = x[m]
+    y2 = y[m]
+    if x2.size < 3:
+        return float("nan")
+    if np.std(x2) == 0.0 or np.std(y2) == 0.0:
+        return float("nan")
+    return float(np.corrcoef(x2, y2)[0, 1])
 
 
-def summarize_ratio_distribution(name: str, ratios: List[float]) -> str:
-    if not ratios:
-        return f"{name}: count=0"
-    s = sorted(ratios)
-    p50 = nearest_rank_quantile(s, 0.50)
-    p90 = nearest_rank_quantile(s, 0.90)
-    p99 = nearest_rank_quantile(s, 0.99)
-    return f"{name}: count={len(s)} p50={p50:.6f} p90={p90:.6f} p99={p99:.6f}"
+def parse_kv_blob(blob: str) -> Dict[str, int]:
+    kv = {}
+    parts = blob.strip().split()
+    for p in parts:
+        if "=" not in p:
+            continue
+        k, v = p.split("=", 1)
+        if not k:
+            continue
+        try:
+            kv[k] = int(v)
+        except ValueError:
+            continue
+    return kv
 
 
-def read_all_lines(path: str) -> List[str]:
-    if path == "-":
-        return sys.stdin.read().splitlines()
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        return f.read().splitlines()
+def derive_figdir(logfile: str) -> str:
+    base = os.path.basename(logfile)
+    if base.endswith(".log"):
+        stem = base[:-4]
+    else:
+        stem = os.path.splitext(base)[0]
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    root = "./figs"
+    ensure_dir(root)
+    cand = os.path.join(root, f"{stem}_{ts}")
+    cand = unique_dir(cand)
+    ensure_dir(cand)
+    return cand
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Parse F2FS CSGC timing logs from dmesg output.")
-    ap.add_argument("input", help="Input dmesg text file path, or '-' for stdin.")
-    ap.add_argument("--scan-ahead", type=int, default=DEFAULT_SCAN_AHEAD_LINES,
-                    help="Max lines to scan after breakdown line to find a takes line.")
-    ap.add_argument("--figdir", default="./figs", help="Directory to save figures.")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("logfile", help="path to kernel log file")
     args = ap.parse_args()
 
-    lines = read_all_lines(args.input)
-    scan_ahead = max(1, args.scan_ahead)
+    figdir = derive_figdir(args.logfile)
 
-    metrics: Dict[str, List[int]] = {}
-    takes_us: List[int] = []
+    segno: List[int] = []
+    req_idx: List[int] = []
+    pid: List[int] = []
+    tgid: List[int] = []
+    comm: List[str] = []
+    is_bug: List[int] = []
 
-    records: List[Dict[str, int]] = []
+    metric_arrays: Dict[str, List[Optional[int]]] = {k: [] for k in STAT_KEYS}
+    for k in POST_EXTRA_KEYS:
+        metric_arrays[k] = []
 
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if BREAKDOWN_MARKER in line:
-            kvs = parse_breakdown_line(line)
-            if not kvs:
-                print(f"Error: breakdown marker found but no key/value parsed at line {i+1}.", file=sys.stderr)
-                print(f"Line: {line}", file=sys.stderr)
-                return 1
+    post_pending: Dict[int, deque] = defaultdict(deque)
 
-            found_takes = None
-            found_line_no = None
-            for j in range(i + 1, min(len(lines), i + 1 + scan_ahead)):
-                if is_takes_line(lines[j]):
-                    t = parse_takes_us(lines[j])
-                    if t is None:
-                        print(f"Error: takes line matched but number not parsed at line {j+1}.", file=sys.stderr)
-                        print(f"Line: {lines[j]}", file=sys.stderr)
-                        return 1
-                    found_takes = t
-                    found_line_no = j + 1
-                    break
+    section_gc_time_us: List[int] = []
+    section_pid: List[int] = []
+    section_tgid: List[int] = []
+    section_comm: List[str] = []
 
-            if found_takes is None:
-                print(
-                    f"Error: takes line not found within {scan_ahead} lines after breakdown at line {i+1}.",
-                    file=sys.stderr,
-                )
-                print(f"Breakdown line: {line}", file=sys.stderr)
-                return 1
+    do_garbage_collect_cs_us: List[int] = []
+    csgc_called: List[int] = []
+    do_pid: List[int] = []
+    do_tgid: List[int] = []
+    do_comm: List[str] = []
 
-            kvs["takes_us"] = int(found_takes)
+    with open(args.logfile, "r", errors="replace") as f:
+        for line in f:
+            line = line.rstrip("\n")
 
-            records.append(kvs)
-            takes_us.append(int(found_takes))
+            m = RE_STAT.match(line)
+            if m:
+                idx = len(segno)
+                s = int(m.group("segno"))
+                segno.append(s)
+                req_idx.append(int(m.group("req_idx")))
+                pid.append(int(m.group("pid")))
+                tgid.append(int(m.group("tgid")))
+                comm.append(m.group("comm"))
+                is_bug.append(1 if m.group("tag") else 0)
 
-            for k, v in kvs.items():
-                metrics.setdefault(k, []).append(int(v))
+                kv = parse_kv_blob(m.group("kv"))
+                for k in STAT_KEYS:
+                    metric_arrays[k].append(kv.get(k, None))
 
-            i = (found_line_no - 1) if found_line_no is not None else i
-        i += 1
+                for k in POST_EXTRA_KEYS:
+                    metric_arrays[k].append(None)
 
-    if not records:
-        print("Error: no matched records found.", file=sys.stderr)
-        return 1
+                post_pending[s].append(idx)
+                continue
 
-    if "total_time" not in metrics:
-        print("Error: 'total_time' not found in parsed breakdown metrics.", file=sys.stderr)
-        return 1
+            m = RE_POST.match(line)
+            if m:
+                s = int(m.group("segno"))
+                if not post_pending[s]:
+                    continue
+                idx = post_pending[s].popleft()
+                metric_arrays["post_work_from_free_csi_to_finish_time_us"][idx] = int(m.group("free_to_finish"))
+                metric_arrays["f2fs_post_csgc_work_time_us"][idx] = int(m.group("post_time"))
+                metric_arrays["this_segment_gc_time_us"][idx] = int(m.group("seg_gc_time"))
+                continue
 
-    nrec = len(records)
-    print(f"Parsed records: {nrec}")
+            m = RE_SECTION.match(line)
+            if m:
+                section_gc_time_us.append(int(m.group("section_gc_time")))
+                section_pid.append(int(m.group("pid")))
+                section_tgid.append(int(m.group("tgid")))
+                section_comm.append(m.group("comm"))
+                continue
 
-    print("\n=== Per-metric statistics (us) ===")
-    for name in sorted(metrics.keys()):
-        print(summarize_metric(name, metrics[name]))
+            m = RE_DO_CSGC.match(line)
+            if m:
+                do_garbage_collect_cs_us.append(int(m.group("do_time")))
+                csgc_called.append(int(m.group("csgc_called")))
+                do_pid.append(int(m.group("pid")))
+                do_tgid.append(int(m.group("tgid")))
+                do_comm.append(m.group("comm"))
+                continue
 
-    figdir = args.figdir
-    print(f"\nSaving scatter plots to: {os.path.abspath(figdir)}")
+    seg_count = len(segno)
+    sec_count = len(section_gc_time_us)
 
-    for name in sorted(metrics.keys()):
-        out = unique_path(figdir, f"scatter_index_{name}", ".png")
-        plot_scatter_index([float(v) for v in metrics[name]], f"{name} vs sample_index", f"{name}_us", out)
+    print(f"figdir={figdir}")
+    print(f"segment_samples={seg_count}")
+    print(f"section_samples={sec_count}")
 
-    print("\n=== Ratio distributions ===")
-    total_core = metrics["total_time"]
-    total_full = metrics["takes_us"]
+    if sec_count * 8 != seg_count:
+        print(f"ERROR: segment_samples != section_samples*8 ({seg_count} != {sec_count}*8)")
+        return 2
 
-    phase_keys = [k for k in metrics.keys() if k not in ("takes_us",)]
-    ratio_vs_full: Dict[str, List[float]] = {}
-    ratio_vs_core: Dict[str, List[float]] = {}
+    print("")
+    print("=== basic statistics (microseconds) ===")
 
-    for k in phase_keys:
-        vals = metrics[k]
-        r_full: List[float] = []
-        r_core: List[float] = []
-        for idx in range(nrec):
-            denom_full = float(total_full[idx])
-            denom_core = float(total_core[idx])
-            v = float(vals[idx])
+    all_metrics: List[Tuple[str, List[Optional[int]]]] = []
+    for k in STAT_KEYS:
+        all_metrics.append((k, metric_arrays[k]))
+    for k in POST_EXTRA_KEYS:
+        all_metrics.append((k, metric_arrays[k]))
 
-            if denom_full > 0.0:
-                r_full.append(v / denom_full)
-            if denom_core > 0.0:
-                r_core.append(v / denom_core)
-        ratio_vs_full[k] = r_full
-        ratio_vs_core[k] = r_core
+    for name, xs in all_metrics:
+        arr = safe_float_array(xs)
+        s = summarize_metric(name, arr)
+        print(
+            f"{name}: n={int(s['count'])} mean={s['mean']:.3f} min={s['min']:.3f} "
+            f"max={s['max']:.3f} median={s['median']:.3f} p80={s['p80']:.3f} top20_mean={s['top20_mean']:.3f}"
+        )
 
-    for k in sorted(phase_keys):
-        print(summarize_ratio_distribution(f"{k}/takes_us", ratio_vs_full.get(k, [])))
-    for k in sorted(phase_keys):
-        print(summarize_ratio_distribution(f"{k}/total_time", ratio_vs_core.get(k, [])))
+    sec_arr = safe_float_array([int(v) for v in section_gc_time_us])
+    sec_s = summarize_metric("section_gc_time_us", sec_arr)
+    print(
+        f"section_gc_time_us: n={int(sec_s['count'])} mean={sec_s['mean']:.3f} min={sec_s['min']:.3f} "
+        f"max={sec_s['max']:.3f} median={sec_s['median']:.3f} p80={sec_s['p80']:.3f} top20_mean={sec_s['top20_mean']:.3f}"
+    )
 
-    print("\n=== Correlation with takes_us (Pearson) ===")
-    corrs: List[Tuple[str, float]] = []
-    takes_f = [float(v) for v in total_full]
-    for k in sorted(phase_keys):
-        xs = [float(v) for v in metrics[k]]
-        r = pearson_corr(xs, takes_f)
-        corrs.append((k, r))
-    corrs_sorted = sorted(corrs, key=lambda x: (float("-inf") if math.isnan(x[1]) else abs(x[1])), reverse=True)
-    for k, r in corrs_sorted:
-        if math.isnan(r):
-            print(f"{k} vs takes_us: r=nan")
-        else:
-            print(f"{k} vs takes_us: r={r:.6f}")
+    do_arr = safe_float_array([int(v) for v in do_garbage_collect_cs_us])
+    do_s = summarize_metric("do_garbage_collect_cs_us", do_arr)
+    print(
+        f"do_garbage_collect_cs_us: n={int(do_s['count'])} mean={do_s['mean']:.3f} min={do_s['min']:.3f} "
+        f"max={do_s['max']:.3f} median={do_s['median']:.3f} p80={do_s['p80']:.3f} top20_mean={do_s['top20_mean']:.3f}"
+    )
 
-    for k in sorted(phase_keys):
-        xs = [float(v) for v in metrics[k]]
-        out = unique_path(figdir, f"scatter_{k}_vs_takes_us", ".png")
-        plot_scatter_xy(xs, takes_f, f"{k} vs takes_us", f"{k}_us", "takes_us", out)
+    print("")
+    print("=== figures: scatter by sample index ===")
+
+    for name, xs in all_metrics:
+        out = unique_path(os.path.join(figdir, f"{name}.png"))
+        scatter_index_plot(xs, title=name, ylabel=name, out_path=out)
+        print(f"saved {out}")
+
+    out = unique_path(os.path.join(figdir, "section_gc_time_us.png"))
+    scatter_index_plot(
+        [int(v) for v in section_gc_time_us],
+        title="section_gc_time_us",
+        ylabel="section_gc_time_us",
+        out_path=out,
+    )
+    print(f"saved {out}")
+
+    out = unique_path(os.path.join(figdir, "do_garbage_collect_cs_us.png"))
+    scatter_index_plot(
+        [int(v) for v in do_garbage_collect_cs_us],
+        title="do_garbage_collect_cs_us",
+        ylabel="do_garbage_collect_cs_us",
+        out_path=out,
+    )
+    print(f"saved {out}")
+
+    print("")
+    print("=== diagnostic A: phase ratio distribution (phase / approx_segment_total_us) ===")
+    takes_full = np.array(
+        [np.nan if v is None else float(v) for v in metric_arrays["approx_segment_total_us"]],
+        dtype=float,
+    )
+    takes = takes_full[np.isfinite(takes_full)]
+    takes = takes[takes >= 0.0]
+    if takes.size == 0:
+        print("ERROR: approx_segment_total_us has no valid samples")
+        return 3
+
+    for name, xs in all_metrics:
+        if name in ("approx_segment_total_us",):
+            continue
+        phase = np.array([np.nan if v is None else float(v) for v in xs], dtype=float)
+        ratio = phase / takes_full
+        ratio = ratio[np.isfinite(ratio)]
+        ratio = ratio[ratio >= 0.0]
+        if ratio.size == 0:
+            continue
+        p50 = percentile(ratio, 50.0)
+        p90 = percentile(ratio, 90.0)
+        p99 = percentile(ratio, 99.0)
+        print(f"{name}_ratio: n={ratio.size} p50={p50:.6f} p90={p90:.6f} p99={p99:.6f}")
+
+    print("")
+    print("=== diagnostic B: correlation with approx_segment_total_us and phase-vs-takes scatter ===")
+    for name, xs in all_metrics:
+        if name in ("approx_segment_total_us",):
+            continue
+        phase = np.array([np.nan if v is None else float(v) for v in xs], dtype=float)
+        corr = pearson_corr(phase, takes_full)
+        print(f"{name}: corr_with_approx_segment_total_us={corr:.6f}")
+        out = unique_path(os.path.join(figdir, f"{name}_vs_approx_segment_total_us.png"))
+        scatter_xy_plot(
+            x=phase,
+            y=takes_full,
+            title=f"{name} vs approx_segment_total_us",
+            xlabel=name,
+            ylabel="approx_segment_total_us",
+            out_path=out,
+        )
+        print(f"saved {out}")
 
     return 0
 
