@@ -56,8 +56,9 @@ DO_CSGC_KEYS = [
 RE_STAT = re.compile(
     r"""
     ^\[\s*\d+\.\d+\]\s+
-    (?P<tag>BUG:\s*)?mCSGCv2_STAT\s+
-    segno=(?P<segno>\d+)\s+
+    (?P<tag>BUG:\s*)?mCSGCv2_STAT
+    (?:(?:\s+(?:(?!segno=)[^\n]){0,100}))?
+    \s*segno=(?P<segno>\d+)\s+
     req_idx=(?P<req_idx>\d+)\s+
     pid=(?P<pid>\d+)\s+
     tgid=(?P<tgid>\d+)\s+

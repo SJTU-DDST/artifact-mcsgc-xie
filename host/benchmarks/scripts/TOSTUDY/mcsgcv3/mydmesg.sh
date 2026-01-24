@@ -19,8 +19,17 @@ sudo dmesg --color=never > "$old"
 # Drop old ring-buffer messages so the output file cannot contain old dmesg
 sudo dmesg -C
 
-# Follow new messages only; keep your original filters; flush each line to file
-sudo dmesg -w --color=never | awk -v out="$out" '
+echo "Tracing dmesg to: $out"
+echo "Backup saved to : $old"
+echo "Filtering rules : unchanged (two systemd-journald ignores)"
+echo "Speed tweak     : removed per-line fflush; write via single shell redirection"
+
+# Follow new messages only; keep your original filters; FAST path
+# - awk only filters; it prints to stdout
+# - shell appends stdout to $out (buffered, fast)
+# - stdbuf keeps the pipeline line-oriented without forcing a disk flush per line
+sudo dmesg -w --color=never \
+| stdbuf -oL -eL awk '
   /systemd-journald/ &&
   /Failed to write entry/ &&
   /ignoring: Cannot assign requested address/ { next }
@@ -28,5 +37,5 @@ sudo dmesg -w --color=never | awk -v out="$out" '
   /systemd-journald/ &&
   /Journal file corrupted, rotating/ { next }
 
-  { print >> out; fflush() }
-'
+  { print }
+' >> "$out"

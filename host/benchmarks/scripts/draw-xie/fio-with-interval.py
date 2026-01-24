@@ -41,8 +41,9 @@ FILE_PATHS = [
 """
 
 FILE_PATHS = [
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20251213_205447/fio_randwrite_s8_0.86_random/fio.log",   # TODO: set this path ori
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20260119_071459/fio_randwrite_s8_0.86_random/fio.log",  # TODO: set this path csgc
+    #"/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20251213_205447/fio_randwrite_s8_0.86_random/fio.log",   # va-csgc
+   "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20260119_071459/fio_randwrite_s8_0.86_random/fio.log",  # mcsgcv2
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20260123_111807/fio_randwrite_s8_0.86_random/fio.log" # mcsgcv3
 ]
 
 SERIES_NAMES = ["csgc", "mcsgc"]        # Names for the two series (in plot legends)

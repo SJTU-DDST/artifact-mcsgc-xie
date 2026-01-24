@@ -6,18 +6,39 @@ import hashlib
 from typing import List, Tuple
 
 # ====== CONFIGURATION ======
-# Add the substrings you want to match here.
-# A line is kept if it contains ANY of these substrings.
+
+
+KEYWORDS = [
+    "owner_cp_rwsem",
+   "sbi->cp_rwsem",
+   "try lock op"
+]
+
+KEYWORDS = [
+   "f2fs_post_csgc_work"
+]
+
 KEYWORDS = [
     "FAIL",
     "ERROR",
     "enqueue:",
     "Fail",
+    "fail",
     "enqueue:",
     "free csi: segno",
     "do_garbage_collect_cs",
+    "f2fs_post_csgc_work",
+    "f2fs_pre_csgc_work",
+    "CSGC: wait pool timeout",
+    "queue all",
+    "queue all"
 ]
-# ===========================
+
+
+# Switch: whether to include context lines (before/after) around matches.
+# - True: output match lines with MATCH prefix + context + omission markers.
+# - False: output only match lines with MATCH prefix.
+ENABLE_CONTEXT = 0
 
 CONTEXT_BEFORE = 50
 CONTEXT_AFTER = 50
@@ -25,6 +46,7 @@ BRIDGE_GAP_LINES = 100  # If lines between two matches <= 100, print everything 
 
 MATCH_PREFIX = "MATCH "
 OMIT_FMT = "--- OMITTED {n} LINES ---\n"
+# ===========================
 
 
 def _dedup_keep_order(items: List[str]) -> List[str]:
@@ -38,10 +60,7 @@ def _dedup_keep_order(items: List[str]) -> List[str]:
 
 
 def _sanitize_tag(s: str) -> str:
-    # Keep filenames reasonable and portable.
-    # Replace non [A-Za-z0-9._+-] with '_'.
-    s = re.sub(r"[^A-Za-z0-9._+\-]+", "_", s)
-    s = s.strip("_")
+    s = re.sub(r"[^A-Za-z0-9._+\-]+", "_", s).strip("_")
     if not s:
         s = "keywords"
     if len(s) <= 120:
@@ -101,22 +120,35 @@ def main() -> None:
         print("Error: KEYWORDS is empty.")
         sys.exit(1)
 
-    # Deduplicate keywords (duplicates don't change matching, and avoids silly output filename tags).
     keywords_unique = _dedup_keep_order(keywords)
-
-    match_lines, total_lines = _find_matches_and_total_lines(input_path, keywords_unique)
-    segments = _build_segments(match_lines, total_lines)
 
     base = os.path.basename(input_path)
     out_dir = os.path.dirname(input_path) or "."
     keyword_tag = _sanitize_tag("+".join(keywords_unique))
     output_path = os.path.join(out_dir, f"{base}.grep-{keyword_tag}.log")
 
+    if not ENABLE_CONTEXT:
+        # Output only matching lines, keep original order, prefix with MATCH.
+        wrote_any = False
+        with open(input_path, "r", errors="replace") as fin, open(output_path, "w") as fout:
+            for line in fin:
+                if any(k in line for k in keywords_unique):
+                    fout.write(MATCH_PREFIX + line)
+                    wrote_any = True
+        if wrote_any:
+            print(f"Done. Output written to: {output_path}")
+        else:
+            print(f"No matches. Created empty output: {output_path}")
+        return
+
+    # ENABLE_CONTEXT == True: output matches + context segments + omission markers.
+    match_lines, total_lines = _find_matches_and_total_lines(input_path, keywords_unique)
     if not match_lines:
-        # Create an empty output file to make the behavior explicit.
         open(output_path, "w").close()
         print(f"No matches. Created empty output: {output_path}")
         return
+
+    segments = _build_segments(match_lines, total_lines)
 
     seg_idx = 0
     match_idx = 0
@@ -127,7 +159,6 @@ def main() -> None:
             if seg_idx >= len(segments):
                 break
 
-            # Advance segments if needed
             while seg_idx < len(segments) and lineno > segments[seg_idx][1]:
                 prev_end = segments[seg_idx][1]
                 seg_idx += 1
@@ -141,13 +172,11 @@ def main() -> None:
             if lineno < seg_start or lineno > seg_end:
                 continue
 
-            # If we are at the start of a new segment, emit omission marker
             if lineno == seg_start and prev_end is not None:
                 omitted = seg_start - prev_end - 1
                 if omitted > 0:
                     fout.write(OMIT_FMT.format(n=omitted))
 
-            # Move match pointer forward (should usually be aligned)
             while match_idx < len(match_lines) and match_lines[match_idx] < lineno:
                 match_idx += 1
 
