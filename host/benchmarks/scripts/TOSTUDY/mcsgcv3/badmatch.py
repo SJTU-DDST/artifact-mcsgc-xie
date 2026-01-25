@@ -3,7 +3,6 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 
@@ -55,8 +54,7 @@ def extract_timestamp(line: str) -> Optional[float]:
 
 def build_output_path(input_path: str) -> str:
     base = os.path.basename(input_path)
-    date_tag = datetime.now().strftime("%Y%m%d")
-    return f"{base}_{date_tag}.log"
+    return f"{base}badmatch.log"
 
 
 def segno_matcher(segno: int) -> re.Pattern:
@@ -136,7 +134,6 @@ def main() -> int:
     with open(out_path, "w", encoding="utf-8", errors="replace") as out:
         out.write("==== bad match report: starts without ends ====\n")
         out.write(f"input_file={input_path}\n")
-        out.write(f"generated_at={datetime.now().isoformat()}\n")
         out.write(f"good_matches={good_matches}\n")
         out.write(f"bad_matches={bad_matches}\n\n")
 
@@ -163,25 +160,41 @@ def main() -> int:
         out.write("============================================================\n")
         out.write("==== all extracted lines sorted by timestamp (ascending) ====\n")
 
-        sortable: List[Tuple[float, int, str]] = []
-        unsortable: List[Tuple[int, str]] = []
+        sortable: List[Tuple[float, int, str, Optional[int], Optional[str]]] = []
+        unsortable: List[Tuple[int, str, Optional[int], Optional[str]]] = []
 
         for j, ln in extracted_lines_with_idx:
+            pid, comm = extract_pid_comm(ln)
             ts = extract_timestamp(ln)
             if ts is None:
-                unsortable.append((j, ln))
+                unsortable.append((j, ln, pid, comm))
             else:
-                sortable.append((ts, j, ln))
+                sortable.append((ts, j, ln, pid, comm))
 
         sortable.sort(key=lambda x: (x[0], x[1]))
-        for ts, j, ln in sortable:
-            out.write(ln.rstrip("\n") + "\n")
+        unsortable.sort(key=lambda x: x[0])
+
+        combined: List[Tuple[str, Optional[int], Optional[str]]] = []
+        for _, _, ln, pid, comm in sortable:
+            combined.append((ln, pid, comm))
+        for _, ln, pid, comm in unsortable:
+            combined.append((ln, pid, comm))
+
+        last_pos: Dict[Tuple[int, str], int] = {}
+        for idx, (_, pid, comm) in enumerate(combined):
+            if pid is None or comm is None:
+                continue
+            last_pos[(pid, comm)] = idx
+
+        for idx, (ln, pid, comm) in enumerate(combined):
+            prefix = ""
+            if pid is not None and comm is not None:
+                if last_pos.get((pid, comm)) == idx:
+                    prefix = "<LAST_LINE> "
+            out.write(prefix + ln.rstrip("\n") + "\n")
 
         if unsortable:
-            out.write("---- lines without parseable timestamp (kept in original order) ----\n")
-            unsortable.sort(key=lambda x: x[0])
-            for j, ln in unsortable:
-                out.write(ln.rstrip("\n") + "\n")
+            out.write("---- lines without parseable timestamp were appended after sortable lines ----\n")
 
         out.write("\n")
 
