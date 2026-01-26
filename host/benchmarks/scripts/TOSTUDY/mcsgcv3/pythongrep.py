@@ -14,7 +14,9 @@ KEYWORDS = [
    "try lock op"
 ]
 
-
+KEYWORDS = [
+   "pack node info and sit entry "
+]
 
 KEYWORDS = [
     "FAIL",
@@ -32,9 +34,7 @@ KEYWORDS = [
     "queue all"
 ]
 
-KEYWORDS = [
-   "pack node info and sit entry "
-]
+
 
 
 # Switch: whether to include context lines (before/after) around matches.

@@ -16,7 +16,7 @@ light_evaluation=0
 #gc_mode=$1
 mcsgc_mode=$1
 # determine gc_mode based on mcsgc_mode
-if [[ "$mcsgc_mode" == "mcsgc" || "$mcsgc_mode" == "csgc" || "$mcsgc_mode" == "mcsgcdebug" || "$mcsgc_mode" == "csgcdebug" || "$mcsgc_mode" == "mcsgcmakefile" || "$mcsgc_mode" == "mcsgcv2" ]]; then
+if [[ "$mcsgc_mode" == "mcsgc" || "$mcsgc_mode" == "csgc" || "$mcsgc_mode" == "mcsgcdebug" || "$mcsgc_mode" == "csgcdebug" || "$mcsgc_mode" == "mcsgcmakefile" || "$mcsgc_mode" == "mcsgcv2" || "$mcsgc_mode" == "mcsgc8thread" ]]; then
   gc_mode="cs"
 elif [[ "$mcsgc_mode" == "ori" || "$mcsgc_mode" == "iplfs" ]]; then
   gc_mode="$mcsgc_mode"
