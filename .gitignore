@@ -11,3 +11,4 @@ host/benchmarks/scripts/process_data/**
 !/host/benchmarks/scripts/process_data/
 !/host/benchmarks/scripts/process_data/**/*.py
 !/host/benchmarks/scripts/process_data/*.py
+/host/benchmarks/scripts/draw-xie/data-to-draw/**

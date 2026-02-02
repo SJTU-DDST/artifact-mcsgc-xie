@@ -12,22 +12,25 @@ from matplotlib.gridspec import GridSpec
 data_point_number = 30
 # 每条折线对应的日志文件路径列表
 
-input1_label = 'mCSGC'
+input1_label = 'CSGC'
 input1_paths = [
+    "/home/xin/work-xie/csgc/xin_scripts/outputs-cs-t2/20250623_115622/filebench_fileserver_4t_60G_1M_54k_s8/filebench.log"
     #"/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20250714_125712/filebench_fileserver_4t_60G_1M_54k_period_s8/filebench.log"
     #"/home/xin/work-xie/csgc/xin_scripts/test_data_imporatant/mcsgc/findgctime/filebench.log"
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20251214_163756/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
+   # "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20251214_163756/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
 ]
-input2_label = 'v2-mCSGC'
+input2_label = '8t-mCSGC'
 input2_paths = [
-    #"/home/xin/work-xie/csgc/xin_scripts/outputs-cs-t2/20250623_115622/"
-    #"filebench_fileserver_4t_60G_1M_54k_s8/filebench.log"
+    #"/home/xin/work-xie/csgc/xin_scripts/outputs-cs-t2/20250623_115622/filebench_fileserver_4t_60G_1M_54k_s8/filebench.log"
     #"/home/xin/work-xie/csgc/xin_scripts/test_data_imporatant/csgc/20250707_114643/filebench_fileserver_4t_60G_1M_54k_s8/filebench.log"
    # "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20250714_115208/filebench_fileserver_4t_60G_1M_54k_period_s8/filebench.log"
    #"/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20251214_165157/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
 "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20260114_043623/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
 ]
 
+input2_paths = [
+"/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc8thread/20260130_124404/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
+]
 
 # ================= 用户配置 =================
 

@@ -46,14 +46,14 @@ FILE_PATHS = [
     "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20260123_111807/fio_randwrite_s8_0.86_random/fio.log" # mcsgcv3
 ]
 FILE_PATHS = [
-   # "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20251213_205447/fio_randwrite_s8_0.86_random/fio.log",   # va-csgc
-  "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20260119_071459/fio_randwrite_s8_0.86_random/fio.log",  # mcsgcv2
+   "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgc/20251213_205447/fio_randwrite_s8_0.86_random/fio.log",   # va-csgc
+  #"/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc/20260119_071459/fio_randwrite_s8_0.86_random/fio.log",  # mcsgcv2
    # "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc8thread/20260126_105641/fio_randwrite_s8_0.86_random/fio.log", # mcsgcv3
     "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc8thread/20260130_123028/fio_randwrite_s8_0.86_random/fio.log" # mcsgcv5
 ]
 
 
-SERIES_NAMES = ["csgc", "mcsgc"]        # Names for the two series (in plot legends)
+SERIES_NAMES = ["csgc", "mcsgc8thread"]        # Names for the two series (in plot legends)
 EPS = 100000                             # Tolerance for tiny negative diffs (float errors)
 OUT_DIR = "./figs"                     # Output directory for figures
 MBYTES_PER_SEC_DIVISOR = 1e6          # For MB/s from bytes/second (decimal MB)
@@ -394,7 +394,24 @@ def prepare_output_dir(dirpath: str):
     except Exception as e:
         error_exit(f"Failed to create output directory '{dirpath}': {e}")
 
-def plot_lines_dual(time_lists, y_lists, names, y_label, title, annotate_values=None, base_filename="plot"):
+def safe_dir_component(s: str, max_len: int = 140) -> str:
+    s = s.strip()
+    s = re.sub(r"\s+", "_", s)
+    s = re.sub(r"[^A-Za-z0-9._-]+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("._-")
+    if not s:
+        s = "run"
+    if len(s) > max_len:
+        s = s[:max_len]
+    return s
+
+def make_run_output_dir(base_dir: str, tag: str) -> str:
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_tag = safe_dir_component(tag)
+    subdir = f"{ts}_{safe_tag}"
+    return os.path.join(base_dir, subdir)
+
+def plot_lines_dual(time_lists, y_lists, names, y_label, title, annotate_values=None, base_filename="plot", out_dir=None):
     """
     Plot two line series with their own time axes. Axes start at 0.
     Annotate line-end with provided annotate_values (strings) in the same color.
@@ -430,8 +447,10 @@ def plot_lines_dual(time_lists, y_lists, names, y_label, title, annotate_values=
             ax.text(x_last + dx, max(0.0, y_last + dy), str(anno), color=color, fontsize=9)
 
     # Save
-    prepare_output_dir(OUT_DIR)
-    out_path = unique_png_path(os.path.join(OUT_DIR, base_filename))
+    if out_dir is None:
+        out_dir = OUT_DIR
+    prepare_output_dir(out_dir)
+    out_path = unique_png_path(os.path.join(out_dir, base_filename))
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -491,6 +510,9 @@ def main():
     date_str = datetime.now().strftime("%Y%m%d")
     base_tag = f"{bmname}_{tags[0]}_{tags[1]}_{SERIES_NAMES[0]}_{SERIES_NAMES[1]}_{date_str}"
 
+    run_out_dir = make_run_output_dir(OUT_DIR, base_tag)
+    prepare_output_dir(run_out_dir)
+    print(f"Figures output dir: {run_out_dir}")
 
     # 6.1 Instant BW plot (MB/s), annotate last io_with_time (GiB) per file
     ann_io_gib_last = [f"{io_gib_lists[0][-1]:.3f} GiB", f"{io_gib_lists[1][-1]:.3f} GiB"]
@@ -502,6 +524,7 @@ def main():
         title="Instantaneous Bandwidth vs Time",
         annotate_values=ann_io_gib_last,
         base_filename=f"{base_tag}_bw_inst",
+        out_dir=run_out_dir,
     )
 
     # 6.2 Instant IOPS plot (ops/s), annotate last overall iops_list value
@@ -514,6 +537,7 @@ def main():
         title="Instantaneous IOPS vs Time",
         annotate_values=ann_iops_last,
         base_filename=f"{base_tag}_iops_inst",
+        out_dir=run_out_dir,
     )
 
     # 6.3 Reported WRITE bw (MB/s) vs time (raw)
@@ -525,6 +549,7 @@ def main():
         title="Reported WRITE BW vs Time",
         annotate_values=None,
         base_filename=f"{base_tag}_write_mbps",
+        out_dir=run_out_dir,
     )
 
     print("All done.")
