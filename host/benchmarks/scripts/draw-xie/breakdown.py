@@ -13,6 +13,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
+STAT_PREFIXES = [
+    "mCSGCv2_STAT",
+    "mCSGCv2_STAT without wait",
+    "CSGC-va_STAT",
+]
+
+
 STAT_KEYS = [
     "section_sync_us",
     "pre_queue_delay_us",
@@ -53,12 +60,13 @@ DO_CSGC_KEYS = [
 ]
 
 
+STAT_PREFIX_PATTERN = "|".join(re.escape(p) for p in sorted(STAT_PREFIXES, key=len, reverse=True))
+
 RE_STAT = re.compile(
-    r"""
+    rf"""
     ^\[\s*\d+\.\d+\]\s+
-    (?P<tag>BUG:\s*)?mCSGCv2_STAT
-    (?:(?:\s+(?:(?!segno=)[^\n]){0,100}))?
-    \s*segno=(?P<segno>\d+)\s+
+    (?P<tag>BUG:\s*)?(?P<prefix>{STAT_PREFIX_PATTERN})\s+
+    segno=(?P<segno>\d+)\s+
     req_idx=(?P<req_idx>\d+)\s+
     pid=(?P<pid>\d+)\s+
     tgid=(?P<tgid>\d+)\s+
@@ -266,12 +274,16 @@ def main() -> int:
     do_tgid: List[int] = []
     do_comm: List[str] = []
 
+    seen_stat_prefixes = set()
+
     with open(args.logfile, "r", errors="replace") as f:
         for line in f:
             line = line.rstrip("\n")
 
             m = RE_STAT.match(line)
             if m:
+                seen_stat_prefixes.add(m.group("prefix"))
+
                 idx = len(segno)
                 s = int(m.group("segno"))
                 segno.append(s)
@@ -319,10 +331,21 @@ def main() -> int:
                 do_comm.append(m.group("comm"))
                 continue
 
+    if len(seen_stat_prefixes) == 0:
+        print("ERROR: no STAT lines matched any configured prefix")
+        return 4
+
+    if len(seen_stat_prefixes) > 1:
+        print(f"ERROR: multiple STAT prefixes found in one file: {sorted(seen_stat_prefixes)}")
+        return 5
+
+    used_prefix = next(iter(seen_stat_prefixes))
+
     seg_count = len(segno)
     sec_count = len(section_gc_time_us)
 
     print(f"figdir={figdir}")
+    print(f"stat_prefix={used_prefix}")
     print(f"segment_samples={seg_count}")
     print(f"section_samples={sec_count}")
 
