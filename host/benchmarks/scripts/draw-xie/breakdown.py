@@ -17,7 +17,7 @@ STAT_PREFIXES = [
     "mCSGCv2_STAT",
     "mCSGCv2_STAT without wait",
     "CSGC-va_STAT",
-    "mCSGCv2_STAT 2thread without wait"
+    "mCSGCv2_STAT 2thread without wait",
 ]
 
 
@@ -107,24 +107,6 @@ RE_DO_CSGC = re.compile(
     """,
     re.VERBOSE,
 )
-
-
-class Tee:
-    def __init__(self, *streams: TextIO):
-        self.streams = streams
-
-    def write(self, data: str) -> int:
-        for s in self.streams:
-            s.write(data)
-            s.flush()
-        return len(data)
-
-    def flush(self) -> None:
-        for s in self.streams:
-            s.flush()
-
-    def isatty(self) -> bool:
-        return any(getattr(s, "isatty", lambda: False)() for s in self.streams)
 
 
 def ensure_dir(path: str) -> None:
@@ -247,7 +229,7 @@ def parse_kv_blob(blob: str) -> Dict[str, int]:
     return kv
 
 
-def derive_figdir(logfile: str) -> str:
+def derive_run_dir(logfile: str) -> str:
     base = os.path.basename(logfile)
     if base.endswith(".log"):
         stem = base[:-4]
@@ -267,15 +249,22 @@ def main() -> int:
     ap.add_argument("logfile", help="path to kernel log file")
     args = ap.parse_args()
 
-    figdir = derive_figdir(args.logfile)
-    result_path = os.path.join(figdir, "result.txt")
+    run_dir = derive_run_dir(args.logfile)
+    png_dir = os.path.join(run_dir, "pngs")
+    ensure_dir(png_dir)
+    result_path = os.path.join(run_dir, "result.txt")
 
     original_stdout = sys.stdout
     original_stderr = sys.stderr
     result_fp = open(result_path, "w", encoding="utf-8")
-    tee = Tee(original_stdout, result_fp)
-    sys.stdout = tee
-    sys.stderr = tee
+
+    def emit(message: str = "", to_file: bool = True, stderr: bool = False) -> None:
+        stream = original_stderr if stderr else original_stdout
+        print(message, file=stream)
+        stream.flush()
+        if to_file:
+            print(message, file=result_fp)
+            result_fp.flush()
 
     try:
         segno: List[int] = []
@@ -360,11 +349,11 @@ def main() -> int:
                     continue
 
         if len(seen_stat_prefixes) == 0:
-            print("ERROR: no STAT lines matched any configured prefix")
+            emit("ERROR: no STAT lines matched any configured prefix", stderr=True)
             return 4
 
         if len(seen_stat_prefixes) > 1:
-            print(f"ERROR: multiple STAT prefixes found in one file: {sorted(seen_stat_prefixes)}")
+            emit(f"ERROR: multiple STAT prefixes found in one file: {sorted(seen_stat_prefixes)}", stderr=True)
             return 5
 
         used_prefix = next(iter(seen_stat_prefixes))
@@ -372,18 +361,19 @@ def main() -> int:
         seg_count = len(segno)
         sec_count = len(section_gc_time_us)
 
-        print(f"figdir={figdir}")
-        print(f"result_file={result_path}")
-        print(f"stat_prefix={used_prefix}")
-        print(f"segment_samples={seg_count}")
-        print(f"section_samples={sec_count}")
+        emit(f"run_dir={run_dir}")
+        emit(f"png_dir={png_dir}")
+        emit(f"result_file={result_path}")
+        emit(f"stat_prefix={used_prefix}")
+        emit(f"segment_samples={seg_count}")
+        emit(f"section_samples={sec_count}")
 
         if sec_count * 8 != seg_count:
-            print(f"ERROR: segment_samples != section_samples*8 ({seg_count} != {sec_count}*8)")
+            emit(f"ERROR: segment_samples != section_samples*8 ({seg_count} != {sec_count}*8)", stderr=True)
             return 2
 
-        print("")
-        print("=== basic statistics (microseconds) ===")
+        emit("")
+        emit("=== basic statistics (microseconds) ===")
 
         all_metrics: List[Tuple[str, List[Optional[int]]]] = []
         for k in STAT_KEYS:
@@ -394,53 +384,53 @@ def main() -> int:
         for name, xs in all_metrics:
             arr = safe_float_array(xs)
             s = summarize_metric(name, arr)
-            print(
+            emit(
                 f"{name}: n={int(s['count'])} mean={s['mean']:.3f} min={s['min']:.3f} "
                 f"max={s['max']:.3f} median={s['median']:.3f} p80={s['p80']:.3f} top20_mean={s['top20_mean']:.3f}"
             )
 
         sec_arr = safe_float_array([int(v) for v in section_gc_time_us])
         sec_s = summarize_metric("section_gc_time_us", sec_arr)
-        print(
+        emit(
             f"section_gc_time_us: n={int(sec_s['count'])} mean={sec_s['mean']:.3f} min={sec_s['min']:.3f} "
             f"max={sec_s['max']:.3f} median={sec_s['median']:.3f} p80={sec_s['p80']:.3f} top20_mean={sec_s['top20_mean']:.3f}"
         )
 
         do_arr = safe_float_array([int(v) for v in do_garbage_collect_cs_us])
         do_s = summarize_metric("do_garbage_collect_cs_us", do_arr)
-        print(
+        emit(
             f"do_garbage_collect_cs_us: n={int(do_s['count'])} mean={do_s['mean']:.3f} min={do_s['min']:.3f} "
             f"max={do_s['max']:.3f} median={do_s['median']:.3f} p80={do_s['p80']:.3f} top20_mean={do_s['top20_mean']:.3f}"
         )
 
-        print("")
-        print("=== figures: scatter by sample index ===")
+        emit("")
+        emit("=== figures: scatter by sample index ===")
 
         for name, xs in all_metrics:
-            out = unique_path(os.path.join(figdir, f"{name}.png"))
+            out = unique_path(os.path.join(png_dir, f"{name}.png"))
             scatter_index_plot(xs, title=name, ylabel=name, out_path=out)
-            print(f"saved {out}")
+            emit(f"saved {out}", to_file=False)
 
-        out = unique_path(os.path.join(figdir, "section_gc_time_us.png"))
+        out = unique_path(os.path.join(png_dir, "section_gc_time_us.png"))
         scatter_index_plot(
             [int(v) for v in section_gc_time_us],
             title="section_gc_time_us",
             ylabel="section_gc_time_us",
             out_path=out,
         )
-        print(f"saved {out}")
+        emit(f"saved {out}", to_file=False)
 
-        out = unique_path(os.path.join(figdir, "do_garbage_collect_cs_us.png"))
+        out = unique_path(os.path.join(png_dir, "do_garbage_collect_cs_us.png"))
         scatter_index_plot(
             [int(v) for v in do_garbage_collect_cs_us],
             title="do_garbage_collect_cs_us",
             ylabel="do_garbage_collect_cs_us",
             out_path=out,
         )
-        print(f"saved {out}")
+        emit(f"saved {out}", to_file=False)
 
-        print("")
-        print("=== diagnostic A: phase ratio distribution (phase / approx_segment_total_us) ===")
+        emit("")
+        emit("=== diagnostic A: phase ratio distribution (phase / approx_segment_total_us) ===")
         takes_full = np.array(
             [np.nan if v is None else float(v) for v in metric_arrays["approx_segment_total_us"]],
             dtype=float,
@@ -448,7 +438,7 @@ def main() -> int:
         takes = takes_full[np.isfinite(takes_full)]
         takes = takes[takes >= 0.0]
         if takes.size == 0:
-            print("ERROR: approx_segment_total_us has no valid samples")
+            emit("ERROR: approx_segment_total_us has no valid samples", stderr=True)
             return 3
 
         for name, xs in all_metrics:
@@ -463,17 +453,17 @@ def main() -> int:
             p50 = percentile(ratio, 50.0)
             p90 = percentile(ratio, 90.0)
             p99 = percentile(ratio, 99.0)
-            print(f"{name}_ratio: n={ratio.size} p50={p50:.6f} p90={p90:.6f} p99={p99:.6f}")
+            emit(f"{name}_ratio: n={ratio.size} p50={p50:.6f} p90={p90:.6f} p99={p99:.6f}")
 
-        print("")
-        print("=== diagnostic B: correlation with approx_segment_total_us and phase-vs-takes scatter ===")
+        emit("")
+        emit("=== diagnostic B: correlation with approx_segment_total_us and phase-vs-takes scatter ===")
         for name, xs in all_metrics:
             if name in ("approx_segment_total_us",):
                 continue
             phase = np.array([np.nan if v is None else float(v) for v in xs], dtype=float)
             corr = pearson_corr(phase, takes_full)
-            print(f"{name}: corr_with_approx_segment_total_us={corr:.6f}")
-            out = unique_path(os.path.join(figdir, f"{name}_vs_approx_segment_total_us.png"))
+            emit(f"{name}: corr_with_approx_segment_total_us={corr:.6f}")
+            out = unique_path(os.path.join(png_dir, f"{name}_vs_approx_segment_total_us.png"))
             scatter_xy_plot(
                 x=phase,
                 y=takes_full,
@@ -482,13 +472,11 @@ def main() -> int:
                 ylabel="approx_segment_total_us",
                 out_path=out,
             )
-            print(f"saved {out}")
+            emit(f"saved {out}", to_file=False)
 
         return 0
 
     finally:
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
         result_fp.close()
 
 
