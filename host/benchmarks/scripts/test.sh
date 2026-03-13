@@ -26,7 +26,7 @@ cs_modes=(
     "mcsgcv2"
     "mcsgc8t"
     "mcsgc2t"
-    "csgc-va"
+    "csgcva"
 )
 
 is_in_list() {
