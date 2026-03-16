@@ -11,9 +11,7 @@ import matplotlib.pyplot as plt
 # ==============================
 
 # Labels (legend)
-CSGC1 = "va-csgc1"
-CSGC2 = "mcsgcv2"
-CSGC3 = "mcsgc8thread"
+
 
 CSGC1 = "va-csgc1"
 CSGC2 = "va-csgc2"
@@ -23,6 +21,10 @@ CSGC1 = "mcsgc8t-1"
 CSGC2 = "mcsgc8t-2"
 CSGC3 = "mcsgc8t-3"
 
+CSGC1 = "va-csgc1"
+CSGC2 = "mcsgcv2"
+CSGC3 = "mcsgc8thread"
+
 # Absolute paths to filebench log files (must be absolute paths)
 FILE_PATH_1 = "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/va-csgc/filebench-150s/20260130_131334/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
 FILE_PATH_2 = "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/va-csgc/filebench-150s/20260130_132051/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
@@ -31,6 +33,10 @@ FILE_PATH_3 = "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-
 FILE_PATH_1 = "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8thread/filebench-150s/20260205_111343/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
 FILE_PATH_2 = "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8thread/filebench-150s/20260205_112114/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
 FILE_PATH_3 = "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8thread/filebench-150s/20260205_112607/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
+
+FILE_PATH_1 = "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgcva/20260312_212818/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
+FILE_PATH_2 = "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc2t/20260312_210730/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
+FILE_PATH_3 = "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc8t/20260312_171842/filebench_fileserver_4t_60G_1M_54k_period_150s_s8/filebench.log"
 
 # Plot style (keep consistent with original script)
 COLOR_1 = "#5E96E6"

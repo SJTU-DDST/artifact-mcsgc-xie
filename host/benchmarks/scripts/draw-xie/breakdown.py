@@ -5,7 +5,7 @@ import sys
 import math
 from collections import defaultdict, deque
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple, TextIO
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import matplotlib
@@ -244,6 +244,45 @@ def derive_run_dir(logfile: str) -> str:
     return cand
 
 
+def analyze_lseg_lsection_pattern(events: List[str]) -> Dict[Tuple[int, int], int]:
+    pattern_counts: Dict[Tuple[int, int], int] = defaultdict(int)
+
+    seg_run = 0
+    section_run = 0
+
+    for ev in events:
+        if ev == "seg":
+            if section_run > 0:
+                pattern_counts[(seg_run, section_run)] += 1
+                seg_run = 1
+                section_run = 0
+            else:
+                seg_run += 1
+        elif ev == "section":
+            if seg_run == 0 and section_run == 0:
+                section_run = 1
+            else:
+                section_run += 1
+        else:
+            raise ValueError(f"unknown event type: {ev}")
+
+    if seg_run > 0 or section_run > 0:
+        pattern_counts[(seg_run, section_run)] += 1
+
+    return dict(pattern_counts)
+
+
+def invalid_lseg_lsection_patterns(
+    pattern_counts: Dict[Tuple[int, int], int]
+) -> Dict[Tuple[int, int], int]:
+    bad: Dict[Tuple[int, int], int] = {}
+    for pair, cnt in pattern_counts.items():
+        a, b = pair
+        if not (1 <= a <= 8 and b == 1):
+            bad[pair] = cnt
+    return bad
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("logfile", help="path to kernel log file")
@@ -292,6 +331,7 @@ def main() -> int:
         do_comm: List[str] = []
 
         seen_stat_prefixes = set()
+        lseg_lsection_events: List[str] = []
 
         with open(args.logfile, "r", errors="replace") as f:
             for line in f:
@@ -300,6 +340,7 @@ def main() -> int:
                 m = RE_STAT.match(line)
                 if m:
                     seen_stat_prefixes.add(m.group("prefix"))
+                    lseg_lsection_events.append("seg")
 
                     idx = len(segno)
                     s = int(m.group("segno"))
@@ -333,6 +374,7 @@ def main() -> int:
 
                 m = RE_SECTION.match(line)
                 if m:
+                    lseg_lsection_events.append("section")
                     section_gc_time_us.append(int(m.group("section_gc_time")))
                     section_pid.append(int(m.group("pid")))
                     section_tgid.append(int(m.group("tgid")))
@@ -347,6 +389,28 @@ def main() -> int:
                     do_tgid.append(int(m.group("tgid")))
                     do_comm.append(m.group("comm"))
                     continue
+
+        pattern_counts = analyze_lseg_lsection_pattern(lseg_lsection_events)
+        bad_patterns = invalid_lseg_lsection_patterns(pattern_counts)
+
+        emit("=== Lseg/Lsection pattern statistics ===")
+        emit("Lseg means a line matched by RE_STAT.")
+        emit("Lsection means a line matched by RE_SECTION.")
+        emit("Only the relative order of these two kinds of lines is considered.")
+        emit("Each pair (a, b) means: a consecutive Lseg lines followed by b consecutive Lsection lines.")
+        emit(f"total_Lseg={len(segno)}")
+        emit(f"total_Lsection={len(section_gc_time_us)}")
+        emit("pattern_counts:")
+        for (a, b), cnt in sorted(pattern_counts.items()):
+            emit(f"  (a,b)=({a},{b}) count={cnt}")
+        emit("")
+
+        if bad_patterns:
+            emit("ERROR: invalid Lseg/Lsection pattern(s) found.", stderr=True)
+            emit("Allowed pattern constraints are: 1 <= a <= 8 and b == 1.", stderr=True)
+            for (a, b), cnt in sorted(bad_patterns.items()):
+                emit(f"  invalid (a,b)=({a},{b}) count={cnt}", stderr=True)
+            return 6
 
         if len(seen_stat_prefixes) == 0:
             emit("ERROR: no STAT lines matched any configured prefix", stderr=True)
@@ -367,10 +431,6 @@ def main() -> int:
         emit(f"stat_prefix={used_prefix}")
         emit(f"segment_samples={seg_count}")
         emit(f"section_samples={sec_count}")
-
-        if sec_count * 8 != seg_count:
-            emit(f"ERROR: segment_samples != section_samples*8 ({seg_count} != {sec_count}*8)", stderr=True)
-            return 2
 
         emit("")
         emit("=== basic statistics (microseconds) ===")

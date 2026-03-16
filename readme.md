@@ -1,5 +1,5 @@
 # 现在常跑的实验
-con06: fio，单个大文件，4个线程各自随机写20GB
+con06: fio，单个51GB大文件，4个线程各自随机写20GB
 con01: filebench,54K个1M小文件 300秒  _4t_60G_1M_54k_ **但是三百秒可能跑不通，现在用下面这个更短的版本**
 con21:filebench,和上面比就是时间缩短到150秒 fileserver_4t_60G_1M_54k_period_150s h
 
