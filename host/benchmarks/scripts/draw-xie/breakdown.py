@@ -18,6 +18,8 @@ STAT_PREFIXES = [
     "mCSGCv2_STAT without wait",
     "CSGC-va_STAT",
     "mCSGCv2_STAT 2thread without wait",
+    "mCSGC8t_STAT without wait",
+    "mCSGC2t_STAT without wait"
 ]
 
 
