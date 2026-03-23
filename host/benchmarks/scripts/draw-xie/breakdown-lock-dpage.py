@@ -4,15 +4,28 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, TextIO, Tuple
+from typing import Dict, List, Optional, Set, TextIO
 
 import numpy as np
 
 
 BREAKDOWN_PREFIX = "BREAKDOWN_M"
 
+STAT_PREFIXES = [
+    "mCSGCv2_STAT",
+    "mCSGCv2_STAT without wait",
+    "CSGC-va_STAT",
+    "mCSGCv2_STAT 2thread without wait",
+    "mCSGC8t_STAT without wait",
+    "mCSGC2t_STAT without wait",
+]
+
+STAT_PREFIX_PATTERN = "|".join(
+    re.escape(p) for p in sorted(STAT_PREFIXES, key=len, reverse=True)
+)
 
 RE_TIMESTAMP = re.compile(r"^\[(?P<ts>\d+\.\d+)\]\s+")
+
 RE_PREPARE = re.compile(
     r"""
     ^\[(?P<ts>\d+\.\d+)\]\s+
@@ -23,6 +36,7 @@ RE_PREPARE = re.compile(
     """,
     re.VERBOSE,
 )
+
 RE_FIRST_FOR = re.compile(
     r"""
     ^\[(?P<ts>\d+\.\d+)\]\s+
@@ -32,6 +46,7 @@ RE_FIRST_FOR = re.compile(
     """,
     re.VERBOSE,
 )
+
 RE_LOCK_FOLIO = re.compile(
     r"""
     ^\[(?P<ts>\d+\.\d+)\]\s+
@@ -40,11 +55,22 @@ RE_LOCK_FOLIO = re.compile(
     """,
     re.VERBOSE,
 )
+
 RE_CHECK_FOLIO = re.compile(
     r"""
     ^\[(?P<ts>\d+\.\d+)\]\s+
     BREAKDOWN_M<pid=(?P<pid>\d+)\s+comm=(?P<comm>[^>]+)>:
     segno=(?P<segno>\d+),\s+check_folio_us=(?P<check_folio_us>\d+)\s*$
+    """,
+    re.VERBOSE,
+)
+
+RE_OUTER_STAT = re.compile(
+    rf"""
+    ^\[(?P<ts>\d+\.\d+)\]\s+
+    (?P<prefix>{STAT_PREFIX_PATTERN})\s+
+    segno=(?P<segno>\d+)\s+
+    (?P<kv>.*)$
     """,
     re.VERBOSE,
 )
@@ -208,24 +234,6 @@ def parse_kv_pairs(text: str) -> Dict[str, str]:
     return {k: v for k, v in RE_KV.findall(text)}
 
 
-def parse_timestamp(line: str) -> float:
-    m = RE_TIMESTAMP.match(line)
-    if not m:
-        raise RuntimeError(f"Failed to parse timestamp from line: {line}")
-    return float(m.group("ts"))
-
-
-def get_prefix_before_segno(line: str) -> str:
-    m = RE_TIMESTAMP.match(line)
-    if not m:
-        raise RuntimeError(f"Failed to parse prefix from line: {line}")
-    after_ts = line[m.end():]
-    pos = after_ts.find(" segno=")
-    if pos < 0:
-        raise RuntimeError(f"Failed to find ' segno=' in overall stat line: {line}")
-    return after_ts[:pos].strip()
-
-
 def safe_float_array(xs: List[float]) -> np.ndarray:
     arr = np.array(xs, dtype=float)
     arr = arr[np.isfinite(arr)]
@@ -321,7 +329,7 @@ def finalize_record(rec: OpenRecord) -> Dict[str, object]:
     )
     outer_inner_gap_us = rec.pre_data_lock_us - get_lock_gc_data_pages_total_us
 
-    row: Dict[str, object] = {
+    return {
         "segno": rec.segno,
         "req_idx": rec.req_idx,
         "inner_pid": rec.inner_pid,
@@ -357,7 +365,16 @@ def finalize_record(rec: OpenRecord) -> Dict[str, object]:
         "get_lock_gc_data_pages_total_us": get_lock_gc_data_pages_total_us,
         "outer_inner_gap_us": outer_inner_gap_us,
     }
-    return row
+
+
+def ensure_same_set(name_a: str, set_a: Set[int], name_b: str, set_b: Set[int]) -> None:
+    if set_a != set_b:
+        only_a = sorted(set_a - set_b)
+        only_b = sorted(set_b - set_a)
+        raise RuntimeError(
+            f"Segno set mismatch between {name_a} and {name_b}; "
+            f"only_in_{name_a}={only_a[:20]} only_in_{name_b}={only_b[:20]}"
+        )
 
 
 def main() -> int:
@@ -387,7 +404,20 @@ def main() -> int:
 
         open_records: Dict[int, OpenRecord] = {}
         completed_rows: List[Dict[str, object]] = []
-        outer_prefixes: set = set()
+
+        seen_outer_prefixes: Set[str] = set()
+        outer_stat_count = 0
+        outer_stat_segno_set: Set[int] = set()
+
+        prepare_count = 0
+        first_for_count = 0
+        lock_folio_count = 0
+        check_folio_count = 0
+
+        prepare_segno_set: Set[int] = set()
+        first_for_segno_set: Set[int] = set()
+        lock_folio_segno_set: Set[int] = set()
+        check_folio_segno_set: Set[int] = set()
 
         with open(logfile, "r", errors="replace") as fp:
             for line_no, raw_line in enumerate(fp, start=1):
@@ -398,16 +428,22 @@ def main() -> int:
                     segno = int(m.group("segno"))
                     pid = int(m.group("pid"))
                     comm = m.group("comm")
+
+                    prepare_count += 1
+                    prepare_segno_set.add(segno)
+
                     rec = open_records.get(segno)
                     if rec is None:
                         rec = OpenRecord(segno=segno)
                         open_records[segno] = rec
+
                     rec.set_once(
                         "prepare_before_first_for_us",
                         int(m.group("prepare_before_first_for_us")),
                         line_no,
                     )
                     rec.set_once("prepare_ts", float(m.group("ts")), line_no)
+
                     if rec.inner_pid is None:
                         rec.inner_pid = pid
                     if rec.inner_comm is None:
@@ -420,21 +456,30 @@ def main() -> int:
                     pid = int(m.group("pid"))
                     comm = m.group("comm")
                     kv = parse_kv_pairs(m.group("kv"))
+
                     missing = [k for k in FIRST_FOR_KEYS if k not in kv]
                     if missing:
                         raise RuntimeError(
                             f"Missing keys in first_for line at line {line_no}: {', '.join(missing)}"
                         )
+
                     segno = int(kv["segno"])
+
+                    first_for_count += 1
+                    first_for_segno_set.add(segno)
+
                     rec = open_records.get(segno)
                     if rec is None:
                         rec = OpenRecord(segno=segno)
                         open_records[segno] = rec
+
                     rec.set_once("first_for_ts", ts, line_no)
+
                     if rec.inner_pid is None:
                         rec.inner_pid = pid
                     if rec.inner_comm is None:
                         rec.inner_comm = comm
+
                     for key in FIRST_FOR_KEYS:
                         if key == "segno":
                             continue
@@ -444,12 +489,18 @@ def main() -> int:
                 m = RE_LOCK_FOLIO.match(line)
                 if m:
                     segno = int(m.group("segno"))
+
+                    lock_folio_count += 1
+                    lock_folio_segno_set.add(segno)
+
                     rec = open_records.get(segno)
                     if rec is None:
                         rec = OpenRecord(segno=segno)
                         open_records[segno] = rec
+
                     rec.set_once("lock_folio_us", int(m.group("lock_folio_us")), line_no)
                     rec.set_once("lock_folio_ts", float(m.group("ts")), line_no)
+
                     if rec.inner_pid is None:
                         rec.inner_pid = int(m.group("pid"))
                     if rec.inner_comm is None:
@@ -459,38 +510,51 @@ def main() -> int:
                 m = RE_CHECK_FOLIO.match(line)
                 if m:
                     segno = int(m.group("segno"))
+
+                    check_folio_count += 1
+                    check_folio_segno_set.add(segno)
+
                     rec = open_records.get(segno)
                     if rec is None:
                         rec = OpenRecord(segno=segno)
                         open_records[segno] = rec
+
                     rec.set_once("check_folio_us", int(m.group("check_folio_us")), line_no)
                     rec.set_once("check_folio_ts", float(m.group("ts")), line_no)
+
                     if rec.inner_pid is None:
                         rec.inner_pid = int(m.group("pid"))
                     if rec.inner_comm is None:
                         rec.inner_comm = m.group("comm")
                     continue
 
-                if BREAKDOWN_PREFIX in line:
-                    continue
+                m = RE_OUTER_STAT.match(line)
+                if m:
+                    prefix = m.group("prefix")
+                    segno = int(m.group("segno"))
+                    kv = parse_kv_pairs(m.group("kv"))
 
-                if "segno=" in line and "pre_data_lock_us=" in line:
-                    ts = parse_timestamp(line)
-                    prefix = get_prefix_before_segno(line)
-                    outer_prefixes.add(prefix)
+                    if "pre_data_lock_us" not in kv:
+                        raise RuntimeError(
+                            f"Malformed outer stat line at line {line_no}: missing pre_data_lock_us"
+                        )
 
-                    kv = parse_kv_pairs(line)
-                    if "segno" not in kv or "pre_data_lock_us" not in kv:
-                        raise RuntimeError(f"Malformed outer stat line at line {line_no}: {line}")
+                    seen_outer_prefixes.add(prefix)
+                    outer_stat_count += 1
+                    outer_stat_segno_set.add(segno)
 
-                    segno = int(kv["segno"])
+                    if len(seen_outer_prefixes) > 1:
+                        raise RuntimeError(
+                            f"Multiple outer stat prefixes found in one file: {sorted(seen_outer_prefixes)}"
+                        )
+
                     rec = open_records.get(segno)
                     if rec is None:
                         raise RuntimeError(
                             f"Outer stat line found before BREAKDOWN_M stages for segno={segno} at line {line_no}"
                         )
 
-                    rec.set_once("outer_ts", ts, line_no)
+                    rec.set_once("outer_ts", float(m.group("ts")), line_no)
                     rec.outer_prefix = prefix
 
                     if "pid" in kv:
@@ -511,6 +575,18 @@ def main() -> int:
                     del open_records[segno]
                     continue
 
+        if not seen_outer_prefixes:
+            raise RuntimeError(
+                "No outer stat lines matched any configured prefix; check STAT_PREFIXES or log format"
+            )
+
+        if len(seen_outer_prefixes) != 1:
+            raise RuntimeError(
+                f"Expected exactly one outer stat prefix in the file, got: {sorted(seen_outer_prefixes)}"
+            )
+
+        used_outer_prefix = next(iter(seen_outer_prefixes))
+
         if open_records:
             leftovers = sorted(open_records.keys())
             raise RuntimeError(
@@ -520,14 +596,50 @@ def main() -> int:
         if not completed_rows:
             raise RuntimeError("No completed get_lock_gc_data_pages records were extracted")
 
-        if not outer_prefixes:
-            raise RuntimeError("No outer prefixes were extracted")
+        completed_segno_set = {int(r["segno"]) for r in completed_rows}
+        completed_count = len(completed_rows)
+
+        if outer_stat_count != completed_count:
+            raise RuntimeError(
+                f"Outer stat count != completed record count ({outer_stat_count} != {completed_count})"
+            )
+
+        if prepare_count != completed_count:
+            raise RuntimeError(
+                f"Prepare BREAKDOWN_M line count != completed record count ({prepare_count} != {completed_count})"
+            )
+
+        if first_for_count != completed_count:
+            raise RuntimeError(
+                f"First-for BREAKDOWN_M line count != completed record count ({first_for_count} != {completed_count})"
+            )
+
+        if lock_folio_count != completed_count:
+            raise RuntimeError(
+                f"Lock-folio BREAKDOWN_M line count != completed record count ({lock_folio_count} != {completed_count})"
+            )
+
+        if check_folio_count != completed_count:
+            raise RuntimeError(
+                f"Check-folio BREAKDOWN_M line count != completed record count ({check_folio_count} != {completed_count})"
+            )
+
+        ensure_same_set("outer_stat", outer_stat_segno_set, "completed", completed_segno_set)
+        ensure_same_set("prepare", prepare_segno_set, "completed", completed_segno_set)
+        ensure_same_set("first_for", first_for_segno_set, "completed", completed_segno_set)
+        ensure_same_set("lock_folio", lock_folio_segno_set, "completed", completed_segno_set)
+        ensure_same_set("check_folio", check_folio_segno_set, "completed", completed_segno_set)
 
         out.writeln("")
         out.writeln("=== extraction summary ===")
-        out.writeln(f"records={len(completed_rows)}")
-        out.writeln(f"unique_segnos={len(set(int(r['segno']) for r in completed_rows))}")
-        out.writeln(f"outer_prefixes={sorted(outer_prefixes)}")
+        out.writeln(f"outer_stat_prefix={used_outer_prefix}")
+        out.writeln(f"completed_records={completed_count}")
+        out.writeln(f"outer_stat_count={outer_stat_count}")
+        out.writeln(f"prepare_count={prepare_count}")
+        out.writeln(f"first_for_count={first_for_count}")
+        out.writeln(f"lock_folio_count={lock_folio_count}")
+        out.writeln(f"check_folio_count={check_folio_count}")
+        out.writeln(f"unique_segnos={len(completed_segno_set)}")
 
         metrics_as_arrays: Dict[str, np.ndarray] = {}
         for metric in PRIMARY_TIME_METRICS:
@@ -709,6 +821,10 @@ def main() -> int:
         )
         out.writeln(
             "4. nested hotspot ratios relative to first_for_total_us may overlap and do not necessarily sum to 1"
+        )
+        out.writeln(
+            "5. the program enforces one outer stat prefix per log file and requires "
+            "stage counts and segno sets to match across BREAKDOWN_M stages and outer stat lines"
         )
 
     return 0
