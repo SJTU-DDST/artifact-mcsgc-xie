@@ -24,11 +24,13 @@ STAT_PREFIX_PATTERN = "|".join(
     re.escape(p) for p in sorted(STAT_PREFIXES, key=len, reverse=True)
 )
 
-RE_TIMESTAMP = re.compile(r"^\[(?P<ts>\d+\.\d+)\]\s+")
+TS_PATTERN = r"\[\s*(?P<ts>\d+\.\d+)\s*\]\s+"
+
+RE_TIMESTAMP = re.compile(r"^\[\s*(?P<ts>\d+\.\d+)\s*\]\s+")
 
 RE_PREPARE = re.compile(
-    r"""
-    ^\[(?P<ts>\d+\.\d+)\]\s+
+    rf"""
+    ^{TS_PATTERN}
     BREAKDOWN_M<pid=(?P<pid>\d+)\s+comm=(?P<comm>[^>]+)>:
     in\s+get_lock_gc_data_pages,\s+prepare\s+enter\s+the\s+first\s+for\s+loop,\s+
     now\s+the\s+time\s+cost\s*=\s*(?P<prepare_before_first_for_us>\d+)\s+us,\s+
@@ -38,8 +40,8 @@ RE_PREPARE = re.compile(
 )
 
 RE_FIRST_FOR = re.compile(
-    r"""
-    ^\[(?P<ts>\d+\.\d+)\]\s+
+    rf"""
+    ^{TS_PATTERN}
     BREAKDOWN_M<pid=(?P<pid>\d+)\s+comm=(?P<comm>[^>]+)>:
     get_lock_gc_data_pages_first_for\s+
     (?P<kv>.*)$
@@ -48,8 +50,8 @@ RE_FIRST_FOR = re.compile(
 )
 
 RE_LOCK_FOLIO = re.compile(
-    r"""
-    ^\[(?P<ts>\d+\.\d+)\]\s+
+    rf"""
+    ^{TS_PATTERN}
     BREAKDOWN_M<pid=(?P<pid>\d+)\s+comm=(?P<comm>[^>]+)>:
     segno=(?P<segno>\d+),\s+lock_folio_us=(?P<lock_folio_us>\d+)\s*$
     """,
@@ -57,8 +59,8 @@ RE_LOCK_FOLIO = re.compile(
 )
 
 RE_CHECK_FOLIO = re.compile(
-    r"""
-    ^\[(?P<ts>\d+\.\d+)\]\s+
+    rf"""
+    ^{TS_PATTERN}
     BREAKDOWN_M<pid=(?P<pid>\d+)\s+comm=(?P<comm>[^>]+)>:
     segno=(?P<segno>\d+),\s+check_folio_us=(?P<check_folio_us>\d+)\s*$
     """,
@@ -67,7 +69,7 @@ RE_CHECK_FOLIO = re.compile(
 
 RE_OUTER_STAT = re.compile(
     rf"""
-    ^\[(?P<ts>\d+\.\d+)\]\s+
+    ^{TS_PATTERN}
     (?P<prefix>{STAT_PREFIX_PATTERN})\s+
     segno=(?P<segno>\d+)\s+
     (?P<kv>.*)$

@@ -1,0 +1,139 @@
+logfile=/home/xin/artifact-csgc/host/benchmarks/scripts/TOSTUDY/mcsgc-0309/0323-mcsgc2t-1.log
+run_dir=/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/breakdown-get_lock_gc_data_pages/0323-mcsgc2t-1
+result_file=/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/breakdown-get_lock_gc_data_pages/0323-mcsgc2t-1/result.txt
+
+=== extraction summary ===
+outer_stat_prefix=mCSGCv2_STAT 2thread without wait
+completed_records=17872
+outer_stat_count=17872
+prepare_count=17872
+first_for_count=17872
+lock_folio_count=17872
+check_folio_count=17872
+unique_segnos=17872
+
+=== basic statistics (microseconds) ===
+pre_data_lock_us: n=17872 mean=1916.787 min=255.000 max=3840.000 median=1908.000 p80=2291.800 top20_mean=2586.915
+prepare_before_first_for_us: n=17872 mean=0.161 min=0.000 max=16.000 median=0.000 p80=0.000 top20_mean=0.807
+first_for_total_us: n=17872 mean=1631.636 min=227.000 max=3305.000 median=1621.000 p80=1952.000 top20_mean=2207.096
+first_for_main_path_us: n=17872 mean=1430.765 min=155.000 max=2992.000 median=1417.000 p80=1711.000 top20_mean=1941.215
+first_for_other_us: n=17872 mean=200.871 min=33.000 max=484.000 median=222.000 p80=272.000 top20_mean=303.820
+find_gc_de_with_lock_us: n=17872 mean=92.198 min=10.000 max=803.000 median=89.000 p80=115.000 top20_mean=138.973
+find_gc_ie_with_lock_us: n=17872 mean=76.186 min=9.000 max=587.000 median=73.000 p80=91.000 top20_mean=111.360
+get_node_page_nid_equal_us: n=17872 mean=0.000 min=0.000 max=5.000 median=0.000 p80=0.000 top20_mean=0.001
+rwsem_nid_equal_us: n=17872 mean=0.004 min=0.000 max=21.000 median=0.000 p80=0.000 top20_mean=0.022
+get_node_page_nid_not_equal_us: n=17872 mean=64.194 min=0.000 max=132.000 median=64.000 p80=77.000 top20_mean=86.864
+rwsem_nid_not_equal_us: n=17872 mean=98.009 min=0.000 max=197.000 median=97.000 p80=118.000 top20_mean=131.550
+get_data_page_us: n=17872 mean=707.012 min=78.000 max=1318.000 median=702.000 p80=837.000 top20_mean=932.341
+add_gc_folio_us: n=17872 mean=414.453 min=23.000 max=1332.000 median=408.000 p80=563.000 top20_mean=672.302
+fe_rwsem_us: n=17872 mean=40.403 min=3.000 max=98.000 median=40.000 p80=49.000 top20_mean=54.724
+lock_folio_us: n=17872 mean=254.684 min=16.000 max=705.000 median=248.000 p80=364.000 top20_mean=423.549
+check_folio_us: n=17872 mean=23.414 min=6.000 max=412.000 median=16.000 p80=21.000 top20_mean=55.233
+get_lock_gc_data_pages_total_us: n=17872 mean=1909.895 min=249.000 max=3833.000 median=1901.000 p80=2285.000 top20_mean=2579.914
+outer_inner_gap_us: n=17872 mean=6.891 min=3.000 max=34.000 median=7.000 p80=8.000 top20_mean=8.999
+
+=== count statistics ===
+valid_blocks: n=17872 mean=214.710 min=16.000 max=400.000 median=212.000 p80=256.000 top20_mean=279.994
+
+=== normalized by valid_blocks (us per valid block) ===
+pre_data_lock_us_per_valid_block_us: n=17872 mean=9.006 min=4.250 max=26.375 median=8.820 p80=10.257 top20_mean=11.407
+prepare_before_first_for_us_per_valid_block_us: n=17872 mean=0.001 min=0.000 max=0.090 median=0.000 p80=0.000 top20_mean=0.004
+first_for_total_us_per_valid_block_us: n=17872 mean=7.636 min=3.413 max=15.344 median=7.529 p80=8.571 top20_mean=9.351
+first_for_main_path_us_per_valid_block_us: n=17872 mean=6.684 min=3.255 max=12.750 median=6.546 p80=7.433 top20_mean=8.107
+first_for_other_us_per_valid_block_us: n=17872 mean=0.952 min=0.159 max=5.188 median=0.963 p80=1.271 top20_mean=1.537
+find_gc_de_with_lock_us_per_valid_block_us: n=17872 mean=0.431 min=0.077 max=3.585 median=0.414 p80=0.508 top20_mean=0.612
+find_gc_ie_with_lock_us_per_valid_block_us: n=17872 mean=0.356 min=0.077 max=2.668 median=0.342 p80=0.381 top20_mean=0.476
+get_node_page_nid_equal_us_per_valid_block_us: n=17872 mean=0.000 min=0.000 max=0.312 median=0.000 p80=0.000 top20_mean=0.000
+rwsem_nid_equal_us_per_valid_block_us: n=17872 mean=0.000 min=0.000 max=1.312 median=0.000 p80=0.000 top20_mean=0.000
+get_node_page_nid_not_equal_us_per_valid_block_us: n=17872 mean=0.300 min=0.000 max=0.552 median=0.310 p80=0.331 top20_mean=0.349
+rwsem_nid_not_equal_us_per_valid_block_us: n=17872 mean=0.458 min=0.000 max=0.784 median=0.475 p80=0.500 top20_mean=0.521
+get_data_page_us_per_valid_block_us: n=17872 mean=3.301 min=2.163 max=5.658 median=3.342 p80=3.468 top20_mean=3.646
+add_gc_folio_us_per_valid_block_us: n=17872 mean=1.937 min=0.526 max=7.594 median=1.844 p80=2.574 top20_mean=3.115
+fe_rwsem_us_per_valid_block_us: n=17872 mean=0.188 min=0.077 max=0.383 median=0.194 p80=0.199 top20_mean=0.213
+lock_folio_us_per_valid_block_us: n=17872 mean=1.225 min=0.297 max=10.688 median=1.157 p80=1.731 top20_mean=2.142
+check_folio_us_per_valid_block_us: n=17872 mean=0.110 min=0.026 max=1.724 median=0.079 p80=0.090 top20_mean=0.253
+get_lock_gc_data_pages_total_us_per_valid_block_us: n=17872 mean=8.972 min=4.226 max=26.219 median=8.788 p80=10.222 top20_mean=11.369
+outer_inner_gap_us_per_valid_block_us: n=17872 mean=0.034 min=0.009 max=0.386 median=0.031 p80=0.042 top20_mean=0.053
+
+=== coverage vs outer pre_data_lock_us ===
+inner_total_over_outer_pre_data_lock_ratio: n=17872 mean=0.996 min=0.953 max=0.999 median=0.996 p80=0.997 top20_mean=0.998
+outer_inner_gap_us: n=17872 mean=6.891 min=3.000 max=34.000 median=7.000 p80=8.000 top20_mean=8.999
+
+=== diagnostic A: non-overlap phase ratio (phase / get_lock_gc_data_pages_total_us) ===
+prepare_before_first_for_us_ratio: n=17872 p50=0.000000 p90=0.000428 p99=0.000872
+first_for_total_us_ratio: n=17872 p50=0.857275 p90=0.915929 p99=0.934164
+lock_folio_us_ratio: n=17872 p50=0.131363 p90=0.195454 p99=0.254005
+check_folio_us_ratio: n=17872 p50=0.008705 p90=0.019683 p99=0.078514
+
+=== diagnostic A2: first_for decomposition ratio (non-overlap / first_for_total_us) ===
+first_for_main_path_us_ratio: n=17872 p50=0.874692 p90=0.933762 p99=0.946539
+first_for_other_us_ratio: n=17872 p50=0.125308 p90=0.175458 p99=0.233844
+
+=== diagnostic A3: first_for nested hotspot ratio (overlapping / first_for_total_us) ===
+note=these nested hotspot ratios may overlap and do not necessarily sum to 1
+find_gc_de_with_lock_us_ratio: n=17872 p50=0.055882 p90=0.072278 p99=0.090335
+find_gc_ie_with_lock_us_ratio: n=17872 p50=0.046216 p90=0.055646 p99=0.072441
+get_node_page_nid_equal_us_ratio: n=17872 p50=0.000000 p90=0.000000 p99=0.000000
+rwsem_nid_equal_us_ratio: n=17872 p50=0.000000 p90=0.000000 p99=0.000000
+get_node_page_nid_not_equal_us_ratio: n=17872 p50=0.039787 p90=0.049695 p99=0.058899
+rwsem_nid_not_equal_us_ratio: n=17872 p50=0.060750 p90=0.074906 p99=0.086398
+get_data_page_us_ratio: n=17872 p50=0.435062 p90=0.528789 p99=0.556886
+add_gc_folio_us_ratio: n=17872 p50=0.243205 p90=0.338783 p99=0.410976
+fe_rwsem_us_ratio: n=17872 p50=0.024909 p90=0.029940 p99=0.036593
+
+=== diagnostic B: correlation with get_lock_gc_data_pages_total_us ===
+prepare_before_first_for_us: corr_with_get_lock_gc_data_pages_total_us=0.104359
+first_for_total_us: corr_with_get_lock_gc_data_pages_total_us=0.977442
+first_for_main_path_us: corr_with_get_lock_gc_data_pages_total_us=0.958304
+first_for_other_us: corr_with_get_lock_gc_data_pages_total_us=0.645687
+find_gc_de_with_lock_us: corr_with_get_lock_gc_data_pages_total_us=0.662212
+find_gc_ie_with_lock_us: corr_with_get_lock_gc_data_pages_total_us=0.722848
+get_node_page_nid_equal_us: corr_with_get_lock_gc_data_pages_total_us=-0.026601
+rwsem_nid_equal_us: corr_with_get_lock_gc_data_pages_total_us=-0.006617
+get_node_page_nid_not_equal_us: corr_with_get_lock_gc_data_pages_total_us=0.636277
+rwsem_nid_not_equal_us: corr_with_get_lock_gc_data_pages_total_us=0.673770
+get_data_page_us: corr_with_get_lock_gc_data_pages_total_us=0.771969
+add_gc_folio_us: corr_with_get_lock_gc_data_pages_total_us=0.876615
+fe_rwsem_us: corr_with_get_lock_gc_data_pages_total_us=0.728246
+lock_folio_us: corr_with_get_lock_gc_data_pages_total_us=0.642616
+check_folio_us: corr_with_get_lock_gc_data_pages_total_us=0.081008
+valid_blocks: corr_with_get_lock_gc_data_pages_total_us=0.742286
+
+=== diagnostic C: correlation with outer pre_data_lock_us ===
+prepare_before_first_for_us: corr_with_pre_data_lock_us=0.104523
+first_for_total_us: corr_with_pre_data_lock_us=0.977674
+first_for_main_path_us: corr_with_pre_data_lock_us=0.958520
+first_for_other_us: corr_with_pre_data_lock_us=0.645889
+find_gc_de_with_lock_us: corr_with_pre_data_lock_us=0.663002
+find_gc_ie_with_lock_us: corr_with_pre_data_lock_us=0.723556
+get_node_page_nid_equal_us: corr_with_pre_data_lock_us=-0.026620
+rwsem_nid_equal_us: corr_with_pre_data_lock_us=-0.006643
+get_node_page_nid_not_equal_us: corr_with_pre_data_lock_us=0.636725
+rwsem_nid_not_equal_us: corr_with_pre_data_lock_us=0.674225
+get_data_page_us: corr_with_pre_data_lock_us=0.772468
+add_gc_folio_us: corr_with_pre_data_lock_us=0.876275
+fe_rwsem_us: corr_with_pre_data_lock_us=0.728713
+lock_folio_us: corr_with_pre_data_lock_us=0.641838
+check_folio_us: corr_with_pre_data_lock_us=0.080847
+valid_blocks: corr_with_pre_data_lock_us=0.742195
+get_lock_gc_data_pages_total_us: corr_with_pre_data_lock_us=0.999994
+outer_inner_gap_us: corr_with_pre_data_lock_us=-0.042458
+
+=== top slow samples by get_lock_gc_data_pages_total_us ===
+rank=1 segno=29107 req_idx=3 valid_blocks=314 inner_total_us=3833 inner_total_per_valid_block_us=12.207 outer_pre_data_lock_us=3840 first_for_total_us=3281 lock_folio_us=529 check_folio_us=22 find_gc_de_with_lock_us=287 find_gc_ie_with_lock_us=203 get_data_page_us=1183 add_gc_folio_us=1058 rwsem_nid_equal_us=0 rwsem_nid_not_equal_us=149 get_node_page_nid_equal_us=0 get_node_page_nid_not_equal_us=96 outer_inner_gap_us=7
+rank=2 segno=25415 req_idx=7 valid_blocks=304 inner_total_us=3832 inner_total_per_valid_block_us=12.605 outer_pre_data_lock_us=3836 first_for_total_us=3053 lock_folio_us=705 check_folio_us=73 find_gc_de_with_lock_us=207 find_gc_ie_with_lock_us=182 get_data_page_us=1092 add_gc_folio_us=1013 rwsem_nid_equal_us=0 rwsem_nid_not_equal_us=135 get_node_page_nid_equal_us=0 get_node_page_nid_not_equal_us=86 outer_inner_gap_us=4
+rank=3 segno=27499 req_idx=3 valid_blocks=352 inner_total_us=3807 inner_total_per_valid_block_us=10.815 outer_pre_data_lock_us=3816 first_for_total_us=3253 lock_folio_us=536 check_folio_us=18 find_gc_de_with_lock_us=153 find_gc_ie_with_lock_us=125 get_data_page_us=1137 add_gc_folio_us=1332 rwsem_nid_equal_us=0 rwsem_nid_not_equal_us=135 get_node_page_nid_equal_us=0 get_node_page_nid_not_equal_us=91 outer_inner_gap_us=9
+rank=4 segno=28770 req_idx=2 valid_blocks=336 inner_total_us=3797 inner_total_per_valid_block_us=11.301 outer_pre_data_lock_us=3806 first_for_total_us=3275 lock_folio_us=504 check_folio_us=18 find_gc_de_with_lock_us=213 find_gc_ie_with_lock_us=178 get_data_page_us=1304 add_gc_folio_us=1057 rwsem_nid_equal_us=0 rwsem_nid_not_equal_us=164 get_node_page_nid_equal_us=0 get_node_page_nid_not_equal_us=105 outer_inner_gap_us=9
+rank=5 segno=30422 req_idx=6 valid_blocks=320 inner_total_us=3780 inner_total_per_valid_block_us=11.812 outer_pre_data_lock_us=3785 first_for_total_us=3245 lock_folio_us=490 check_folio_us=45 find_gc_de_with_lock_us=158 find_gc_ie_with_lock_us=126 get_data_page_us=1192 add_gc_folio_us=1147 rwsem_nid_equal_us=0 rwsem_nid_not_equal_us=160 get_node_page_nid_equal_us=0 get_node_page_nid_not_equal_us=106 outer_inner_gap_us=5
+rank=6 segno=26971 req_idx=3 valid_blocks=304 inner_total_us=3714 inner_total_per_valid_block_us=12.217 outer_pre_data_lock_us=3722 first_for_total_us=3069 lock_folio_us=620 check_folio_us=23 find_gc_de_with_lock_us=233 find_gc_ie_with_lock_us=192 get_data_page_us=1073 add_gc_folio_us=1029 rwsem_nid_equal_us=0 rwsem_nid_not_equal_us=163 get_node_page_nid_equal_us=0 get_node_page_nid_not_equal_us=97 outer_inner_gap_us=8
+rank=7 segno=28893 req_idx=5 valid_blocks=356 inner_total_us=3670 inner_total_per_valid_block_us=10.309 outer_pre_data_lock_us=3679 first_for_total_us=3305 lock_folio_us=338 check_folio_us=26 find_gc_de_with_lock_us=265 find_gc_ie_with_lock_us=242 get_data_page_us=1308 add_gc_folio_us=886 rwsem_nid_equal_us=0 rwsem_nid_not_equal_us=170 get_node_page_nid_equal_us=0 get_node_page_nid_not_equal_us=111 outer_inner_gap_us=9
+rank=8 segno=29159 req_idx=7 valid_blocks=288 inner_total_us=3659 inner_total_per_valid_block_us=12.705 outer_pre_data_lock_us=3665 first_for_total_us=3061 lock_folio_us=576 check_folio_us=21 find_gc_de_with_lock_us=257 find_gc_ie_with_lock_us=186 get_data_page_us=1091 add_gc_folio_us=989 rwsem_nid_equal_us=0 rwsem_nid_not_equal_us=142 get_node_page_nid_equal_us=0 get_node_page_nid_not_equal_us=93 outer_inner_gap_us=6
+rank=9 segno=26159 req_idx=7 valid_blocks=313 inner_total_us=3655 inner_total_per_valid_block_us=11.677 outer_pre_data_lock_us=3663 first_for_total_us=3015 lock_folio_us=616 check_folio_us=24 find_gc_de_with_lock_us=144 find_gc_ie_with_lock_us=137 get_data_page_us=1167 add_gc_folio_us=968 rwsem_nid_equal_us=0 rwsem_nid_not_equal_us=155 get_node_page_nid_equal_us=0 get_node_page_nid_not_equal_us=101 outer_inner_gap_us=8
+rank=10 segno=28170 req_idx=2 valid_blocks=304 inner_total_us=3618 inner_total_per_valid_block_us=11.901 outer_pre_data_lock_us=3623 first_for_total_us=3075 lock_folio_us=500 check_folio_us=43 find_gc_de_with_lock_us=196 find_gc_ie_with_lock_us=157 get_data_page_us=1059 add_gc_folio_us=1185 rwsem_nid_equal_us=0 rwsem_nid_not_equal_us=121 get_node_page_nid_equal_us=0 get_node_page_nid_not_equal_us=76 outer_inner_gap_us=5
+
+=== notes ===
+1. first_for_other_us = first_for_total_us - first_for_main_path_us
+2. get_lock_gc_data_pages_total_us = prepare_before_first_for_us + first_for_total_us + lock_folio_us + check_folio_us
+3. outer_inner_gap_us = pre_data_lock_us - get_lock_gc_data_pages_total_us
+4. nested hotspot ratios relative to first_for_total_us may overlap and do not necessarily sum to 1
+5. the program enforces one outer stat prefix per log file and requires stage counts and segno sets to match across BREAKDOWN_M stages and outer stat lines
