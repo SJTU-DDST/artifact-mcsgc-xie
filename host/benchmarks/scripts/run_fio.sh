@@ -12,9 +12,9 @@ if [ $light_evaluation -eq 1 ]; then
     io_size_per_thread="20G"
     runtime=180
 else
-    io_size_per_thread="20G"
+    io_size_per_thread="30G"
     runtime=300
-    echo "NOTICE: runtime=${runtime}"
+    echo "NOTICE: runtime=${runtime}, io_size_per_thread=${io_size_per_thread}"
     sleep 5
     echo "============================="
 fi

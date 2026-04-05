@@ -32,9 +32,15 @@ KEYWORDS = [
     "queue all",
    # "queue pre only",
     "no valid blocks",
-    "queue SKIP already"
+    "queue SKIP already",
+    "segno"
 ]
 
+KEYWORDS=[
+    "segno=12184",
+    "segno = 12184",
+    "seg_a=12184"
+]
 
 
 

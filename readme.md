@@ -110,7 +110,4 @@ python3 finderror.py <output_file>
   finderror.py
   ```
 
----
-
-如果你后面要写论文或artifact，这个 README 已经是比较标准的“实验工具说明”格式了。
 
