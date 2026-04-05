@@ -78,11 +78,51 @@ analyze_seq_gaps() {
   }' "$raw_log" > "$report_file"
 }
 
+filter_unwanted_lines_inplace() {
+  local raw_log="$1"
+  local tmp_output tmp_count deleted_count
+
+  tmp_output="$(mktemp "${raw_log}.tmp.XXXXXX")"
+  tmp_count="$(mktemp "${raw_log}.count.XXXXXX")"
+
+  awk -v count_file="$tmp_count" '
+  BEGIN {
+    removed = 0
+  }
+  {
+    if ($0 ~ /systemd-journald/ &&
+        $0 ~ /Failed to write entry/ &&
+        $0 ~ /ignoring: Cannot assign requested address/) {
+      removed++
+      next
+    }
+
+    if ($0 ~ /systemd-journald/ &&
+        $0 ~ /Journal file corrupted, rotating/) {
+      removed++
+      next
+    }
+
+    print
+  }
+  END {
+    print removed + 0 > count_file
+  }' "$raw_log" > "$tmp_output"
+
+  mv -f "$tmp_output" "$raw_log"
+  deleted_count="$(cat "$tmp_count")"
+  rm -f "$tmp_count"
+
+  printf '%s\n' "$deleted_count"
+}
+
 out="$(normalize_output_name "$input")"
 old="${out}.old.log"
 seq_report="${out}.seqcheck.txt"
 
 handle_interrupt() {
+  local deleted_count
+
   trap - INT
 
   echo
@@ -96,6 +136,15 @@ handle_interrupt() {
   echo "Running sequence-gap analysis..."
   analyze_seq_gaps "$out" "$seq_report"
   echo "Sequence report saved to: $seq_report"
+
+  echo "Filtering unwanted journald lines from raw log..."
+  deleted_count="$(filter_unwanted_lines_inplace "$out")"
+
+  printf "REMOVED_UNWANTED_LINES=%s\n" "$deleted_count" >> "$seq_report"
+
+  echo "======"
+  echo "Removed unwanted journald lines: $deleted_count"
+  echo "======"
 
   echo "Running: python3 ${script_dir}/finderror.py ${out}"
   python3 "${script_dir}/finderror.py" "${out}"
@@ -121,7 +170,8 @@ echo "Collecting raw /dev/kmsg to: $out"
 echo "Backup saved to           : $old"
 echo "Sequence report target    : $seq_report"
 echo "Collector mode            : append raw /dev/kmsg records only"
-echo "On Ctrl+C                 : stop collector, analyze sequence gaps, then run finderror.py"
+echo "Postprocess order         : analyze gaps, remove unwanted journald lines, then run finderror.py"
+echo "On Ctrl+C                 : stop collector, analyze sequence gaps, clean raw log, then run finderror.py"
 
 setsid bash -c '
   exec sudo cat /dev/kmsg >> "$1"

@@ -13,7 +13,7 @@ if [[ ! -f "$input" ]]; then
     exit 1
 fi
 
-tmp="$(mktemp)"
+tmp="$(mktemp "$(dirname "$input")/.tmp.XXXXXX")"
 
 awk '
 {
@@ -30,4 +30,6 @@ awk '
 }
 ' "$input" > "$tmp"
 
+chmod --reference="$input" "$tmp"
+chown --reference="$input" "$tmp" 2>/dev/null || true
 mv "$tmp" "$input"
