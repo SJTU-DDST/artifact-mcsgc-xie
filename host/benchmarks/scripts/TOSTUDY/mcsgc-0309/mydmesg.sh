@@ -70,6 +70,7 @@ echo "Tracing /dev/kmsg to: $out"
 echo "Backup saved to     : $old"
 echo "Filtering rules     : unchanged (two systemd-journald ignores)"
 echo "Extra check         : detect /dev/kmsg sequence gaps and append FAIL line"
+echo "Output format       : keep raw /dev/kmsg style"
 echo "On Ctrl+C           : stop tracing, run finderror.py, then exit"
 
 setsid bash -c '
@@ -95,28 +96,16 @@ should_skip() {
   return 1
 }
 
-write_formatted_line() {
-  local ts="$1"
-  local msg="$2"
-  local sec usec
-
-  sec=$((ts / 1000000))
-  usec=$((ts % 1000000))
-
-  printf "[%12d.%06d] %s\n" "$sec" "$usec" "$msg" >> "$out"
-}
-
 write_gap_line() {
   local ts="$1"
   local prev_seq="$2"
   local curr_seq="$3"
-  local sec usec
+  local lost_count
 
-  sec=$((ts / 1000000))
-  usec=$((ts % 1000000))
+  lost_count=$((curr_seq - prev_seq - 1))
 
-  printf "[%12d.%06d] FAIL: some message probably lost. seq gap: %s -> %s\n" \
-    "$sec" "$usec" "$prev_seq" "$curr_seq" >> "$out"
+  printf "6,%s,%s,-;FAIL: some message probably lost. estimated_lost_count=%s seq gap: %s -> %s\n" \
+    "$curr_seq" "$ts" "$lost_count" "$prev_seq" "$curr_seq" >> "$out"
 }
 
 while true; do
@@ -146,7 +135,7 @@ while true; do
       continue
     fi
 
-    write_formatted_line "$ts" "$msg"
+    printf "%s\n" "$raw" >> "$out"
   done < <(sudo cat /dev/kmsg 2>/dev/null)
 
   sleep 0.05
