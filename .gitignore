@@ -14,3 +14,4 @@ host/benchmarks/scripts/process_data/**
 /host/benchmarks/scripts/draw-xie/data-to-draw/**
 /host/benchmarks/scripts/draw-xie/figs/**/*.txt
 /host/benchmarks/scripts/draw-xie/**/*.txt
+/host/benchmarks/scripts/TOSTUDY/**/*.txt
