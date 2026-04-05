@@ -42,7 +42,7 @@ handle_interrupt() {
   trap - INT
 
   echo
-  echo "Interrupted. Stopping dmesg tracing..."
+  echo "Interrupted. Stopping kmsg tracing..."
   if [ -n "${trace_pid:-}" ]; then
     kill -TERM -- "-${trace_pid}" 2>/dev/null || true
     wait "${trace_pid}" 2>/dev/null || true
@@ -66,25 +66,91 @@ sudo dmesg --color=never > "$old"
 
 sudo dmesg -C
 
-echo "Tracing dmesg to: $out"
-echo "Backup saved to : $old"
-echo "Filtering rules : unchanged (two systemd-journald ignores)"
-echo "Speed tweak     : removed per-line fflush; write via single shell redirection"
-echo "On Ctrl+C       : stop tracing, run finderror.py, then exit"
+echo "Tracing /dev/kmsg to: $out"
+echo "Backup saved to     : $old"
+echo "Filtering rules     : unchanged (two systemd-journald ignores)"
+echo "Extra check         : detect /dev/kmsg sequence gaps and append FAIL line"
+echo "On Ctrl+C           : stop tracing, run finderror.py, then exit"
 
 setsid bash -c '
-  out="$1"
-  sudo dmesg -w --color=never \
-  | stdbuf -oL -eL awk '"'"'
-    /systemd-journald/ &&
-    /Failed to write entry/ &&
-    /ignoring: Cannot assign requested address/ { next }
+set +e
 
-    /systemd-journald/ &&
-    /Journal file corrupted, rotating/ { next }
+out="$1"
+last_seq=""
 
-    { print }
-  '"'"' >> "$out"
+should_skip() {
+  local msg="$1"
+
+  if [[ "$msg" == *systemd-journald* &&
+        "$msg" == *"Failed to write entry"* &&
+        "$msg" == *"ignoring: Cannot assign requested address"* ]]; then
+    return 0
+  fi
+
+  if [[ "$msg" == *systemd-journald* &&
+        "$msg" == *"Journal file corrupted, rotating"* ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
+write_formatted_line() {
+  local ts="$1"
+  local msg="$2"
+  local sec usec
+
+  sec=$((ts / 1000000))
+  usec=$((ts % 1000000))
+
+  printf "[%12d.%06d] %s\n" "$sec" "$usec" "$msg" >> "$out"
+}
+
+write_gap_line() {
+  local ts="$1"
+  local prev_seq="$2"
+  local curr_seq="$3"
+  local sec usec
+
+  sec=$((ts / 1000000))
+  usec=$((ts % 1000000))
+
+  printf "[%12d.%06d] FAIL: some message probably lost. seq gap: %s -> %s\n" \
+    "$sec" "$usec" "$prev_seq" "$curr_seq" >> "$out"
+}
+
+while true; do
+  while IFS= read -r raw; do
+    [[ -z "$raw" ]] && continue
+    [[ "$raw" != *";"* ]] && continue
+
+    header=${raw%%;*}
+    msg=${raw#*;}
+
+    pri=""
+    seq=""
+    ts=""
+    flags=""
+    IFS=, read -r pri seq ts flags <<< "$header"
+
+    [[ "$seq" =~ ^[0-9]+$ ]] || continue
+    [[ "$ts" =~ ^[0-9]+$ ]] || ts=0
+
+    if [[ -n "$last_seq" ]] && (( seq > last_seq + 1 )); then
+      write_gap_line "$ts" "$last_seq" "$seq"
+    fi
+
+    last_seq="$seq"
+
+    if should_skip "$msg"; then
+      continue
+    fi
+
+    write_formatted_line "$ts" "$msg"
+  done < <(sudo cat /dev/kmsg 2>/dev/null)
+
+  sleep 0.05
+done
 ' bash "$out" &
 trace_pid=$!
 
