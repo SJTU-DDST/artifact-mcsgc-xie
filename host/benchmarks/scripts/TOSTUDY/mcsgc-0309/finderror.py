@@ -6,6 +6,9 @@ import sys
 from typing import List, Optional, Set, TextIO, Tuple
 
 
+RUN_BADMATCH = 1
+
+
 DEFAULT_KEYWORDS = [
     "fail",
     "failed",
@@ -92,7 +95,11 @@ def open_unique_output(base_output_path: str) -> Tuple[TextIO, str]:
     last_error: Optional[BaseException] = None
 
     for attempt in range(0, 10000):
-        candidate = base_output_path if attempt == 0 else insert_numeric_suffix_before_last_log(base_output_path, attempt)
+        candidate = (
+            base_output_path
+            if attempt == 0
+            else insert_numeric_suffix_before_last_log(base_output_path, attempt)
+        )
 
         try:
             fh = open(candidate, "x", encoding="utf-8", errors="replace")
@@ -109,7 +116,9 @@ def open_unique_output(base_output_path: str) -> Tuple[TextIO, str]:
 
     if last_error is None:
         raise RuntimeError("Failed to create a unique output file for unknown reasons.")
-    raise RuntimeError(f"Failed to create a unique output file. Last error: {last_error}") from last_error
+    raise RuntimeError(
+        f"Failed to create a unique output file. Last error: {last_error}"
+    ) from last_error
 
 
 def scan_file(path: str, keywords: List[str]) -> Tuple[int, Optional[str], List[str]]:
@@ -171,7 +180,10 @@ def run_badmatch(input_path: str) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Scan a file for error-related substrings (case-insensitive) with a special rule for 'bug' vs 'DEBUG_'."
+        description=(
+            "Scan a file for error-related substrings (case-insensitive) "
+            "with a special rule for 'bug' vs 'DEBUG_'."
+        )
     )
     parser.add_argument("input_file", help="Path to the input file to scan.")
     args = parser.parse_args()
@@ -191,9 +203,12 @@ def main() -> int:
         print(f"Matched keyword(s): {kw_str}")
         print(f"Output written to: {out_path}")
 
-    badmatch_rc = run_badmatch(input_path)
-    if badmatch_rc != 0:
-        return badmatch_rc
+    if RUN_BADMATCH == 1:
+        badmatch_rc = run_badmatch(input_path)
+        if badmatch_rc != 0:
+            return badmatch_rc
+    else:
+        print("RUN_BADMATCH=0, skipping badmatch.py.")
 
     return 0
 

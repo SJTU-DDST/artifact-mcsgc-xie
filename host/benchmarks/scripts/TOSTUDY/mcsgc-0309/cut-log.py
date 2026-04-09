@@ -6,9 +6,9 @@ import sys
 from typing import List
 
 
-str1 = "[ 1467.424305] DEBUG_M_LEAST<pid=17739 comm=kworker/u146:4>:sbi->csgc_called=4050, do_garbage_collect_cs finish"
+str1 = "[ 5380.743305] DEBUG_M_LEAST<pid=9851 comm=kworker/u145:3>:sbi->csgc_called=3915, do_garbage_collect_cs finish"
 
-str2 = "[ 1477.663777] DEBUG_M_LEAST<pid=17739 comm=kworker/u146:4>:sbi->csgc_called=4053, do_garbage_collect_cs begin"
+str2 = "[ 5391.125650] do_garbage_collect_cs = 10365304 us, csgc_called = 3916from pid=9851 tgid=9851 comm=kworker/u145:3"
 
 
 def sanitize_fragment(text: str, length: int = 5) -> str:

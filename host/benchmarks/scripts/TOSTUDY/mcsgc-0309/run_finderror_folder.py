@@ -2,6 +2,7 @@
 import os
 import sys
 import subprocess
+import re
 
 def run_finderror_on_folder(folder_path, finderror_script='finderror.py'):
     if not os.path.isdir(folder_path):
@@ -10,11 +11,20 @@ def run_finderror_on_folder(folder_path, finderror_script='finderror.py'):
 
     # 遍历文件夹下所有文件（不递归子文件夹）
     files = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
+
     if not files:
         print(f"No files found in {folder_path}.")
         return
 
-    for f in files:
+    # 提取紧跟 .log 前的数字
+    def extract_number_before_log(filename):
+        m = re.search(r'(\d+)\.log$', filename)
+        return int(m.group(1)) if m else -1  # 如果没有匹配数字，返回 -1，放到最后
+
+    # 按这个数字逆序排序
+    files_sorted = sorted(files, key=extract_number_before_log, reverse=True)
+
+    for f in files_sorted:
         file_path = os.path.join(folder_path, f)
         print(f"Processing file: {file_path}")
         # 调用 finderror.py
