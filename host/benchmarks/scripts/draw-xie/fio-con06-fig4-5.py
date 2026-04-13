@@ -15,22 +15,28 @@ CSGC1_LABEL = "va-csgc"
 CSGC2_LABEL = "mcsgcv2"
 CSGC3_LABEL = "mcsgc8thread"
 
-CSGC1_LABEL = "va-csgc"
-CSGC2_LABEL = "va-csgc2"
-CSGC3_LABEL = "va-csgc3"
-
 CSGC1_LABEL = "mcsgc8t-1"
 CSGC2_LABEL = "mcsgc8t-2"
 CSGC3_LABEL = "mcsgc8t-3"
 
+CSGC1_LABEL = "va-csgc"
+CSGC2_LABEL = "mcsgcv2"
+CSGC3_LABEL = "mcsgc8t"
+
+CSGC1_LABEL = "va-csgc"
+CSGC2_LABEL = "va-csgc2"
+CSGC3_LABEL = "va-csgc3"
+
+CSGC1_LABEL = "mcsgc8t-v0411-1"
+CSGC2_LABEL = "mcsgc8t-v0411-2"
+CSGC3_LABEL = "mcsgc8t-v0411-3"
+
+CSGC1_LABEL = "va-csgc"
+CSGC2_LABEL = "mcsgc8t-old"
+CSGC3_LABEL = "mcsgc8t-v0411-3"
+
 
 # Absolute paths to fio.log files (edit these)
-FIO_LOG_PATHS = [
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/va-csgc/fio-con06/20260131_205143/fio_randwrite_s8_0.86_random/fio.log",
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/va-csgc/fio-con06/20260131_205854/fio_randwrite_s8_0.86_random/fio.log",
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/va-csgc/fio-con06/20260131_210739/fio_randwrite_s8_0.86_random/fio.log",
-]
-
 FIO_LOG_PATHS = [
     "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/va-csgc/fio-con06/20260131_205143/fio_randwrite_s8_0.86_random/fio.log",
     "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/va-csgc/fio-con06/20260131_205854/fio_randwrite_s8_0.86_random/fio.log",
@@ -42,6 +48,41 @@ FIO_LOG_PATHS = [
     "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8thread/fio-con06/20260205_114922/fio_randwrite_s8_0.86_random/fio.log",
     "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8thread/fio-con06/20260205_115526/fio_randwrite_s8_0.86_random/fio.log"
 ]
+
+FIO_LOG_PATHS = [
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8thread/fio-con06/20260205_114302/fio_randwrite_s8_0.86_random/fio.log",
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8thread/fio-con06/20260205_114922/fio_randwrite_s8_0.86_random/fio.log",
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8thread/fio-con06/20260205_115526/fio_randwrite_s8_0.86_random/fio.log"
+]
+
+FIO_LOG_PATHS = [
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/va-csgc/fio-con06/20260131_205143/fio_randwrite_s8_0.86_random/fio.log",
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/va-csgc/fio-con06/20260131_205854/fio_randwrite_s8_0.86_random/fio.log",
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/va-csgc/fio-con06/20260131_210739/fio_randwrite_s8_0.86_random/fio.log",
+]
+
+FIO_LOG_PATHS = [
+"/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8t-v0411/fio-con06/20260412_172218/fio_randwrite_s8_0.86_random/fio.log",
+"/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8t-v0411/fio-con06/20260412_172834/fio_randwrite_s8_0.86_random/fio.log",
+"/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8t-v0411/fio-con06/20260412_174659/fio_randwrite_s8_0.86_random/fio.log"
+]
+
+FIO_LOG_PATHS = [
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8t-v0411/fio-con06/20260412_173437/fio_randwrite_s8_0.86_random/fio.log",
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8t-v0411/fio-con06/20260412_174052/fio_randwrite_s8_0.86_random/fio.log",
+"/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8t-v0411/fio-con06/20260412_174659/fio_randwrite_s8_0.86_random/fio.log"
+
+]
+
+FIO_LOG_PATHS = [
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/va-csgc/fio-con06/20260131_205143/fio_randwrite_s8_0.86_random/fio.log",
+        "/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8thread/fio-con06/20260205_114302/fio_randwrite_s8_0.86_random/fio.log",
+"/home/xin/artifact-csgc/host/benchmarks/scripts/draw-xie/data-to-draw/mcsgc-8t-v0411/fio-con06/20260412_174052/fio_randwrite_s8_0.86_random/fio.log",
+
+]
+
+
+
 
 
 # Output settings
