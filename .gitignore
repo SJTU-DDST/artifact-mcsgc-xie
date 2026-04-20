@@ -15,3 +15,4 @@ host/benchmarks/scripts/process_data/**
 /host/benchmarks/scripts/draw-xie/figs/**/*.txt
 /host/benchmarks/scripts/draw-xie/**/*.txt
 /host/benchmarks/scripts/TOSTUDY/**/*.txt
+/host/benchmarks/myworkloads/filebench/fileserver_4t_60G_1M_54k_period_150s_tmp.f
