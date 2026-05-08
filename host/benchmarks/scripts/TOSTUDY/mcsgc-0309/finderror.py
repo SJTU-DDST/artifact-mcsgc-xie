@@ -28,7 +28,7 @@ DEFAULT_KEYWORDS = [
     "assertion",
     "corrupt",
     "corruption",
-    "invalid",
+   # "invalid",
     "abort",
     "aborted",
     "wait pool timeout",

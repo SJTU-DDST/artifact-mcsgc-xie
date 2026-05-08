@@ -267,7 +267,7 @@ def main() -> int:
             )
         )
 
-        output_path = baseline_path.parent / OUTPUT_FILENAME
+        output_path = target_path.parent / OUTPUT_FILENAME
 
         with output_path.open("w", encoding="utf-8") as f:
             f.write("\n".join(output_lines))
