@@ -8,9 +8,16 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+
+
+# Set to 1 when scatter figures are needed. Keep it disabled by default for
+# performance-oriented runs where generating many PNGs adds unnecessary work.
+FIG_OUTPUT = 0
+
+if FIG_OUTPUT:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
 
 
 STAT_PREFIXES = [
@@ -238,7 +245,8 @@ def derive_run_dir(logfile: str) -> str:
     else:
         stem = os.path.splitext(base)[0]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    root = "./figs/breakdown-result"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.join(script_dir, "breakdown-result")
     ensure_dir(root)
     cand = os.path.join(root, f"{stem}_{ts}")
     cand = unique_dir(cand)
@@ -292,7 +300,8 @@ def main() -> int:
 
     run_dir = derive_run_dir(args.logfile)
     png_dir = os.path.join(run_dir, "pngs")
-    ensure_dir(png_dir)
+    if FIG_OUTPUT:
+        ensure_dir(png_dir)
     result_path = os.path.join(run_dir, "result.txt")
 
     original_stdout = sys.stdout
@@ -428,7 +437,7 @@ def main() -> int:
         sec_count = len(section_gc_time_us)
 
         emit(f"run_dir={run_dir}")
-        emit(f"png_dir={png_dir}")
+        emit(f"png_dir={png_dir if FIG_OUTPUT else 'disabled'}")
         emit(f"result_file={result_path}")
         emit(f"stat_prefix={used_prefix}")
         emit(f"segment_samples={seg_count}")
@@ -468,28 +477,31 @@ def main() -> int:
         emit("")
         emit("=== figures: scatter by sample index ===")
 
-        for name, xs in all_metrics:
-            out = unique_path(os.path.join(png_dir, f"{name}.png"))
-            scatter_index_plot(xs, title=name, ylabel=name, out_path=out)
+        if FIG_OUTPUT:
+            for name, xs in all_metrics:
+                out = unique_path(os.path.join(png_dir, f"{name}.png"))
+                scatter_index_plot(xs, title=name, ylabel=name, out_path=out)
+                emit(f"saved {out}", to_file=False)
+
+            out = unique_path(os.path.join(png_dir, "section_gc_time_us.png"))
+            scatter_index_plot(
+                [int(v) for v in section_gc_time_us],
+                title="section_gc_time_us",
+                ylabel="section_gc_time_us",
+                out_path=out,
+            )
             emit(f"saved {out}", to_file=False)
 
-        out = unique_path(os.path.join(png_dir, "section_gc_time_us.png"))
-        scatter_index_plot(
-            [int(v) for v in section_gc_time_us],
-            title="section_gc_time_us",
-            ylabel="section_gc_time_us",
-            out_path=out,
-        )
-        emit(f"saved {out}", to_file=False)
-
-        out = unique_path(os.path.join(png_dir, "do_garbage_collect_cs_us.png"))
-        scatter_index_plot(
-            [int(v) for v in do_garbage_collect_cs_us],
-            title="do_garbage_collect_cs_us",
-            ylabel="do_garbage_collect_cs_us",
-            out_path=out,
-        )
-        emit(f"saved {out}", to_file=False)
+            out = unique_path(os.path.join(png_dir, "do_garbage_collect_cs_us.png"))
+            scatter_index_plot(
+                [int(v) for v in do_garbage_collect_cs_us],
+                title="do_garbage_collect_cs_us",
+                ylabel="do_garbage_collect_cs_us",
+                out_path=out,
+            )
+            emit(f"saved {out}", to_file=False)
+        else:
+            emit("FIG_OUTPUT=0, skip PNG generation.")
 
         emit("")
         emit("=== diagnostic A: phase ratio distribution (phase / approx_segment_total_us) ===")
@@ -525,16 +537,17 @@ def main() -> int:
             phase = np.array([np.nan if v is None else float(v) for v in xs], dtype=float)
             corr = pearson_corr(phase, takes_full)
             emit(f"{name}: corr_with_approx_segment_total_us={corr:.6f}")
-            out = unique_path(os.path.join(png_dir, f"{name}_vs_approx_segment_total_us.png"))
-            scatter_xy_plot(
-                x=phase,
-                y=takes_full,
-                title=f"{name} vs approx_segment_total_us",
-                xlabel=name,
-                ylabel="approx_segment_total_us",
-                out_path=out,
-            )
-            emit(f"saved {out}", to_file=False)
+            if FIG_OUTPUT:
+                out = unique_path(os.path.join(png_dir, f"{name}_vs_approx_segment_total_us.png"))
+                scatter_xy_plot(
+                    x=phase,
+                    y=takes_full,
+                    title=f"{name} vs approx_segment_total_us",
+                    xlabel=name,
+                    ylabel="approx_segment_total_us",
+                    out_path=out,
+                )
+                emit(f"saved {out}", to_file=False)
 
         return 0
 
