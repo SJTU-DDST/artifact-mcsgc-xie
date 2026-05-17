@@ -89,6 +89,7 @@ RE_STAT = re.compile(
 RE_POST = re.compile(
     r"""
     ^\[\s*\d+\.\d+\]\s+
+    (?:DEBUG_M_LEAST<[^>]+>:\s*)?
     post\s+work\s+from\s+free\s+csi\s+to\s+the\s+finish\s+time\s*=\s*(?P<free_to_finish>\d+)\s+us,
     f2fs_post_csgc_work\s+time\s*=\s*(?P<post_time>\d+)\s+us,\s+
     this\s+segment\s+gc\s+time\s*=\s*(?P<seg_gc_time>\d+)\s+us,\s+
