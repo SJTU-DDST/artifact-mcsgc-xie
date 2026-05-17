@@ -81,6 +81,13 @@ FIO_LOG_PATHS = [
 
 ]
 
+FIO_LOG_PATHS = [
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-csgcva/20260507_203229/fio_randwrite_s8_0.86_random/fio.log",
+        "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc8t/20260507_194114/fio_randwrite_s8_0.86_random/fio.log",
+"/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-mcsgc8t/20260514_205507/fio_randwrite_s8_0.86_random/fio.log",
+
+]
+
 
 
 
