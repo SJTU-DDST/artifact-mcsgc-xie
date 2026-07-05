@@ -13,8 +13,42 @@ printf '<6>IN BASH %s %s [%s] %s\n' \
 # gc_mode="iplfs"    # iplfs
 # gc_mode="cs"       # csgc
 light_evaluation=0
-#gc_mode=$1
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  echo "Usage: $0 <mode> <ssd1t|ssd2t> <config>"
+  echo "  mode: one of mcsgc, csgc, mcsgcdebug, csgcdebug, mcsgcmakefile, mcsgcv2, mcsgc8t, mcsgc2t, csgcva"
+  echo "        ori and iplfs are still accepted for existing baseline runs"
+}
+
+if [ $# -ne 3 ]; then
+  usage
+  exit 1
+fi
+
 mcsgc_mode=$1
+ssd_thread_mode=$2
+config_path=$3
+
+case "${ssd_thread_mode}" in
+    "ssd1t"|"ssd2t")
+        ;;
+    *)
+        echo "Error: unsupported SSD thread mode '${ssd_thread_mode}', expected 'ssd1t' or 'ssd2t'."
+        exit 1
+        ;;
+esac
+
+if [ ! -f "${config_path}" ]; then
+    if [ -f "${script_dir}/${config_path}" ]; then
+        config_path="${script_dir}/${config_path}"
+    else
+        echo "Error: config file not found: ${config_path}"
+        exit 1
+    fi
+fi
+
 # determine gc_mode based on mcsgc_mode
 
 cs_modes=(
@@ -50,10 +84,11 @@ else
   exit 1
 fi
 echo "gc_mode=$gc_mode"
+echo "ssd_thread_mode=$ssd_thread_mode"
 
-source $2
+source "${config_path}"
 
-pushd $(dirname $0) > /dev/null
+pushd "${script_dir}" > /dev/null
 
 host_mem_usage="8G"
 use_cgroup=1
@@ -69,7 +104,7 @@ current_time=$(date +"%Y%m%d_%H%M%S")
 echo "Running evaluation for $gc_mode..."
 
 # for gc_mode in "${gc_modes[@]}"; do
-    output_path_base="./outputs-${mcsgc_mode}/${current_time}"
+    output_path_base="./outputs-${mcsgc_mode}-${ssd_thread_mode}/${current_time}"
     mkdir -p "${output_path_base}"
     case "${gc_mode}" in 
         "ori")
@@ -96,7 +131,7 @@ echo "Running evaluation for $gc_mode..."
     for prefill_ratio in "${prefill_ratios[@]}"; do
     for segs_per_sec in "${segs_per_sec_list[@]}"; do
 
-        export gc_mode workload_type bmname random_distribution segs_per_sec output_path_base \
+        export gc_mode ssd_thread_mode workload_type bmname random_distribution segs_per_sec output_path_base \
         prefill_ratio use_cgroup host_mem_usage nr_cs_cores csgc_sync fio_timebased\
         ssd_enable_l2p ssd_enable_nand_lat ssd_enable_dsm fsck_after_run light_evaluation
         
@@ -136,5 +171,5 @@ sudo echo "IN BASH $ts_local $host_local  [$ts_upt] $str_debug" >> /var/log/kern
 printf '<6>IN BASH %s %s [%s] %s\n' \
   "$ts_local" "$host_local" "$ts_upt" "$str_debug" | sudo tee /dev/kmsg >/dev/null
 
-sudo ./flush_dmesg_buffer.sh
+sudo "${script_dir}/flush_dmesg_buffer.sh"
 echo "Test script completed."

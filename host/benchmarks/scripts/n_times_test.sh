@@ -3,14 +3,24 @@
 set -u
 set -o pipefail
 
-if [ $# -ne 3 ]; then
-  echo "Usage: $0 <p1> <p2> <N>"
+if [ $# -ne 4 ]; then
+  echo "Usage: $0 <mode> <ssd1t|ssd2t> <config> <N>"
   exit 1
 fi
 
-p1=$1
-p2=$2
-N=$3
+mode=$1
+ssd_thread_mode=$2
+config_path=$3
+N=$4
+
+case "${ssd_thread_mode}" in
+  "ssd1t"|"ssd2t")
+    ;;
+  *)
+    echo "Error: unsupported SSD thread mode '${ssd_thread_mode}', expected 'ssd1t' or 'ssd2t'."
+    exit 1
+    ;;
+esac
 
 if ! [[ "$N" =~ ^[1-9][0-9]*$ ]]; then
   echo "Error: N must be a positive integer, got: $N"
@@ -28,16 +38,16 @@ fi
 
 mkdir -p -- "$log_dir"
 
-name_p1="${p1##*/}"
-name_p2="${p2##*/}"
+name_mode="${mode##*/}"
+name_config="${config_path##*/}"
 
 date_part="$(date +%Y%m%d)"
 time_part="$(date +%H%M%S)"
-log_file="${log_dir}/${date_part}${time_part}${name_p1}${name_p2}.log"
+log_file="${log_dir}/${date_part}${time_part}${name_mode}${ssd_thread_mode}${name_config}.log"
 
 exec > >(tee -a "$log_file") 2>&1
 
-cmd=(sudo "$test_script" "$p1" "$p2")
+cmd=(sudo "$test_script" "$mode" "$ssd_thread_mode" "$config_path")
 
 echo "==== [INFO] Log file: $log_file ===="
 echo "==== [INFO] Will run ${cmd[*]} for N=$N times in $script_dir at $(date) ===="
