@@ -147,13 +147,14 @@ def unique_dir(path: str) -> str:
         i += 1
 
 
-def run_heavy_trace_parser(logfile: str, output_path: str) -> int:
+def run_heavy_trace_parser(logfile: str, output_path: str, kind: str = "csgc") -> int:
+    """Run the shared CSGC/ORIGC heavy-trace parser."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     script_path = os.path.join(script_dir, "breakdown-csgc-heavy-trace.py")
 
     try:
         completed = subprocess.run(
-            [sys.executable, script_path, logfile, output_path],
+            [sys.executable, script_path, logfile, output_path, "--kind", kind],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -161,7 +162,7 @@ def run_heavy_trace_parser(logfile: str, output_path: str) -> int:
         )
     except OSError as exc:
         print(
-            f"WARNING: failed to run CSGC heavy trace parser: {exc}",
+            f"WARNING: failed to run {kind.upper()} heavy trace parser: {exc}",
             file=sys.stderr,
         )
         return 1
@@ -170,7 +171,7 @@ def run_heavy_trace_parser(logfile: str, output_path: str) -> int:
         if completed.stderr:
             print(completed.stderr.rstrip(), file=sys.stderr)
         print(
-            f"WARNING: CSGC heavy trace parser exited with {completed.returncode}",
+            f"WARNING: {kind.upper()} heavy trace parser exited with {completed.returncode}",
             file=sys.stderr,
         )
         return completed.returncode
@@ -339,6 +340,9 @@ def main() -> int:
         ensure_dir(png_dir)
     result_path = os.path.join(run_dir, "result.txt")
     heavy_trace_result_path = os.path.join(run_dir, "csgc_heavy_trace_result.txt")
+    origc_heavy_trace_result_path = os.path.join(
+        run_dir, "origc_heavy_trace_result.txt"
+    )
 
     original_stdout = sys.stdout
     original_stderr = sys.stderr
@@ -437,8 +441,14 @@ def main() -> int:
                     do_comm.append(m.group("comm"))
                     continue
 
-        run_heavy_trace_parser(args.logfile, heavy_trace_result_path)
+        run_heavy_trace_parser(args.logfile, heavy_trace_result_path, "csgc")
         heavy_trace_generated = os.path.exists(heavy_trace_result_path)
+        run_heavy_trace_parser(
+            args.logfile, origc_heavy_trace_result_path, "origc"
+        )
+        origc_heavy_trace_generated = os.path.exists(
+            origc_heavy_trace_result_path
+        )
 
         pattern_counts = analyze_lseg_lsection_pattern(lseg_lsection_events)
         bad_patterns = invalid_lseg_lsection_patterns(pattern_counts)
@@ -462,6 +472,18 @@ def main() -> int:
                 emit(f"  invalid (a,b)=({a},{b}) count={cnt}", stderr=True)
             return 6
 
+        if len(seen_stat_prefixes) == 0 and origc_heavy_trace_generated:
+            emit("=== ORIGC heavy-only analysis ===")
+            emit(f"run_dir={run_dir}")
+            emit(f"result_file={result_path}")
+            emit(
+                "origc_heavy_trace_result_file="
+                f"{origc_heavy_trace_result_path}"
+            )
+            emit("segment_samples=0")
+            emit("section_samples=0")
+            return 0
+
         if len(seen_stat_prefixes) == 0:
             emit("ERROR: no STAT lines matched any configured prefix", stderr=True)
             return 4
@@ -479,6 +501,10 @@ def main() -> int:
         emit(f"png_dir={png_dir if FIG_OUTPUT else 'disabled'}")
         emit(f"result_file={result_path}")
         emit(f"heavy_trace_result_file={heavy_trace_result_path if heavy_trace_generated else 'not_generated'}")
+        emit(
+            "origc_heavy_trace_result_file="
+            f"{origc_heavy_trace_result_path if origc_heavy_trace_generated else 'not_generated'}"
+        )
         emit(f"stat_prefix={used_prefix}")
         emit(f"segment_samples={seg_count}")
         emit(f"section_samples={sec_count}")
@@ -593,6 +619,12 @@ def main() -> int:
             emit("")
             emit("=== CSGC heavy trace parser ===")
             emit(f"heavy_trace_result_file={heavy_trace_result_path}")
+        if origc_heavy_trace_generated:
+            emit("")
+            emit("=== ORIGC heavy trace parser ===")
+            emit(
+                f"origc_heavy_trace_result_file={origc_heavy_trace_result_path}"
+            )
         return 0
 
     finally:

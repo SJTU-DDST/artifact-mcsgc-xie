@@ -8,26 +8,45 @@ from collections import Counter, defaultdict
 from typing import DefaultDict, Dict, Iterable, List, Optional, Tuple
 
 
+TRACE_KIND = "csgc"
+TRACE_LABEL = "CSGC"
 RE_TRACE = re.compile(r"CSGC_HEAVY_TRACE\s+(?P<kv>.*)$")
 RE_STAT = re.compile(r"CSGC_HEAVY_STAT\s+(?P<kv>.*)$")
-
 PHASES = ("section", "pre", "ssd", "post")
-EVENT_PHASE_DELTA = {
-    "SECTION_START": ("section", 1),
-    "SECTION_END": ("section", -1),
-    "PRE_START": ("pre", 1),
-    "PRE_END": ("pre", -1),
-    "SSD_START": ("ssd", 1),
-    "SSD_END": ("ssd", -1),
-    "POST_START": ("post", 1),
-    "POST_END": ("post", -1),
-}
 PHASE_START_END = {
     "section": ("SECTION_START", "SECTION_END"),
     "pre": ("PRE_START", "PRE_END"),
     "ssd": ("SSD_START", "SSD_END"),
     "post": ("POST_START", "POST_END"),
 }
+
+
+def configure_trace_kind(kind: str) -> None:
+    """Select trace labels and phase definitions for one GC implementation."""
+    global TRACE_KIND, TRACE_LABEL, RE_TRACE, RE_STAT, PHASES, PHASE_START_END
+
+    TRACE_KIND = kind
+    if kind == "origc":
+        TRACE_LABEL = "ORIGC"
+        PHASES = ("gc_call", "section", "data", "node")
+        PHASE_START_END = {
+            "gc_call": ("GC_START", "GC_END"),
+            "section": ("SECTION_START", "SECTION_END"),
+            "data": ("SECTION_START", "SECTION_END"),
+            "node": ("SECTION_START", "SECTION_END"),
+        }
+    else:
+        TRACE_LABEL = "CSGC"
+        PHASES = ("section", "pre", "ssd", "post")
+        PHASE_START_END = {
+            "section": ("SECTION_START", "SECTION_END"),
+            "pre": ("PRE_START", "PRE_END"),
+            "ssd": ("SSD_START", "SSD_END"),
+            "post": ("POST_START", "POST_END"),
+        }
+
+    RE_TRACE = re.compile(rf"{TRACE_LABEL}_HEAVY_TRACE\s+(?P<kv>.*)$")
+    RE_STAT = re.compile(rf"{TRACE_LABEL}_HEAVY_STAT\s+(?P<kv>.*)$")
 
 
 Trace = Dict[str, object]
@@ -141,6 +160,7 @@ def parse_input(path: str) -> Tuple[List[Trace], List[Dict[str, str]], List[str]
                         "section": section,
                         "segno": segno,
                         "req_idx": req_idx,
+                        "seg_type": kv.get("seg_type", ""),
                         "pid": int_or_none(kv.get("pid")),
                         "comm": kv.get("comm", ""),
                         "cpu": int_or_none(kv.get("cpu")),
@@ -159,6 +179,10 @@ def parse_input(path: str) -> Tuple[List[Trace], List[Dict[str, str]], List[str]
 
 
 def phase_key(phase: str, trace: Trace) -> Tuple[int, ...]:
+    if TRACE_KIND == "origc":
+        if phase == "gc_call":
+            return (0,)
+        return (int(trace["section"]),)
     if phase == "section":
         return (int(trace["section"]),)
     return (
@@ -168,15 +192,27 @@ def phase_key(phase: str, trace: Trace) -> Tuple[int, ...]:
     )
 
 
+def trace_matches_phase(phase: str, trace: Trace) -> bool:
+    """Filter shared ORIGC section events into data and node phases."""
+    if TRACE_KIND != "origc" or phase not in ("data", "node"):
+        return True
+    return str(trace.get("seg_type", "")) == phase
+
+
 def build_phase_intervals(
     traces: List[Trace],
-) -> Tuple[Dict[str, Dict[Tuple[int, ...], List[int]]], Dict[str, Dict[str, int]]]:
+) -> Tuple[
+    Dict[str, Dict[Tuple[int, ...], List[int]]],
+    Dict[str, List[Tuple[int, int]]],
+    Dict[str, Dict[str, int]],
+]:
     starts: Dict[str, DefaultDict[Tuple[int, ...], List[int]]] = {
         phase: defaultdict(list) for phase in PHASES
     }
     intervals: Dict[str, DefaultDict[Tuple[int, ...], List[int]]] = {
         phase: defaultdict(list) for phase in PHASES
     }
+    windows: Dict[str, List[Tuple[int, int]]] = {phase: [] for phase in PHASES}
     diagnostics: Dict[str, Dict[str, int]] = {
         phase: {
             "unmatched_starts": 0,
@@ -186,33 +222,36 @@ def build_phase_intervals(
         for phase in PHASES
     }
 
-    event_to_phase: Dict[str, Tuple[str, str]] = {}
+    event_to_phases: DefaultDict[str, List[Tuple[str, str]]] = defaultdict(list)
     for phase, (start_event, end_event) in PHASE_START_END.items():
-        event_to_phase[start_event] = (phase, "start")
-        event_to_phase[end_event] = (phase, "end")
+        event_to_phases[start_event].append((phase, "start"))
+        event_to_phases[end_event].append((phase, "end"))
 
     for trace in traces:
         event = str(trace["event"])
-        if event not in event_to_phase:
+        if event not in event_to_phases:
             continue
-        phase, kind = event_to_phase[event]
-        key = phase_key(phase, trace)
-        t_us = int(trace["t_us"])
+        for phase, kind in event_to_phases[event]:
+            if not trace_matches_phase(phase, trace):
+                continue
+            key = phase_key(phase, trace)
+            t_us = int(trace["t_us"])
 
-        if kind == "start":
-            starts[phase][key].append(t_us)
-            continue
+            if kind == "start":
+                starts[phase][key].append(t_us)
+                continue
 
-        if not starts[phase][key]:
-            diagnostics[phase]["unmatched_ends"] += 1
-            continue
+            if not starts[phase][key]:
+                diagnostics[phase]["unmatched_ends"] += 1
+                continue
 
-        start = starts[phase][key].pop()
-        duration = t_us - start
-        if duration < 0:
-            diagnostics[phase]["negative_durations"] += 1
-            continue
-        intervals[phase][key].append(duration)
+            start = starts[phase][key].pop()
+            duration = t_us - start
+            if duration < 0:
+                diagnostics[phase]["negative_durations"] += 1
+                continue
+            intervals[phase][key].append(duration)
+            windows[phase].append((start, t_us))
 
     for phase in PHASES:
         diagnostics[phase]["unmatched_starts"] = sum(
@@ -221,6 +260,7 @@ def build_phase_intervals(
 
     return (
         {phase: dict(intervals[phase]) for phase in PHASES},
+        windows,
         diagnostics,
     )
 
@@ -235,6 +275,8 @@ def flatten_intervals(intervals: Dict[Tuple[int, ...], List[int]]) -> List[int]:
 def build_complete_segment_totals(
     intervals: Dict[str, Dict[Tuple[int, ...], List[int]]]
 ) -> List[int]:
+    if not {"pre", "ssd", "post"}.issubset(intervals):
+        return []
     keys = set(intervals["pre"]) & set(intervals["ssd"]) & set(intervals["post"])
     totals: List[int] = []
     for key in keys:
@@ -248,28 +290,56 @@ def build_complete_segment_totals(
     return totals
 
 
+def build_phase_gaps(
+    windows: List[Tuple[int, int]],
+) -> Tuple[List[int], int, int]:
+    """Return idle gaps plus overlap count/time for ordered phase windows."""
+    if not windows:
+        return [], 0, 0
+
+    ordered = sorted(windows)
+    frontier_end = ordered[0][1]
+    gaps: List[int] = []
+    overlap_count = 0
+    overlap_us = 0
+
+    for start, end in ordered[1:]:
+        if start >= frontier_end:
+            gaps.append(start - frontier_end)
+        else:
+            overlap_count += 1
+            overlap_us += frontier_end - start
+        frontier_end = max(frontier_end, end)
+
+    return gaps, overlap_count, overlap_us
+
+
 def reconstruct_active(
     traces: List[Trace],
     max_active_hint: int = 8,
 ) -> Dict[str, Dict[str, object]]:
     by_phase: Dict[str, List[Tuple[int, int, int]]] = {phase: [] for phase in PHASES}
-    event_order = {
-        "SECTION_END": 0,
-        "PRE_END": 0,
-        "SSD_END": 0,
-        "POST_END": 0,
-        "SECTION_START": 1,
-        "PRE_START": 1,
-        "SSD_START": 1,
-        "POST_START": 1,
-    }
+    section_times = [
+        int(trace["t_us"])
+        for trace in traces
+        if str(trace["event"]) in ("SECTION_START", "SECTION_END")
+    ]
+    section_first = min(section_times) if section_times else None
+    section_last = max(section_times) if section_times else None
+    event_to_phase_delta: DefaultDict[str, List[Tuple[str, int]]] = defaultdict(list)
+    for phase, (start_event, end_event) in PHASE_START_END.items():
+        event_to_phase_delta[start_event].append((phase, 1))
+        event_to_phase_delta[end_event].append((phase, -1))
 
-    for index, trace in enumerate(traces):
+    for trace in traces:
         event = str(trace["event"])
-        if event not in EVENT_PHASE_DELTA:
+        if event not in event_to_phase_delta:
             continue
-        phase, delta = EVENT_PHASE_DELTA[event]
-        by_phase[phase].append((int(trace["t_us"]), event_order.get(event, 1), delta))
+        for phase, delta in event_to_phase_delta[event]:
+            if not trace_matches_phase(phase, trace):
+                continue
+            event_order = 0 if delta < 0 else 1
+            by_phase[phase].append((int(trace["t_us"]), event_order, delta))
 
     result: Dict[str, Dict[str, object]] = {}
     for phase in PHASES:
@@ -280,7 +350,14 @@ def reconstruct_active(
         negative_events = 0
         out_of_order_events = 0
 
-        if not events:
+        shared_section_window = (
+            TRACE_KIND == "origc"
+            and phase in ("data", "node")
+            and section_first is not None
+            and section_last is not None
+        )
+
+        if not events and not shared_section_window:
             result[phase] = {
                 "bins": dict(bins),
                 "span_us": 0,
@@ -292,7 +369,7 @@ def reconstruct_active(
             }
             continue
 
-        first_t = events[0][0]
+        first_t = int(section_first) if shared_section_window else events[0][0]
         last_t = first_t
 
         for t_us, _order, delta in events:
@@ -306,6 +383,10 @@ def reconstruct_active(
                 active = 0
             max_active = max(max_active, active)
             last_t = t_us
+
+        if shared_section_window and int(section_last) >= last_t:
+            bins[active] += int(section_last) - last_t
+            last_t = int(section_last)
 
         span_us = max(0, last_t - first_t)
         busy_us = sum(time for level, time in bins.items() if level > 0)
@@ -416,8 +497,10 @@ def write_result(
     stats: List[Dict[str, str]],
     raw_stats: List[str],
 ) -> None:
-    intervals, diagnostics = build_phase_intervals(traces)
-    active_result = reconstruct_active(traces)
+    intervals, windows, diagnostics = build_phase_intervals(traces)
+    active_result = reconstruct_active(
+        traces, max_active_hint=1 if TRACE_KIND == "origc" else 8
+    )
     kernel_stats = parse_kernel_stats(stats)
     event_counts = Counter(str(trace["event"]) for trace in traces)
     complete_segment_totals = build_complete_segment_totals(intervals)
@@ -429,7 +512,7 @@ def write_result(
         os.makedirs(out_dir, exist_ok=True)
 
     with open(output_path, "w", encoding="utf-8") as out:
-        out.write("=== CSGC heavy trace analysis ===\n")
+        out.write(f"=== {TRACE_LABEL} heavy trace analysis ===\n")
         out.write(f"source_file={os.path.abspath(source_path)}\n")
         out.write(f"result_file={os.path.abspath(output_path)}\n")
         out.write(f"trace_events={len(traces)}\n")
@@ -437,6 +520,27 @@ def write_result(
         out.write(f"first_trace_t_us={first_t}\n")
         out.write(f"last_trace_t_us={last_t}\n")
         out.write(f"trace_span_us={max(0, last_t - first_t)}\n")
+        out.write("\n")
+
+        out.write("=== measurement windows ===\n")
+        out.write(f"trace_first_to_last_event_us={max(0, last_t - first_t)}\n")
+        global_rows = kernel_stats["global_rows"]
+        if global_rows:
+            row = global_rows[-1]
+            since_first = int_or_none(row.get("since_first_gc_us"))
+            gc_active = int_or_none(row.get("gc_active_us"))
+            tail = int_or_none(row.get("tail_after_last_event_us"))
+            if since_first is not None:
+                out.write(f"kernel_first_gc_to_unmount_us={since_first}\n")
+            if since_first and gc_active is not None:
+                out.write(
+                    "kernel_section_busy_fraction_first_gc_to_unmount="
+                    f"{format_float(gc_active / float(since_first), 6)}\n"
+                )
+            if tail is not None:
+                out.write(f"kernel_tail_after_last_event_us={tail}\n")
+        else:
+            out.write("kernel_first_gc_to_unmount_us=unavailable\n")
         out.write("\n")
 
         out.write("=== event counts ===\n")
@@ -448,8 +552,27 @@ def write_result(
         for phase in PHASES:
             values = flatten_intervals(intervals[phase])
             out.write(summarize_values(f"{phase}_duration_us", values) + "\n")
-        out.write(summarize_values("complete_segment_pre_ssd_post_total_us", complete_segment_totals) + "\n")
-        out.write(f"complete_segment_phase_triplets={len(complete_segment_totals)}\n")
+        if TRACE_KIND == "csgc":
+            out.write(
+                summarize_values(
+                    "complete_segment_pre_ssd_post_total_us",
+                    complete_segment_totals,
+                )
+                + "\n"
+            )
+            out.write(
+                f"complete_segment_phase_triplets={len(complete_segment_totals)}\n"
+            )
+        out.write("\n")
+
+        out.write("=== adjacent interval gaps (microseconds) ===\n")
+        for phase in PHASES:
+            gaps, overlap_count, overlap_us = build_phase_gaps(windows[phase])
+            out.write(summarize_values(f"{phase}_gap_us", gaps) + "\n")
+            out.write(
+                f"phase={phase} overlap_count={overlap_count} "
+                f"overlap_us={overlap_us}\n"
+            )
         out.write("\n")
 
         out.write("=== interval pairing diagnostics ===\n")
@@ -468,7 +591,7 @@ def write_result(
         emit_active_summary(out, active_result)
         out.write("\n")
 
-        out.write("=== kernel CSGC_HEAVY_STAT summary ===\n")
+        out.write(f"=== kernel {TRACE_LABEL}_HEAVY_STAT summary ===\n")
         global_rows = kernel_stats["global_rows"]
         if global_rows:
             for row in global_rows:
@@ -496,18 +619,26 @@ def write_result(
 
         if raw_stats:
             out.write("\n")
-            out.write("=== raw kernel CSGC_HEAVY_STAT lines ===\n")
+            out.write(f"=== raw kernel {TRACE_LABEL}_HEAVY_STAT lines ===\n")
             for line in raw_stats:
                 out.write(line + "\n")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Parse CSGC_HEAVY_TRACE and CSGC_HEAVY_STAT lines from a dmesg log."
+        description="Parse CSGC or ORIGC heavy-trace lines from a dmesg log."
     )
     parser.add_argument("logfile", help="path to the dmesg log file")
     parser.add_argument("output", help="path to the output .txt file")
+    parser.add_argument(
+        "--kind",
+        choices=("csgc", "origc"),
+        default="csgc",
+        help="heavy-trace implementation to parse (default: csgc)",
+    )
     args = parser.parse_args()
+
+    configure_trace_kind(args.kind)
 
     traces, stats, raw_stats = parse_input(args.logfile)
 
