@@ -1,6 +1,7 @@
 import argparse
 import os
 import re
+import subprocess
 import sys
 import math
 from collections import defaultdict, deque
@@ -144,6 +145,39 @@ def unique_dir(path: str) -> str:
         if not os.path.exists(cand):
             return cand
         i += 1
+
+
+def run_heavy_trace_parser(logfile: str, output_path: str) -> int:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_path = os.path.join(script_dir, "breakdown-csgc-heavy-trace.py")
+
+    try:
+        completed = subprocess.run(
+            [sys.executable, script_path, logfile, output_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        print(
+            f"WARNING: failed to run CSGC heavy trace parser: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if completed.returncode != 0:
+        if completed.stderr:
+            print(completed.stderr.rstrip(), file=sys.stderr)
+        print(
+            f"WARNING: CSGC heavy trace parser exited with {completed.returncode}",
+            file=sys.stderr,
+        )
+        return completed.returncode
+
+    if completed.stdout:
+        print(completed.stdout.rstrip())
+    return 0
 
 
 def safe_float_array(xs: List[Optional[int]]) -> np.ndarray:
@@ -304,6 +338,7 @@ def main() -> int:
     if FIG_OUTPUT:
         ensure_dir(png_dir)
     result_path = os.path.join(run_dir, "result.txt")
+    heavy_trace_result_path = os.path.join(run_dir, "csgc_heavy_trace_result.txt")
 
     original_stdout = sys.stdout
     original_stderr = sys.stderr
@@ -402,6 +437,9 @@ def main() -> int:
                     do_comm.append(m.group("comm"))
                     continue
 
+        run_heavy_trace_parser(args.logfile, heavy_trace_result_path)
+        heavy_trace_generated = os.path.exists(heavy_trace_result_path)
+
         pattern_counts = analyze_lseg_lsection_pattern(lseg_lsection_events)
         bad_patterns = invalid_lseg_lsection_patterns(pattern_counts)
 
@@ -440,6 +478,7 @@ def main() -> int:
         emit(f"run_dir={run_dir}")
         emit(f"png_dir={png_dir if FIG_OUTPUT else 'disabled'}")
         emit(f"result_file={result_path}")
+        emit(f"heavy_trace_result_file={heavy_trace_result_path if heavy_trace_generated else 'not_generated'}")
         emit(f"stat_prefix={used_prefix}")
         emit(f"segment_samples={seg_count}")
         emit(f"section_samples={sec_count}")
@@ -550,6 +589,10 @@ def main() -> int:
                 )
                 emit(f"saved {out}", to_file=False)
 
+        if heavy_trace_generated:
+            emit("")
+            emit("=== CSGC heavy trace parser ===")
+            emit(f"heavy_trace_result_file={heavy_trace_result_path}")
         return 0
 
     finally:
