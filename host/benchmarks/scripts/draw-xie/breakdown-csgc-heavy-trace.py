@@ -43,6 +43,21 @@ F2FS_GC_COLLECTOR_BLOCK_FIELDS = (
 F2FS_GC_COLLECTOR_FIELDS = (
     F2FS_GC_COLLECTOR_BASE_FIELDS + F2FS_GC_COLLECTOR_BLOCK_FIELDS
 )
+F2FS_GC_LOCK_START_FIELDS = (
+    "gc_lock_wait_tracked",
+    "gc_lock_wait_us",
+    "gc_lock_acquire_to_call_us",
+)
+F2FS_GC_DEMAND_START_FIELDS = (
+    "gc_demand_tracked",
+    "gc_demand_to_call_us",
+)
+F2FS_GC_LOCK_END_FIELDS = (
+    "gc_lock_wait_tracked",
+    "gc_call_pre_unlock_us",
+    "gc_lock_held_us",
+    "gc_call_post_unlock_us",
+)
 
 
 def configure_trace_kind(kind: str) -> None:
@@ -244,6 +259,30 @@ def parse_input(path: str) -> Tuple[List[Trace], List[Dict[str, str]], List[str]
                         "origc_node_migrated_blocks": int_or_none(
                             kv.get("origc_node_migrated_blocks")
                         ),
+                        "gc_lock_wait_tracked": int_or_none(
+                            kv.get("gc_lock_wait_tracked")
+                        ),
+                        "gc_demand_tracked": int_or_none(
+                            kv.get("gc_demand_tracked")
+                        ),
+                        "gc_demand_to_call_us": int_or_none(
+                            kv.get("gc_demand_to_call_us")
+                        ),
+                        "gc_lock_wait_us": int_or_none(
+                            kv.get("gc_lock_wait_us")
+                        ),
+                        "gc_lock_acquire_to_call_us": int_or_none(
+                            kv.get("gc_lock_acquire_to_call_us")
+                        ),
+                        "gc_call_pre_unlock_us": int_or_none(
+                            kv.get("gc_call_pre_unlock_us")
+                        ),
+                        "gc_lock_held_us": int_or_none(
+                            kv.get("gc_lock_held_us")
+                        ),
+                        "gc_call_post_unlock_us": int_or_none(
+                            kv.get("gc_call_post_unlock_us")
+                        ),
                         "seg_type": kv.get("seg_type", ""),
                         "pid": int_or_none(kv.get("pid")),
                         "comm": kv.get("comm", ""),
@@ -388,6 +427,8 @@ def build_f2fs_gc_call_records(traces: List[Trace]) -> List[Dict[str, object]]:
         records.append(
             {
                 "call_id": call_id,
+                "start_t_us": int(start["t_us"]),
+                "end_t_us": int(trace["t_us"]),
                 "duration_us": duration_us,
                 "mode": str(trace.get("mode") or start.get("mode") or "unknown"),
                 "path": str(trace.get("path") or "unknown"),
@@ -397,6 +438,25 @@ def build_f2fs_gc_call_records(traces: List[Trace]) -> List[Dict[str, object]]:
                 "total_freed": trace.get("total_freed"),
                 "sec_freed": trace.get("sec_freed"),
                 "comm": str(start.get("comm") or ""),
+                "gc_demand_tracked": start.get("gc_demand_tracked"),
+                "gc_demand_to_call_us": start.get(
+                    "gc_demand_to_call_us"
+                ),
+                "gc_lock_wait_tracked": start.get("gc_lock_wait_tracked"),
+                "gc_lock_wait_tracked_end": trace.get(
+                    "gc_lock_wait_tracked"
+                ),
+                "gc_lock_wait_us": start.get("gc_lock_wait_us"),
+                "gc_lock_acquire_to_call_us": start.get(
+                    "gc_lock_acquire_to_call_us"
+                ),
+                "gc_call_pre_unlock_us": trace.get(
+                    "gc_call_pre_unlock_us"
+                ),
+                "gc_lock_held_us": trace.get("gc_lock_held_us"),
+                "gc_call_post_unlock_us": trace.get(
+                    "gc_call_post_unlock_us"
+                ),
                 **{
                     field: trace.get(field)
                     for field in F2FS_GC_COLLECTOR_FIELDS
@@ -599,6 +659,430 @@ def emit_f2fs_gc_collector_breakdown(
     for name, (numerator, denominator) in block_ratios.items():
         value = numerator / float(denominator) if denominator else float("nan")
         out.write(f"{name}={format_float(value, 6)}\n")
+
+
+def merge_windows(windows: Iterable[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """Merge overlapping non-empty half-open time windows."""
+    ordered = sorted((start, end) for start, end in windows if end > start)
+    merged: List[Tuple[int, int]] = []
+    for start, end in ordered:
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+            continue
+        merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def merged_window_time(windows: List[Tuple[int, int]]) -> int:
+    """Return union time for windows already merged by merge_windows()."""
+    return sum(end - start for start, end in windows)
+
+
+def intersect_merged_windows(
+    left: List[Tuple[int, int]], right: List[Tuple[int, int]]
+) -> int:
+    """Return intersection time between two merged window lists."""
+    i = 0
+    j = 0
+    total = 0
+    while i < len(left) and j < len(right):
+        start = max(left[i][0], right[j][0])
+        end = min(left[i][1], right[j][1])
+        if end > start:
+            total += end - start
+        if left[i][1] <= right[j][1]:
+            i += 1
+        else:
+            j += 1
+    return total
+
+
+def build_window_concurrency(
+    windows: List[Tuple[int, int]],
+) -> Dict[str, object]:
+    """Build active-waiter time bins from reconstructed wait windows."""
+    events: List[Tuple[int, int, int]] = []
+    for start, end in windows:
+        if end <= start:
+            continue
+        events.append((start, 1, 1))
+        events.append((end, 0, -1))
+
+    if not events:
+        return {
+            "bins": {0: 0},
+            "span_us": 0,
+            "busy_us": 0,
+            "weighted_us": 0,
+            "max_active": 0,
+        }
+
+    events.sort()
+    bins: DefaultDict[int, int] = defaultdict(int)
+    active = 0
+    max_active = 0
+    first_t = events[0][0]
+    last_t = first_t
+    for t_us, _order, delta in events:
+        bins[active] += t_us - last_t
+        active += delta
+        max_active = max(max_active, active)
+        last_t = t_us
+
+    return {
+        "bins": dict(sorted(bins.items())),
+        "span_us": max(0, last_t - first_t),
+        "busy_us": sum(value for level, value in bins.items() if level > 0),
+        "weighted_us": sum(
+            level * value for level, value in bins.items() if level > 0
+        ),
+        "max_active": max_active,
+    }
+
+
+def emit_f2fs_gc_lock_breakdown(
+    out, records: List[Dict[str, object]]
+) -> None:
+    """Summarize GC-lock waiting, lock-held service, and queue backlog."""
+    required_fields = tuple(
+        dict.fromkeys(F2FS_GC_LOCK_START_FIELDS + F2FS_GC_LOCK_END_FIELDS)
+    )
+    complete = [
+        record
+        for record in records
+        if all(record.get(field) is not None for field in required_fields)
+    ]
+
+    out.write("=== f2fs_gc lock wait/hold breakdown ===\n")
+    out.write(f"gc_lock_timing_calls={len(complete)}\n")
+    out.write(f"gc_lock_timing_missing_calls={len(records) - len(complete)}\n")
+    if not complete:
+        out.write("gc_lock_timing_breakdown=unavailable\n")
+        return
+
+    timing_fields = (
+        "gc_lock_wait_us",
+        "gc_lock_acquire_to_call_us",
+        "gc_call_pre_unlock_us",
+        "gc_lock_held_us",
+        "gc_call_post_unlock_us",
+    )
+    for field in timing_fields:
+        values = [int(record[field]) for record in complete]
+        out.write(summarize_values(field, values) + "\n")
+
+    tracked = [
+        record
+        for record in complete
+        if int(record["gc_lock_wait_tracked"]) == 1
+    ]
+    tracking_mismatches = sum(
+        1
+        for record in complete
+        if record.get("gc_lock_wait_tracked_end") is not None
+        and int(record["gc_lock_wait_tracked"])
+        != int(record["gc_lock_wait_tracked_end"])
+    )
+    call_partition_mismatches = sum(
+        1
+        for record in complete
+        if abs(
+            int(record["duration_us"])
+            - int(record["gc_call_pre_unlock_us"])
+            - int(record["gc_call_post_unlock_us"])
+        ) > 2
+    )
+    held_partition_mismatches = sum(
+        1
+        for record in tracked
+        if abs(
+            int(record["gc_lock_held_us"])
+            - int(record["gc_lock_acquire_to_call_us"])
+            - int(record["gc_call_pre_unlock_us"])
+        ) > 2
+    )
+
+    locked_windows = merge_windows(
+        (
+            int(record["start_t_us"]),
+            int(record["start_t_us"])
+            + int(record["gc_call_pre_unlock_us"]),
+        )
+        for record in complete
+    )
+    wait_windows: List[Tuple[int, int]] = []
+    for record in tracked:
+        acquired_t = (
+            int(record["start_t_us"])
+            - int(record["gc_lock_acquire_to_call_us"])
+        )
+        wait_windows.append(
+            (acquired_t - int(record["gc_lock_wait_us"]), acquired_t)
+        )
+
+    nonempty_wait_windows = [
+        window for window in wait_windows if window[1] > window[0]
+    ]
+    merged_wait_windows = merge_windows(nonempty_wait_windows)
+    wait_concurrency = build_window_concurrency(nonempty_wait_windows)
+    locked_body_us = merged_window_time(locked_windows)
+    wait_active_us = merged_window_time(merged_wait_windows)
+    locked_with_waiter_us = intersect_merged_windows(
+        locked_windows, merged_wait_windows
+    )
+    waits_overlapping_locked = sum(
+        1
+        for window in nonempty_wait_windows
+        if intersect_merged_windows(merge_windows([window]), locked_windows) > 0
+    )
+
+    tracked_fraction = len(tracked) / float(len(complete))
+    locked_with_waiter_fraction = (
+        locked_with_waiter_us / float(locked_body_us)
+        if locked_body_us > 0
+        else float("nan")
+    )
+    avg_waiters_when_waiting = (
+        int(wait_concurrency["weighted_us"])
+        / float(int(wait_concurrency["busy_us"]))
+        if int(wait_concurrency["busy_us"]) > 0
+        else float("nan")
+    )
+
+    out.write(f"gc_lock_wait_tracked_calls={len(tracked)}\n")
+    out.write(f"gc_lock_wait_untracked_calls={len(complete) - len(tracked)}\n")
+    out.write(
+        "gc_lock_wait_tracked_fraction="
+        f"{format_float(tracked_fraction, 6)}\n"
+    )
+    out.write(f"gc_lock_wait_positive_calls={len(nonempty_wait_windows)}\n")
+    out.write(
+        "gc_lock_wait_calls_overlapping_gc_locked_body="
+        f"{waits_overlapping_locked}\n"
+    )
+    out.write(f"gc_locked_body_us={locked_body_us}\n")
+    out.write(f"gc_lock_wait_active_us={wait_active_us}\n")
+    if nonempty_wait_windows:
+        out.write(
+            "gc_lock_first_wait_start_t_us="
+            f"{min(start for start, _end in nonempty_wait_windows)}\n"
+        )
+        out.write(
+            "gc_lock_last_wait_acquired_t_us="
+            f"{max(end for _start, end in nonempty_wait_windows)}\n"
+        )
+    else:
+        out.write("gc_lock_first_wait_start_t_us=unavailable\n")
+        out.write("gc_lock_last_wait_acquired_t_us=unavailable\n")
+    out.write(
+        "gc_lock_waiter_weighted_us="
+        f"{int(wait_concurrency['weighted_us'])}\n"
+    )
+    out.write(
+        f"gc_lock_waiter_max_active={int(wait_concurrency['max_active'])}\n"
+    )
+    out.write(
+        "gc_lock_avg_waiters_when_waiting="
+        f"{format_float(avg_waiters_when_waiting, 6)}\n"
+    )
+    for active, time_us in sorted(dict(wait_concurrency["bins"]).items()):
+        out.write(f"gc_lock_waiters active={active} time_us={time_us}\n")
+    out.write(f"gc_locked_body_with_waiter_us={locked_with_waiter_us}\n")
+    out.write(
+        "gc_locked_body_with_waiter_fraction="
+        f"{format_float(locked_with_waiter_fraction, 6)}\n"
+    )
+    out.write(
+        "gc_lock_wait_not_overlapping_traced_gc_us="
+        f"{max(0, wait_active_us - locked_with_waiter_us)}\n"
+    )
+    out.write(f"gc_lock_tracking_mismatch_calls={tracking_mismatches}\n")
+    out.write(f"gc_call_partition_mismatch_calls={call_partition_mismatches}\n")
+    out.write(
+        "gc_lock_held_partition_mismatch_calls="
+        f"{held_partition_mismatches}\n"
+    )
+
+
+def emit_f2fs_gc_window_breakdown(
+    out,
+    records: List[Dict[str, object]],
+    since_first_gc_us: Optional[int],
+) -> None:
+    """Merge demand-to-completion windows without double-counting overlap."""
+    out.write("=== complete GC-related wall-clock window ===\n")
+    out.write(f"gc_window_calls={len(records)}\n")
+    if not records:
+        out.write("gc_window_breakdown=unavailable\n")
+        return
+
+    demand_complete = [
+        record
+        for record in records
+        if all(record.get(field) is not None for field in F2FS_GC_DEMAND_START_FIELDS)
+        and int(record["gc_demand_tracked"]) == 1
+        and int(record["gc_demand_to_call_us"]) >= 0
+    ]
+    demand_complete_ids = {int(record["call_id"]) for record in demand_complete}
+    demand_missing = [
+        record
+        for record in records
+        if int(record["call_id"]) not in demand_complete_ids
+    ]
+
+    call_windows = merge_windows(
+        (int(record["start_t_us"]), int(record["end_t_us"]))
+        for record in records
+    )
+    pre_call_windows = merge_windows(
+        (
+            int(record["start_t_us"])
+            - int(record["gc_demand_to_call_us"]),
+            int(record["start_t_us"]),
+        )
+        for record in demand_complete
+    )
+    raw_gc_windows = [
+        (
+            int(record["start_t_us"])
+            - int(record["gc_demand_to_call_us"]),
+            int(record["end_t_us"]),
+        )
+        for record in demand_complete
+    ]
+    lower_bound_windows = raw_gc_windows + [
+        (int(record["start_t_us"]), int(record["end_t_us"]))
+        for record in demand_missing
+    ]
+    merged_gc_windows = merge_windows(lower_bound_windows)
+    gc_window_concurrency = build_window_concurrency(lower_bound_windows)
+
+    call_union_us = merged_window_time(call_windows)
+    pre_call_union_us = merged_window_time(pre_call_windows)
+    gc_window_union_lower_bound_us = merged_window_time(merged_gc_windows)
+    pre_call_overlapping_call_us = intersect_merged_windows(
+        pre_call_windows, call_windows
+    )
+    gc_window_extra_outside_calls_us = max(
+        0, gc_window_union_lower_bound_us - call_union_us
+    )
+    pre_call_weighted_us = sum(
+        int(record["gc_demand_to_call_us"]) for record in demand_complete
+    )
+    demand_to_call_values = [
+        int(record["gc_demand_to_call_us"]) for record in demand_complete
+    ]
+    demand_pre_lock_values: List[int] = []
+    demand_pre_lock_mismatches = 0
+    for record in demand_complete:
+        if (
+            record.get("gc_lock_wait_tracked") is None
+            or int(record["gc_lock_wait_tracked"]) != 1
+            or record.get("gc_lock_wait_us") is None
+            or record.get("gc_lock_acquire_to_call_us") is None
+        ):
+            continue
+        pre_lock_us = (
+            int(record["gc_demand_to_call_us"])
+            - int(record["gc_lock_wait_us"])
+            - int(record["gc_lock_acquire_to_call_us"])
+        )
+        if pre_lock_us < -2:
+            demand_pre_lock_mismatches += 1
+        demand_pre_lock_values.append(max(0, pre_lock_us))
+
+    first_window_start_us = min(start for start, _end in lower_bound_windows)
+    last_window_end_us = max(end for _start, end in lower_bound_windows)
+    gc_window_span_us = max(0, last_window_end_us - first_window_start_us)
+    gc_window_busy_fraction_to_last_end = (
+        gc_window_union_lower_bound_us / float(gc_window_span_us)
+        if gc_window_span_us > 0
+        else float("nan")
+    )
+    gc_window_complete = not demand_missing
+
+    out.write(f"gc_window_demand_tracked_calls={len(demand_complete)}\n")
+    out.write(f"gc_window_demand_untracked_calls={len(demand_missing)}\n")
+    out.write(f"gc_window_complete={int(gc_window_complete)}\n")
+    out.write(summarize_values("gc_demand_to_call_us", demand_to_call_values) + "\n")
+    out.write(summarize_values("gc_demand_pre_lock_us", demand_pre_lock_values) + "\n")
+    out.write(
+        "gc_demand_pre_lock_partition_mismatch_calls="
+        f"{demand_pre_lock_mismatches}\n"
+    )
+    out.write(f"gc_call_union_us={call_union_us}\n")
+    out.write(f"gc_pre_call_union_us={pre_call_union_us}\n")
+    out.write(f"gc_pre_call_weighted_us={pre_call_weighted_us}\n")
+    out.write(
+        "gc_pre_call_overlapping_gc_call_us="
+        f"{pre_call_overlapping_call_us}\n"
+    )
+    out.write(
+        "gc_window_extra_outside_gc_calls_us="
+        f"{gc_window_extra_outside_calls_us}\n"
+    )
+    out.write(
+        "gc_window_overlap_avoided_us="
+        f"{max(0, call_union_us + pre_call_union_us - gc_window_union_lower_bound_us)}\n"
+    )
+    out.write(
+        "gc_window_union_lower_bound_us="
+        f"{gc_window_union_lower_bound_us}\n"
+    )
+    out.write(f"gc_window_lower_bound_first_t_us={first_window_start_us}\n")
+    out.write(f"gc_window_lower_bound_last_t_us={last_window_end_us}\n")
+    if gc_window_complete:
+        out.write(f"gc_window_union_us={gc_window_union_lower_bound_us}\n")
+    else:
+        out.write("gc_window_union_us=unavailable\n")
+        out.write("gc_window_first_demand_t_us=unavailable\n")
+        out.write("gc_window_last_end_t_us=unavailable\n")
+        out.write("gc_window_first_demand_to_last_end_us=unavailable\n")
+        out.write(
+            "gc_window_busy_fraction_first_demand_to_last_end=unavailable\n"
+        )
+    if gc_window_complete:
+        out.write(f"gc_window_first_demand_t_us={first_window_start_us}\n")
+        out.write(f"gc_window_last_end_t_us={last_window_end_us}\n")
+        out.write(f"gc_window_first_demand_to_last_end_us={gc_window_span_us}\n")
+        out.write(
+            "gc_window_busy_fraction_first_demand_to_last_end="
+            f"{format_float(gc_window_busy_fraction_to_last_end, 6)}\n"
+        )
+
+    if since_first_gc_us is not None and gc_window_complete:
+        first_demand_to_unmount_us = since_first_gc_us - first_window_start_us
+        out.write(
+            "gc_window_first_demand_to_unmount_us="
+            f"{max(0, first_demand_to_unmount_us)}\n"
+        )
+        if first_demand_to_unmount_us > 0:
+            out.write(
+                "gc_window_busy_fraction_first_demand_to_unmount="
+                f"{format_float(gc_window_union_lower_bound_us / float(first_demand_to_unmount_us), 6)}\n"
+            )
+        else:
+            out.write(
+                "gc_window_busy_fraction_first_demand_to_unmount=unavailable\n"
+            )
+    else:
+        out.write("gc_window_first_demand_to_unmount_us=unavailable\n")
+        out.write("gc_window_busy_fraction_first_demand_to_unmount=unavailable\n")
+
+    if gc_window_complete:
+        out.write(
+            "gc_window_request_weighted_us="
+            f"{int(gc_window_concurrency['weighted_us'])}\n"
+        )
+        out.write(
+            "gc_window_request_max_active="
+            f"{int(gc_window_concurrency['max_active'])}\n"
+        )
+        for active, time_us in sorted(dict(gc_window_concurrency["bins"]).items()):
+            out.write(f"gc_window_requests active={active} time_us={time_us}\n")
+    else:
+        out.write("gc_window_request_weighted_us=unavailable\n")
+        out.write("gc_window_request_max_active=unavailable\n")
 
 
 def build_complete_segment_totals(
@@ -841,6 +1325,12 @@ def write_result(
     gc_call_records = (
         build_f2fs_gc_call_records(traces) if TRACE_KIND == "f2fs_gc" else []
     )
+    global_rows = kernel_stats["global_rows"]
+    since_first_gc_us = (
+        int_or_none(global_rows[-1].get("since_first_gc_us"))
+        if global_rows
+        else None
+    )
     first_t = min(int(trace["t_us"]) for trace in traces) if traces else 0
     last_t = max(int(trace["t_us"]) for trace in traces) if traces else 0
 
@@ -861,10 +1351,9 @@ def write_result(
 
         out.write("=== measurement windows ===\n")
         out.write(f"trace_first_to_last_event_us={max(0, last_t - first_t)}\n")
-        global_rows = kernel_stats["global_rows"]
         if global_rows:
             row = global_rows[-1]
-            since_first = int_or_none(row.get("since_first_gc_us"))
+            since_first = since_first_gc_us
             gc_active = int_or_none(row.get("gc_active_us"))
             tail = int_or_none(row.get("tail_after_last_event_us"))
             if since_first is not None:
@@ -944,6 +1433,12 @@ def write_result(
             out.write(f"sections_freed_sum={sections_freed}\n")
             out.write("\n")
             emit_f2fs_gc_collector_breakdown(out, gc_call_records)
+            out.write("\n")
+            emit_f2fs_gc_lock_breakdown(out, gc_call_records)
+            out.write("\n")
+            emit_f2fs_gc_window_breakdown(
+                out, gc_call_records, since_first_gc_us
+            )
             out.write("\n")
 
         out.write("=== adjacent interval gaps (microseconds) ===\n")
