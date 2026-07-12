@@ -200,18 +200,52 @@ mkfs_and_mount() {
         # need to mkfs again, since when sFTL is enabled, fs-ready will reset the device
         sudo mkfs.f2fs -f -s "${segs_per_sec}" "${devpath}"
     fi
-   sudo mount -t f2fs -o mode="${FS_MODE}",background_gc="${BGGC_ONOFF}",fsync_mode=${FSYNC_MODE},"${discard_option}" "${devpath}" "${mntpoint}"
-    #sudo mount -t f2fs -o mode="${FS_MODE}",background_gc="${BGGC_ONOFF}",fsync_mode=${FSYNC_MODE},"${discard_option}" "${devpath}" "${mntpoint}"
-
-    sudo cat /proc/mounts | grep " ${mntpoint} "
-
-    echo "wait 5 seconds for check mount"
-    echo "======================================================="
-    sleep 5
-    if [ $? -ne 0 ]; then
-        echo "mount failed"
+    if ! sudo mount -t f2fs \
+        -o mode="${FS_MODE}",background_gc="${BGGC_ONOFF}",fsync_mode="${FSYNC_MODE}","${discard_option}" \
+        "${devpath}" "${mntpoint}"; then
+        echo "ERROR: failed to mount ${devpath} at ${mntpoint}" >&2
         exit 1
     fi
+
+    if ! mountpoint -q "${mntpoint}"; then
+        echo "ERROR: ${mntpoint} is not a mount point after mount completed" >&2
+        exit 1
+    fi
+
+    echo "Mounted ${devpath} at ${mntpoint}"
+    echo "======================================================="
+}
+
+# Remount an existing F2FS filesystem to reset per-mount host statistics.
+remount_f2fs_for_measurement() {
+    local devpath=$1
+    local mntpoint=$2
+    local discard_option=$3
+    local ssd_enable_l2p=$4
+
+    if [ "${ssd_enable_l2p}" -eq 3 ]; then
+        discard_option="discard"
+    fi
+
+    sudo sync
+    if ! sudo umount "${devpath}"; then
+        echo "ERROR: failed to unmount ${devpath} before measurement" >&2
+        return 1
+    fi
+
+    if ! sudo mount -t f2fs \
+        -o mode="${FS_MODE}",background_gc="${BGGC_ONOFF}",fsync_mode="${FSYNC_MODE}","${discard_option}" \
+        "${devpath}" "${mntpoint}"; then
+        echo "ERROR: failed to remount ${devpath} at ${mntpoint}" >&2
+        return 1
+    fi
+
+    if ! mountpoint -q "${mntpoint}"; then
+        echo "ERROR: ${mntpoint} is not a mount point after remount completed" >&2
+        return 1
+    fi
+
+    echo "Remounted ${devpath} at ${mntpoint} for measurement"
 }
 
 # configure csgc settings
@@ -298,13 +332,29 @@ prefill_storage_fio() {
     local mntpoint=$2
     local prefill_ratio=$3
     local gc_mode=$4
-    local storage_size=$(blockdev --getsize64 ${devpath})
-    local prefill_size=$(echo "${storage_size} * ${prefill_ratio} / 1" | bc)
-    local prefill_size_human="$(echo "${prefill_size} / 1024 / 1024 / 1024" | bc)G"
+    local storage_size
+    local requested_size
+    local prefill_size
+    local prefill_size_human
+    local prefill_file="${mntpoint}/${DUMMY_FILE_NAME}1"
+    local alignment=4096
     local prefill_threads=10
     local prefill_io_size=1M
     local prefill_mode=collaborate
     local prefill_use_fallocate=no
+
+    if ! storage_size=$(blockdev --getsize64 "${devpath}"); then
+        echo "ERROR: failed to read the size of ${devpath}" >&2
+        return 1
+    fi
+    if ! requested_size=$(echo "${storage_size} * ${prefill_ratio} / 1" | bc); then
+        echo "ERROR: failed to calculate the prefill size" >&2
+        return 1
+    fi
+
+    prefill_size=$((requested_size / alignment * alignment))
+    prefill_size_human="$(echo "${prefill_size} / 1024 / 1024 / 1024" | bc)G"
+
     if [ "$gc_mode" = "iplfs" ]; then
         # seems that collaborate mode does not work well with iplfs, 
         # the size of the file and the actually written bytes are not as expected
@@ -312,10 +362,44 @@ prefill_storage_fio() {
         prefill_mode=independent
     fi
 
-    echo "Prefilling storage, ratio=${prefill_ratio}, size=${prefill_size_human}"
-    ${FILE_WRITER_DIR}/build.sh
-    ${FILE_WRITER_DIR}/file_writer ${mntpoint} testbigfile 1 ${prefill_size} ${prefill_threads} ${prefill_io_size} ${prefill_mode} ${prefill_use_fallocate}
-    echo "Prefilled storage, size: <${prefill_size}>"
+    echo "Prefilling storage, ratio=${prefill_ratio}, requested=${requested_size}, aligned=${prefill_size}, size=${prefill_size_human}"
+    if ! "${FILE_WRITER_DIR}/build.sh"; then
+        echo "ERROR: failed to build file_writer" >&2
+        return 1
+    fi
+    if ! "${FILE_WRITER_DIR}/file_writer" \
+        "${mntpoint}" "${DUMMY_FILE_NAME}" 1 "${prefill_size}" \
+        "${prefill_threads}" "${prefill_io_size}" "${prefill_mode}" "${prefill_use_fallocate}"; then
+        echo "ERROR: file_writer failed during storage prefill" >&2
+        return 1
+    fi
+
+    if ! sync -f "${prefill_file}"; then
+        echo "ERROR: failed to synchronize ${prefill_file}" >&2
+        return 1
+    fi
+
+    local actual_size
+    local allocated_blocks
+    local allocated_bytes
+    if ! actual_size=$(stat -c '%s' -- "${prefill_file}"); then
+        echo "ERROR: prefill file does not exist: ${prefill_file}" >&2
+        return 1
+    fi
+    allocated_blocks=$(stat -c '%b' -- "${prefill_file}") || return 1
+    allocated_bytes=$((allocated_blocks * 512))
+
+    if [ "${actual_size}" -ne "${prefill_size}" ]; then
+        echo "ERROR: prefill size mismatch: expected=${prefill_size}, actual=${actual_size}" >&2
+        return 1
+    fi
+    if [ "${allocated_bytes}" -lt "${actual_size}" ]; then
+        echo "ERROR: prefill file contains holes: size=${actual_size}, allocated=${allocated_bytes}" >&2
+        return 1
+    fi
+
+    echo "Verified prefill file: path=${prefill_file}, size=${actual_size}, allocated=${allocated_bytes}"
+    echo "Prefilled storage, size: <${actual_size}>"
 }
 
 prefill_storage_ycsb() {
@@ -343,4 +427,3 @@ prefill_storage_ycsb() {
     ${FILE_WRITER_DIR}/file_writer ${mntpoint} testbigfile ${prefill_numfiles} ${prefill_size} ${prefill_threads} ${prefill_io_size} ${prefill_mode} ${prefill_use_fallocate}
     echo "Prefilled storage, size: <${prefill_size}>"
 }
-

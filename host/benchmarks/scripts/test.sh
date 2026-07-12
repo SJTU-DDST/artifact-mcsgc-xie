@@ -90,6 +90,10 @@ source "${config_path}"
 
 pushd "${script_dir}" > /dev/null
 
+: "${fio_gc_precondition:=0}"
+: "${fio_gc_precondition_size_per_job:=4G}"
+: "${fio_gc_precondition_max_rounds:=4}"
+
 host_mem_usage="8G"
 use_cgroup=1
 nr_cs_cores="1"
@@ -133,20 +137,30 @@ echo "Running evaluation for $gc_mode..."
 
         export gc_mode ssd_thread_mode workload_type bmname random_distribution segs_per_sec output_path_base \
         prefill_ratio use_cgroup host_mem_usage nr_cs_cores csgc_sync fio_timebased\
-        ssd_enable_l2p ssd_enable_nand_lat ssd_enable_dsm fsck_after_run light_evaluation
+        ssd_enable_l2p ssd_enable_nand_lat ssd_enable_dsm fsck_after_run light_evaluation \
+        fio_gc_precondition fio_gc_precondition_size_per_job fio_gc_precondition_max_rounds
         
         case "${workload_type}" in 
             "filebench")
                 echo "Running filebench: ${bmname}..."
-                ./run_filebench.sh
+                if ! ./run_filebench.sh; then
+                    echo "Error: filebench runner failed: ${bmname}" >&2
+                    exit 1
+                fi
                 ;;
             "fio")
                 echo "Running fio: ${bmname}..."
-                ./run_fio.sh
+                if ! ./run_fio.sh; then
+                    echo "Error: fio runner failed: ${bmname}" >&2
+                    exit 1
+                fi
                 ;;
             "ycsb")
                 echo "Running ycsb: ${bmname}..."
-                ./run_ycsb.sh
+                if ! ./run_ycsb.sh; then
+                    echo "Error: YCSB runner failed: ${bmname}" >&2
+                    exit 1
+                fi
                 ;;
             *)
                 echo "workload_type not supported"
