@@ -12,6 +12,7 @@ TRACE_KIND = "csgc"
 TRACE_LABEL = "CSGC"
 RE_TRACE = re.compile(r"CSGC_HEAVY_TRACE\s+(?P<kv>.*)$")
 RE_STAT = re.compile(r"CSGC_HEAVY_STAT\s+(?P<kv>.*)$")
+RE_TRIGGER_STAT = re.compile(r"F2FS_GC_TRIGGER_STAT\s+(?P<kv>.*)$")
 PHASES = ("section", "pre", "ssd", "post")
 PHASE_START_END = {
     "section": ("SECTION_START", "SECTION_END"),
@@ -51,6 +52,20 @@ F2FS_GC_LOCK_START_FIELDS = (
 F2FS_GC_DEMAND_START_FIELDS = (
     "gc_demand_tracked",
     "gc_demand_to_call_us",
+)
+F2FS_GC_TRIGGER_COUNTER_FIELDS = (
+    "demands",
+    "delegated",
+    "blocking_attempts",
+    "blocking_acquired",
+    "trylock_attempts",
+    "trylock_acquired",
+    "trylock_failed",
+    "calls_started",
+    "calls_completed",
+    "calls_with_victim",
+    "calls_no_victim",
+    "calls_negative_ret",
 )
 F2FS_GC_LOCK_END_FIELDS = (
     "gc_lock_wait_tracked",
@@ -172,10 +187,20 @@ def summarize_values(name: str, values: List[int]) -> str:
     )
 
 
-def parse_input(path: str) -> Tuple[List[Trace], List[Dict[str, str]], List[str]]:
+def parse_input(
+    path: str,
+) -> Tuple[
+    List[Trace],
+    List[Dict[str, str]],
+    List[str],
+    List[Dict[str, str]],
+    List[str],
+]:
     traces: List[Trace] = []
     stats: List[Dict[str, str]] = []
     raw_stats: List[str] = []
+    trigger_stats: List[Dict[str, str]] = []
+    raw_trigger_stats: List[str] = []
 
     with open(path, "r", encoding="utf-8", errors="replace") as fp:
         for lineno, line in enumerate(fp, 1):
@@ -216,6 +241,7 @@ def parse_input(path: str) -> Tuple[List[Trace], List[Dict[str, str]], List[str]
                         "segno": segno,
                         "req_idx": req_idx,
                         "call_id": call_id,
+                        "source": kv.get("source", ""),
                         "mode": kv.get("mode", ""),
                         "path": kv.get("path", ""),
                         "ret": int_or_none(kv.get("ret")),
@@ -305,7 +331,15 @@ def parse_input(path: str) -> Tuple[List[Trace], List[Dict[str, str]], List[str]
                     stats.append(kv)
                     raw_stats.append(match.group(0))
 
-    return traces, stats, raw_stats
+            if TRACE_KIND == "f2fs_gc":
+                match = RE_TRIGGER_STAT.search(line)
+                if match:
+                    kv = parse_kv_blob(match.group("kv"))
+                    if kv.get("source"):
+                        trigger_stats.append(kv)
+                        raw_trigger_stats.append(match.group(0))
+
+    return traces, stats, raw_stats, trigger_stats, raw_trigger_stats
 
 
 def phase_key(phase: str, trace: Trace) -> Tuple[int, ...]:
@@ -431,6 +465,7 @@ def build_f2fs_gc_call_records(traces: List[Trace]) -> List[Dict[str, object]]:
                 "end_t_us": int(trace["t_us"]),
                 "duration_us": duration_us,
                 "mode": str(trace.get("mode") or start.get("mode") or "unknown"),
+                "source": str(start.get("source") or "unknown"),
                 "path": str(trace.get("path") or "unknown"),
                 "ret": trace.get("ret"),
                 "init_gc_type": start.get("init_gc_type"),
@@ -1085,6 +1120,96 @@ def emit_f2fs_gc_window_breakdown(
         out.write("gc_window_request_max_active=unavailable\n")
 
 
+def emit_f2fs_gc_trigger_stats(
+    out, trigger_stats: List[Dict[str, str]]
+) -> None:
+    """Aggregate per-source GC demand, lock, call, and victim counters."""
+    out.write("=== f2fs_gc trigger source statistics ===\n")
+    out.write(f"trigger_stat_lines={len(trigger_stats)}\n")
+    if not trigger_stats:
+        out.write("trigger_stats=unavailable\n")
+        return
+
+    by_source: DefaultDict[str, Counter] = defaultdict(Counter)
+    invalid_rows = 0
+    for row in trigger_stats:
+        source = row.get("source", "unknown")
+        values: Dict[str, int] = {}
+        for field in F2FS_GC_TRIGGER_COUNTER_FIELDS:
+            value = int_or_none(row.get(field))
+            if value is None:
+                invalid_rows += 1
+                values = {}
+                break
+            values[field] = value
+        if values:
+            by_source[source].update(values)
+
+    def emit_source(source: str, counters: Counter) -> None:
+        def ratio(numerator: int, denominator: int) -> str:
+            if not denominator:
+                return "nan"
+            return format_float(numerator / float(denominator), 6)
+
+        values = {
+            field: int(counters.get(field, 0))
+            for field in F2FS_GC_TRIGGER_COUNTER_FIELDS
+        }
+        lock_attempts = (
+            values["blocking_attempts"] + values["trylock_attempts"]
+        )
+        lock_acquired = (
+            values["blocking_acquired"] + values["trylock_acquired"]
+        )
+        blocking_pending = (
+            values["blocking_attempts"] - values["blocking_acquired"]
+        )
+        trylock_partition_delta = (
+            values["trylock_attempts"]
+            - values["trylock_acquired"]
+            - values["trylock_failed"]
+        )
+        calls_pending = values["calls_started"] - values["calls_completed"]
+        victim_partition_delta = (
+            values["calls_completed"]
+            - values["calls_with_victim"]
+            - values["calls_no_victim"]
+        )
+
+        raw_fields = " ".join(
+            f"{field}={values[field]}"
+            for field in F2FS_GC_TRIGGER_COUNTER_FIELDS
+        )
+        out.write(f"source={source} {raw_fields}\n")
+        out.write(
+            f"source={source} lock_attempts={lock_attempts} "
+            f"lock_acquired={lock_acquired} "
+            f"demand_to_call_rate={ratio(values['calls_started'], values['demands'])} "
+            f"delegated_fraction={ratio(values['delegated'], values['demands'])} "
+            f"trylock_failure_rate={ratio(values['trylock_failed'], values['trylock_attempts'])} "
+            f"lock_to_call_rate={ratio(values['calls_started'], lock_acquired)} "
+            f"victim_hit_rate={ratio(values['calls_with_victim'], values['calls_completed'])} "
+            "negative_return_rate="
+            f"{ratio(values['calls_negative_ret'], values['calls_completed'])} "
+            f"blocking_pending={blocking_pending} "
+            f"trylock_partition_delta={trylock_partition_delta} "
+            f"calls_pending={calls_pending} "
+            f"victim_partition_delta={victim_partition_delta} "
+            "lock_acquired_without_call="
+            f"{lock_acquired - values['calls_started']}\n"
+        )
+
+    total = Counter()
+    for source in sorted(by_source):
+        emit_source(source, by_source[source])
+        total.update(by_source[source])
+    emit_source("all_stages", total)
+    out.write(f"trigger_invalid_rows={invalid_rows}\n")
+    out.write(
+        "trigger_note=all_stages_demands_are_source_stage_observations_not_unique_logical_requests\n"
+    )
+
+
 def build_complete_segment_totals(
     intervals: Dict[str, Dict[Tuple[int, ...], List[int]]]
 ) -> List[int]:
@@ -1314,6 +1439,8 @@ def write_result(
     traces: List[Trace],
     stats: List[Dict[str, str]],
     raw_stats: List[str],
+    trigger_stats: List[Dict[str, str]],
+    raw_trigger_stats: List[str],
 ) -> None:
     intervals, windows, diagnostics = build_phase_intervals(traces)
     active_result = reconstruct_active(
@@ -1344,6 +1471,7 @@ def write_result(
         out.write(f"result_file={os.path.abspath(output_path)}\n")
         out.write(f"trace_events={len(traces)}\n")
         out.write(f"kernel_stat_lines={len(stats)}\n")
+        out.write(f"trigger_stat_lines={len(trigger_stats)}\n")
         out.write(f"first_trace_t_us={first_t}\n")
         out.write(f"last_trace_t_us={last_t}\n")
         out.write(f"trace_span_us={max(0, last_t - first_t)}\n")
@@ -1400,6 +1528,7 @@ def write_result(
             out.write("=== f2fs_gc call classification ===\n")
             for field in (
                 "mode",
+                "source",
                 "path",
                 "ret",
                 "init_gc_type",
@@ -1439,6 +1568,8 @@ def write_result(
             emit_f2fs_gc_window_breakdown(
                 out, gc_call_records, since_first_gc_us
             )
+            out.write("\n")
+            emit_f2fs_gc_trigger_stats(out, trigger_stats)
             out.write("\n")
 
         out.write("=== adjacent interval gaps (microseconds) ===\n")
@@ -1498,6 +1629,11 @@ def write_result(
             out.write(f"=== raw kernel {TRACE_LABEL}_HEAVY_STAT lines ===\n")
             for line in raw_stats:
                 out.write(line + "\n")
+        if raw_trigger_stats:
+            out.write("\n")
+            out.write("=== raw F2FS_GC_TRIGGER_STAT lines ===\n")
+            for line in raw_trigger_stats:
+                out.write(line + "\n")
 
 
 def main() -> int:
@@ -1519,13 +1655,23 @@ def main() -> int:
 
     configure_trace_kind(args.kind)
 
-    traces, stats, raw_stats = parse_input(args.logfile)
+    traces, stats, raw_stats, trigger_stats, raw_trigger_stats = parse_input(
+        args.logfile
+    )
 
     # Keep this script silent when the input log has no heavy-trace data.
-    if not traces and not stats:
+    if not traces and not stats and not trigger_stats:
         return 0
 
-    write_result(args.output, args.logfile, traces, stats, raw_stats)
+    write_result(
+        args.output,
+        args.logfile,
+        traces,
+        stats,
+        raw_stats,
+        trigger_stats,
+        raw_trigger_stats,
+    )
     return 0
 
 
