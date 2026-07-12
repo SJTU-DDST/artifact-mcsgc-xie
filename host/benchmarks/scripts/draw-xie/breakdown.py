@@ -148,7 +148,7 @@ def unique_dir(path: str) -> str:
 
 
 def run_heavy_trace_parser(logfile: str, output_path: str, kind: str = "csgc") -> int:
-    """Run the shared CSGC/ORIGC heavy-trace parser."""
+    """Run the shared f2fs_gc/CSGC/ORIGC heavy-trace parser."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     script_path = os.path.join(script_dir, "breakdown-csgc-heavy-trace.py")
 
@@ -343,6 +343,9 @@ def main() -> int:
     origc_heavy_trace_result_path = os.path.join(
         run_dir, "origc_heavy_trace_result.txt"
     )
+    f2fs_gc_heavy_trace_result_path = os.path.join(
+        run_dir, "f2fs_gc_heavy_trace_result.txt"
+    )
 
     original_stdout = sys.stdout
     original_stderr = sys.stderr
@@ -449,6 +452,12 @@ def main() -> int:
         origc_heavy_trace_generated = os.path.exists(
             origc_heavy_trace_result_path
         )
+        run_heavy_trace_parser(
+            args.logfile, f2fs_gc_heavy_trace_result_path, "f2fs_gc"
+        )
+        f2fs_gc_heavy_trace_generated = os.path.exists(
+            f2fs_gc_heavy_trace_result_path
+        )
 
         pattern_counts = analyze_lseg_lsection_pattern(lseg_lsection_events)
         bad_patterns = invalid_lseg_lsection_patterns(pattern_counts)
@@ -472,14 +481,26 @@ def main() -> int:
                 emit(f"  invalid (a,b)=({a},{b}) count={cnt}", stderr=True)
             return 6
 
-        if len(seen_stat_prefixes) == 0 and origc_heavy_trace_generated:
-            emit("=== ORIGC heavy-only analysis ===")
+        if len(seen_stat_prefixes) == 0 and (
+            f2fs_gc_heavy_trace_generated
+            or origc_heavy_trace_generated
+            or heavy_trace_generated
+        ):
+            emit("=== GC heavy-only analysis ===")
             emit(f"run_dir={run_dir}")
             emit(f"result_file={result_path}")
-            emit(
-                "origc_heavy_trace_result_file="
-                f"{origc_heavy_trace_result_path}"
-            )
+            if f2fs_gc_heavy_trace_generated:
+                emit(
+                    "f2fs_gc_heavy_trace_result_file="
+                    f"{f2fs_gc_heavy_trace_result_path}"
+                )
+            if origc_heavy_trace_generated:
+                emit(
+                    "origc_heavy_trace_result_file="
+                    f"{origc_heavy_trace_result_path}"
+                )
+            if heavy_trace_generated:
+                emit(f"heavy_trace_result_file={heavy_trace_result_path}")
             emit("segment_samples=0")
             emit("section_samples=0")
             return 0
@@ -504,6 +525,10 @@ def main() -> int:
         emit(
             "origc_heavy_trace_result_file="
             f"{origc_heavy_trace_result_path if origc_heavy_trace_generated else 'not_generated'}"
+        )
+        emit(
+            "f2fs_gc_heavy_trace_result_file="
+            f"{f2fs_gc_heavy_trace_result_path if f2fs_gc_heavy_trace_generated else 'not_generated'}"
         )
         emit(f"stat_prefix={used_prefix}")
         emit(f"segment_samples={seg_count}")
@@ -624,6 +649,13 @@ def main() -> int:
             emit("=== ORIGC heavy trace parser ===")
             emit(
                 f"origc_heavy_trace_result_file={origc_heavy_trace_result_path}"
+            )
+        if f2fs_gc_heavy_trace_generated:
+            emit("")
+            emit("=== unified f2fs_gc heavy trace parser ===")
+            emit(
+                "f2fs_gc_heavy_trace_result_file="
+                f"{f2fs_gc_heavy_trace_result_path}"
             )
         return 0
 

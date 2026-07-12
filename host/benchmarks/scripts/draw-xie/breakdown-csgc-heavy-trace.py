@@ -26,7 +26,13 @@ def configure_trace_kind(kind: str) -> None:
     global TRACE_KIND, TRACE_LABEL, RE_TRACE, RE_STAT, PHASES, PHASE_START_END
 
     TRACE_KIND = kind
-    if kind == "origc":
+    if kind == "f2fs_gc":
+        TRACE_LABEL = "F2FS_GC"
+        PHASES = ("gc_call",)
+        PHASE_START_END = {
+            "gc_call": ("GC_START", "GC_END"),
+        }
+    elif kind == "origc":
         TRACE_LABEL = "ORIGC"
         PHASES = ("gc_call", "section", "data", "node")
         PHASE_START_END = {
@@ -141,17 +147,27 @@ def parse_input(path: str) -> Tuple[List[Trace], List[Dict[str, str]], List[str]
                 kv = parse_kv_blob(match.group("kv"))
                 t_us = int_or_none(kv.get("t_us"))
                 event = kv.get("event")
-                section = int_or_none(kv.get("section"))
-                segno = int_or_none(kv.get("segno"))
-                req_idx = int_or_none(kv.get("req_idx"))
-                if (
-                    t_us is None
-                    or event is None
-                    or section is None
-                    or segno is None
-                    or req_idx is None
-                ):
-                    continue
+                call_id = int_or_none(kv.get("call_id"))
+                if TRACE_KIND == "f2fs_gc":
+                    if t_us is None or event is None or call_id is None:
+                        continue
+                    section = -1
+                    segno = int_or_none(kv.get("victim_segno"))
+                    if segno is None:
+                        segno = -1
+                    req_idx = call_id
+                else:
+                    section = int_or_none(kv.get("section"))
+                    segno = int_or_none(kv.get("segno"))
+                    req_idx = int_or_none(kv.get("req_idx"))
+                    if (
+                        t_us is None
+                        or event is None
+                        or section is None
+                        or segno is None
+                        or req_idx is None
+                    ):
+                        continue
                 traces.append(
                     {
                         "lineno": lineno,
@@ -160,6 +176,14 @@ def parse_input(path: str) -> Tuple[List[Trace], List[Dict[str, str]], List[str]
                         "section": section,
                         "segno": segno,
                         "req_idx": req_idx,
+                        "call_id": call_id,
+                        "mode": kv.get("mode", ""),
+                        "path": kv.get("path", ""),
+                        "ret": int_or_none(kv.get("ret")),
+                        "init_gc_type": int_or_none(kv.get("init_gc_type")),
+                        "final_gc_type": int_or_none(kv.get("final_gc_type")),
+                        "total_freed": int_or_none(kv.get("total_freed")),
+                        "sec_freed": int_or_none(kv.get("sec_freed")),
                         "seg_type": kv.get("seg_type", ""),
                         "pid": int_or_none(kv.get("pid")),
                         "comm": kv.get("comm", ""),
@@ -179,6 +203,8 @@ def parse_input(path: str) -> Tuple[List[Trace], List[Dict[str, str]], List[str]
 
 
 def phase_key(phase: str, trace: Trace) -> Tuple[int, ...]:
+    if TRACE_KIND == "f2fs_gc":
+        return (int(trace["call_id"]),)
     if TRACE_KIND == "origc":
         if phase == "gc_call":
             return (0,)
@@ -270,6 +296,44 @@ def flatten_intervals(intervals: Dict[Tuple[int, ...], List[int]]) -> List[int]:
     for durations in intervals.values():
         values.extend(durations)
     return values
+
+
+def build_f2fs_gc_call_records(traces: List[Trace]) -> List[Dict[str, object]]:
+    """Pair unified f2fs_gc call events and retain end-of-call classification."""
+    starts: Dict[int, Trace] = {}
+    records: List[Dict[str, object]] = []
+
+    for trace in traces:
+        event = str(trace["event"])
+        call_id = int_or_none(trace.get("call_id"))
+        if call_id is None:
+            continue
+        if event == "GC_START":
+            starts[call_id] = trace
+            continue
+        if event != "GC_END" or call_id not in starts:
+            continue
+
+        start = starts.pop(call_id)
+        duration_us = int(trace["t_us"]) - int(start["t_us"])
+        if duration_us < 0:
+            continue
+        records.append(
+            {
+                "call_id": call_id,
+                "duration_us": duration_us,
+                "mode": str(trace.get("mode") or start.get("mode") or "unknown"),
+                "path": str(trace.get("path") or "unknown"),
+                "ret": trace.get("ret"),
+                "init_gc_type": start.get("init_gc_type"),
+                "final_gc_type": trace.get("final_gc_type"),
+                "total_freed": trace.get("total_freed"),
+                "sec_freed": trace.get("sec_freed"),
+                "comm": str(start.get("comm") or ""),
+            }
+        )
+
+    return records
 
 
 def build_complete_segment_totals(
@@ -499,11 +563,14 @@ def write_result(
 ) -> None:
     intervals, windows, diagnostics = build_phase_intervals(traces)
     active_result = reconstruct_active(
-        traces, max_active_hint=1 if TRACE_KIND == "origc" else 8
+        traces, max_active_hint=1 if TRACE_KIND in ("origc", "f2fs_gc") else 8
     )
     kernel_stats = parse_kernel_stats(stats)
     event_counts = Counter(str(trace["event"]) for trace in traces)
     complete_segment_totals = build_complete_segment_totals(intervals)
+    gc_call_records = (
+        build_f2fs_gc_call_records(traces) if TRACE_KIND == "f2fs_gc" else []
+    )
     first_t = min(int(trace["t_us"]) for trace in traces) if traces else 0
     last_t = max(int(trace["t_us"]) for trace in traces) if traces else 0
 
@@ -533,8 +600,13 @@ def write_result(
             if since_first is not None:
                 out.write(f"kernel_first_gc_to_unmount_us={since_first}\n")
             if since_first and gc_active is not None:
+                metric_name = (
+                    "kernel_gc_call_busy_fraction_first_gc_to_unmount"
+                    if TRACE_KIND == "f2fs_gc"
+                    else "kernel_section_busy_fraction_first_gc_to_unmount"
+                )
                 out.write(
-                    "kernel_section_busy_fraction_first_gc_to_unmount="
+                    f"{metric_name}="
                     f"{format_float(gc_active / float(since_first), 6)}\n"
                 )
             if tail is not None:
@@ -564,6 +636,43 @@ def write_result(
                 f"complete_segment_phase_triplets={len(complete_segment_totals)}\n"
             )
         out.write("\n")
+
+        if TRACE_KIND == "f2fs_gc":
+            out.write("=== f2fs_gc call classification ===\n")
+            for field in (
+                "mode",
+                "path",
+                "ret",
+                "init_gc_type",
+                "final_gc_type",
+                "comm",
+            ):
+                counts = Counter(str(record.get(field)) for record in gc_call_records)
+                for value, count in sorted(counts.items()):
+                    out.write(f"{field}={value} count={count}\n")
+
+            path_durations: DefaultDict[str, List[int]] = defaultdict(list)
+            for record in gc_call_records:
+                path_durations[str(record["path"])].append(
+                    int(record["duration_us"])
+                )
+            for path, values in sorted(path_durations.items()):
+                out.write(summarize_values(f"path_{path}_duration_us", values) + "\n")
+
+            total_freed = sum(
+                int(record["total_freed"])
+                for record in gc_call_records
+                if record.get("total_freed") is not None
+            )
+            sections_freed = sum(
+                int(record["sec_freed"])
+                for record in gc_call_records
+                if record.get("sec_freed") is not None
+            )
+            out.write(f"completed_calls={len(gc_call_records)}\n")
+            out.write(f"total_freed_sum={total_freed}\n")
+            out.write(f"sections_freed_sum={sections_freed}\n")
+            out.write("\n")
 
         out.write("=== adjacent interval gaps (microseconds) ===\n")
         for phase in PHASES:
@@ -626,13 +735,16 @@ def write_result(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Parse CSGC or ORIGC heavy-trace lines from a dmesg log."
+        description=(
+            "Parse unified f2fs_gc, CSGC, or ORIGC heavy-trace lines "
+            "from a dmesg log."
+        )
     )
     parser.add_argument("logfile", help="path to the dmesg log file")
     parser.add_argument("output", help="path to the output .txt file")
     parser.add_argument(
         "--kind",
-        choices=("csgc", "origc"),
+        choices=("csgc", "origc", "f2fs_gc"),
         default="csgc",
         help="heavy-trace implementation to parse (default: csgc)",
     )
