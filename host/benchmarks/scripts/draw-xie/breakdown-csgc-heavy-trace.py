@@ -19,6 +19,19 @@ PHASE_START_END = {
     "ssd": ("SSD_START", "SSD_END"),
     "post": ("POST_START", "POST_END"),
 }
+F2FS_GC_COLLECTOR_COUNT_FIELDS = (
+    "csgc_data_sections",
+    "origc_data_sections",
+    "origc_node_sections",
+)
+F2FS_GC_COLLECTOR_TIME_FIELDS = (
+    "csgc_data_time_us",
+    "origc_data_time_us",
+    "origc_node_time_us",
+)
+F2FS_GC_COLLECTOR_FIELDS = (
+    F2FS_GC_COLLECTOR_COUNT_FIELDS + F2FS_GC_COLLECTOR_TIME_FIELDS
+)
 
 
 def configure_trace_kind(kind: str) -> None:
@@ -184,6 +197,24 @@ def parse_input(path: str) -> Tuple[List[Trace], List[Dict[str, str]], List[str]
                         "final_gc_type": int_or_none(kv.get("final_gc_type")),
                         "total_freed": int_or_none(kv.get("total_freed")),
                         "sec_freed": int_or_none(kv.get("sec_freed")),
+                        "csgc_data_sections": int_or_none(
+                            kv.get("csgc_data_sections")
+                        ),
+                        "origc_data_sections": int_or_none(
+                            kv.get("origc_data_sections")
+                        ),
+                        "origc_node_sections": int_or_none(
+                            kv.get("origc_node_sections")
+                        ),
+                        "csgc_data_time_us": int_or_none(
+                            kv.get("csgc_data_time_us")
+                        ),
+                        "origc_data_time_us": int_or_none(
+                            kv.get("origc_data_time_us")
+                        ),
+                        "origc_node_time_us": int_or_none(
+                            kv.get("origc_node_time_us")
+                        ),
                         "seg_type": kv.get("seg_type", ""),
                         "pid": int_or_none(kv.get("pid")),
                         "comm": kv.get("comm", ""),
@@ -195,6 +226,13 @@ def parse_input(path: str) -> Tuple[List[Trace], List[Dict[str, str]], List[str]
             match = RE_STAT.search(line)
             if match:
                 kv = parse_kv_blob(match.group("kv"))
+                # Normalize legacy unified-GC logs to the unambiguous field name.
+                if (
+                    TRACE_KIND == "f2fs_gc"
+                    and "f2fs_gc_call_max_active" not in kv
+                    and "max_active" in kv
+                ):
+                    kv["f2fs_gc_call_max_active"] = kv.pop("max_active")
                 if kv:
                     stats.append(kv)
                     raw_stats.append(match.group(0))
@@ -330,10 +368,92 @@ def build_f2fs_gc_call_records(traces: List[Trace]) -> List[Dict[str, object]]:
                 "total_freed": trace.get("total_freed"),
                 "sec_freed": trace.get("sec_freed"),
                 "comm": str(start.get("comm") or ""),
+                **{
+                    field: trace.get(field)
+                    for field in F2FS_GC_COLLECTOR_FIELDS
+                },
             }
         )
 
     return records
+
+
+def emit_f2fs_gc_collector_breakdown(
+    out, records: List[Dict[str, object]]
+) -> None:
+    """Summarize data/node collector coverage from complete GC_END records."""
+    complete = [
+        record
+        for record in records
+        if all(
+            record.get(field) is not None
+            for field in F2FS_GC_COLLECTOR_FIELDS
+        )
+    ]
+
+    out.write("=== f2fs_gc collector path breakdown ===\n")
+    out.write(f"collector_breakdown_calls={len(complete)}\n")
+    out.write(f"collector_breakdown_missing_calls={len(records) - len(complete)}\n")
+    if not complete:
+        out.write("collector_path_breakdown=unavailable\n")
+        return
+
+    totals = {
+        field: sum(int(record[field]) for record in complete)
+        for field in F2FS_GC_COLLECTOR_FIELDS
+    }
+    for field in F2FS_GC_COLLECTOR_FIELDS:
+        values = [int(record[field]) for record in complete]
+        out.write(summarize_values(f"{field}_per_call", values) + "\n")
+        out.write(f"{field}={totals[field]}\n")
+
+    total_sections = sum(totals[field] for field in F2FS_GC_COLLECTOR_COUNT_FIELDS)
+    total_data_sections = (
+        totals["csgc_data_sections"] + totals["origc_data_sections"]
+    )
+    total_collector_time_us = sum(
+        totals[field] for field in F2FS_GC_COLLECTOR_TIME_FIELDS
+    )
+    f2fs_gc_call_time_sum_us = sum(
+        int(record["duration_us"]) for record in complete
+    )
+    non_collector_time_us = f2fs_gc_call_time_sum_us - total_collector_time_us
+
+    out.write(f"total_collector_sections={total_sections}\n")
+    out.write(f"total_data_sections={total_data_sections}\n")
+    out.write(f"total_collector_time_us={total_collector_time_us}\n")
+    out.write(f"f2fs_gc_call_time_sum_us={f2fs_gc_call_time_sum_us}\n")
+    out.write(f"non_collector_f2fs_gc_time_us={non_collector_time_us}\n")
+
+    ratios = {
+        "csgc_data_section_fraction_of_all_sections": (
+            totals["csgc_data_sections"], total_sections
+        ),
+        "origc_data_section_fraction_of_all_sections": (
+            totals["origc_data_sections"], total_sections
+        ),
+        "origc_node_section_fraction_of_all_sections": (
+            totals["origc_node_sections"], total_sections
+        ),
+        "csgc_data_section_coverage": (
+            totals["csgc_data_sections"], total_data_sections
+        ),
+        "csgc_data_time_fraction_of_collector_time": (
+            totals["csgc_data_time_us"], total_collector_time_us
+        ),
+        "origc_data_time_fraction_of_collector_time": (
+            totals["origc_data_time_us"], total_collector_time_us
+        ),
+        "origc_node_time_fraction_of_collector_time": (
+            totals["origc_node_time_us"], total_collector_time_us
+        ),
+        "collector_time_fraction_of_f2fs_gc_calls": (
+            total_collector_time_us, f2fs_gc_call_time_sum_us
+        ),
+    }
+    for name, (numerator, denominator) in ratios.items():
+        value = numerator / float(denominator) if denominator else float("nan")
+        out.write(f"{name}={format_float(value, 6)}\n")
 
 
 def build_complete_segment_totals(
@@ -523,6 +643,11 @@ def emit_active_summary(out, active_result: Dict[str, Dict[str, object]]) -> Non
             weighted_us / float(span_us) if span_us > 0 else float("nan")
         )
         max_active_time = int(bins.get(max_active, 0)) if max_active > 0 else 0
+        max_active_key = (
+            "f2fs_gc_call_max_active"
+            if TRACE_KIND == "f2fs_gc" and phase == "gc_call"
+            else "max_active"
+        )
         observed_max_active_fraction_when_busy = (
             max_active_time / float(busy_us) if busy_us > 0 else float("nan")
         )
@@ -544,7 +669,7 @@ def emit_active_summary(out, active_result: Dict[str, Dict[str, object]]) -> Non
             f"phase={phase} busy_us={busy_us} busy_fraction={format_float(busy_fraction, 6)} "
             f"avg_parallelism_when_busy={format_float(avg_parallelism_when_busy)} "
             f"avg_parallelism_over_span={format_float(avg_parallelism_over_span)} "
-            f"max_active={max_active} "
+            f"{max_active_key}={max_active} "
             f"observed_max_active_fraction_when_busy={format_float(observed_max_active_fraction_when_busy, 6)} "
             f"active8_fraction_when_busy={format_float(active8_fraction_when_busy, 6)} "
             f"active_ge2_fraction_when_busy={format_float(active_ge2_fraction_when_busy, 6)} "
@@ -672,6 +797,8 @@ def write_result(
             out.write(f"completed_calls={len(gc_call_records)}\n")
             out.write(f"total_freed_sum={total_freed}\n")
             out.write(f"sections_freed_sum={sections_freed}\n")
+            out.write("\n")
+            emit_f2fs_gc_collector_breakdown(out, gc_call_records)
             out.write("\n")
 
         out.write("=== adjacent interval gaps (microseconds) ===\n")
