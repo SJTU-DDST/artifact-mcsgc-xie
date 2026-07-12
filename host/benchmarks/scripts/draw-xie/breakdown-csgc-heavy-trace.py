@@ -29,8 +29,19 @@ F2FS_GC_COLLECTOR_TIME_FIELDS = (
     "origc_data_time_us",
     "origc_node_time_us",
 )
-F2FS_GC_COLLECTOR_FIELDS = (
+F2FS_GC_COLLECTOR_BASE_FIELDS = (
     F2FS_GC_COLLECTOR_COUNT_FIELDS + F2FS_GC_COLLECTOR_TIME_FIELDS
+)
+F2FS_GC_COLLECTOR_BLOCK_FIELDS = (
+    "csgc_data_victim_valid_blocks",
+    "origc_data_victim_valid_blocks",
+    "origc_node_victim_valid_blocks",
+    "csgc_data_migrated_blocks",
+    "origc_data_migrated_blocks",
+    "origc_node_migrated_blocks",
+)
+F2FS_GC_COLLECTOR_FIELDS = (
+    F2FS_GC_COLLECTOR_BASE_FIELDS + F2FS_GC_COLLECTOR_BLOCK_FIELDS
 )
 
 
@@ -215,6 +226,24 @@ def parse_input(path: str) -> Tuple[List[Trace], List[Dict[str, str]], List[str]
                         "origc_node_time_us": int_or_none(
                             kv.get("origc_node_time_us")
                         ),
+                        "csgc_data_victim_valid_blocks": int_or_none(
+                            kv.get("csgc_data_victim_valid_blocks")
+                        ),
+                        "origc_data_victim_valid_blocks": int_or_none(
+                            kv.get("origc_data_victim_valid_blocks")
+                        ),
+                        "origc_node_victim_valid_blocks": int_or_none(
+                            kv.get("origc_node_victim_valid_blocks")
+                        ),
+                        "csgc_data_migrated_blocks": int_or_none(
+                            kv.get("csgc_data_migrated_blocks")
+                        ),
+                        "origc_data_migrated_blocks": int_or_none(
+                            kv.get("origc_data_migrated_blocks")
+                        ),
+                        "origc_node_migrated_blocks": int_or_none(
+                            kv.get("origc_node_migrated_blocks")
+                        ),
                         "seg_type": kv.get("seg_type", ""),
                         "pid": int_or_none(kv.get("pid")),
                         "comm": kv.get("comm", ""),
@@ -387,7 +416,15 @@ def emit_f2fs_gc_collector_breakdown(
         for record in records
         if all(
             record.get(field) is not None
-            for field in F2FS_GC_COLLECTOR_FIELDS
+            for field in F2FS_GC_COLLECTOR_BASE_FIELDS
+        )
+    ]
+    block_complete = [
+        record
+        for record in complete
+        if all(
+            record.get(field) is not None
+            for field in F2FS_GC_COLLECTOR_BLOCK_FIELDS
         )
     ]
 
@@ -400,9 +437,9 @@ def emit_f2fs_gc_collector_breakdown(
 
     totals = {
         field: sum(int(record[field]) for record in complete)
-        for field in F2FS_GC_COLLECTOR_FIELDS
+        for field in F2FS_GC_COLLECTOR_BASE_FIELDS
     }
-    for field in F2FS_GC_COLLECTOR_FIELDS:
+    for field in F2FS_GC_COLLECTOR_BASE_FIELDS:
         values = [int(record[field]) for record in complete]
         out.write(summarize_values(f"{field}_per_call", values) + "\n")
         out.write(f"{field}={totals[field]}\n")
@@ -452,6 +489,114 @@ def emit_f2fs_gc_collector_breakdown(
         ),
     }
     for name, (numerator, denominator) in ratios.items():
+        value = numerator / float(denominator) if denominator else float("nan")
+        out.write(f"{name}={format_float(value, 6)}\n")
+
+    out.write(f"collector_block_breakdown_calls={len(block_complete)}\n")
+    out.write(
+        "collector_block_breakdown_missing_calls="
+        f"{len(complete) - len(block_complete)}\n"
+    )
+    if not block_complete:
+        out.write("collector_block_breakdown=unavailable\n")
+        return
+
+    block_totals = {
+        field: sum(int(record[field]) for record in block_complete)
+        for field in F2FS_GC_COLLECTOR_BLOCK_FIELDS
+    }
+    block_count_totals = {
+        field: sum(int(record[field]) for record in block_complete)
+        for field in F2FS_GC_COLLECTOR_COUNT_FIELDS
+    }
+    for field in F2FS_GC_COLLECTOR_BLOCK_FIELDS:
+        values = [int(record[field]) for record in block_complete]
+        out.write(summarize_values(f"{field}_per_call", values) + "\n")
+        out.write(f"{field}={block_totals[field]}\n")
+
+    total_victim_valid_blocks = sum(
+        block_totals[field]
+        for field in (
+            "csgc_data_victim_valid_blocks",
+            "origc_data_victim_valid_blocks",
+            "origc_node_victim_valid_blocks",
+        )
+    )
+    total_data_victim_valid_blocks = (
+        block_totals["csgc_data_victim_valid_blocks"]
+        + block_totals["origc_data_victim_valid_blocks"]
+    )
+    total_migrated_blocks = sum(
+        block_totals[field]
+        for field in (
+            "csgc_data_migrated_blocks",
+            "origc_data_migrated_blocks",
+            "origc_node_migrated_blocks",
+        )
+    )
+    total_data_migrated_blocks = (
+        block_totals["csgc_data_migrated_blocks"]
+        + block_totals["origc_data_migrated_blocks"]
+    )
+
+    out.write(f"total_victim_valid_blocks={total_victim_valid_blocks}\n")
+    out.write(
+        f"total_data_victim_valid_blocks={total_data_victim_valid_blocks}\n"
+    )
+    out.write(f"total_migrated_blocks={total_migrated_blocks}\n")
+    out.write(f"total_data_migrated_blocks={total_data_migrated_blocks}\n")
+
+    block_ratios = {
+        "csgc_data_victim_valid_block_fraction_of_all": (
+            block_totals["csgc_data_victim_valid_blocks"],
+            total_victim_valid_blocks,
+        ),
+        "origc_data_victim_valid_block_fraction_of_all": (
+            block_totals["origc_data_victim_valid_blocks"],
+            total_victim_valid_blocks,
+        ),
+        "origc_node_victim_valid_block_fraction_of_all": (
+            block_totals["origc_node_victim_valid_blocks"],
+            total_victim_valid_blocks,
+        ),
+        "csgc_data_valid_block_coverage": (
+            block_totals["csgc_data_victim_valid_blocks"],
+            total_data_victim_valid_blocks,
+        ),
+        "csgc_data_migrated_block_coverage": (
+            block_totals["csgc_data_migrated_blocks"],
+            total_data_migrated_blocks,
+        ),
+        "origc_node_migrated_block_fraction_of_all": (
+            block_totals["origc_node_migrated_blocks"],
+            total_migrated_blocks,
+        ),
+        "csgc_data_migrated_to_victim_valid_ratio": (
+            block_totals["csgc_data_migrated_blocks"],
+            block_totals["csgc_data_victim_valid_blocks"],
+        ),
+        "origc_data_migrated_to_victim_valid_ratio": (
+            block_totals["origc_data_migrated_blocks"],
+            block_totals["origc_data_victim_valid_blocks"],
+        ),
+        "origc_node_migrated_to_victim_valid_ratio": (
+            block_totals["origc_node_migrated_blocks"],
+            block_totals["origc_node_victim_valid_blocks"],
+        ),
+        "csgc_data_victim_valid_blocks_per_section": (
+            block_totals["csgc_data_victim_valid_blocks"],
+            block_count_totals["csgc_data_sections"],
+        ),
+        "origc_data_victim_valid_blocks_per_section": (
+            block_totals["origc_data_victim_valid_blocks"],
+            block_count_totals["origc_data_sections"],
+        ),
+        "origc_node_victim_valid_blocks_per_section": (
+            block_totals["origc_node_victim_valid_blocks"],
+            block_count_totals["origc_node_sections"],
+        ),
+    }
+    for name, (numerator, denominator) in block_ratios.items():
         value = numerator / float(denominator) if denominator else float("nan")
         out.write(f"{name}={format_float(value, 6)}\n")
 
