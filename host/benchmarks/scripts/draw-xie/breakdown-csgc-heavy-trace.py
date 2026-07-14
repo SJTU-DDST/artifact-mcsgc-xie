@@ -13,6 +13,11 @@ TRACE_LABEL = "CSGC"
 RE_TRACE = re.compile(r"CSGC_HEAVY_TRACE\s+(?P<kv>.*)$")
 RE_STAT = re.compile(r"CSGC_HEAVY_STAT\s+(?P<kv>.*)$")
 RE_TRIGGER_STAT = re.compile(r"F2FS_GC_TRIGGER_STAT\s+(?P<kv>.*)$")
+RE_MEASUREMENT_STAT = re.compile(r"F2FS_GC_MEASUREMENT_STAT\s+(?P<kv>.*)$")
+RE_VICTIM_STAT = re.compile(r"F2FS_GC_VICTIM_STAT\s+(?P<kv>.*)$")
+RE_MEASUREMENT_BOUNDARY = re.compile(
+    r"F2FS_GC_MEASUREMENT_BOUNDARY\s+(?P<kv>.*)$"
+)
 PHASES = ("section", "pre", "ssd", "post")
 PHASE_START_END = {
     "section": ("SECTION_START", "SECTION_END"),
@@ -112,6 +117,12 @@ def configure_trace_kind(kind: str) -> None:
 Trace = Dict[str, object]
 
 
+def trace_time_us(trace: Trace) -> int:
+    """Use the epoch-relative timestamp when available, else legacy t_us."""
+    epoch_t_us = int_or_none(trace.get("epoch_t_us"))
+    return epoch_t_us if epoch_t_us is not None else int(trace["t_us"])
+
+
 def parse_kv_blob(blob: str) -> Dict[str, str]:
     kv: Dict[str, str] = {}
     for part in blob.strip().split():
@@ -195,12 +206,18 @@ def parse_input(
     List[str],
     List[Dict[str, str]],
     List[str],
+    List[Dict[str, str]],
+    List[Dict[str, str]],
+    List[Dict[str, str]],
 ]:
     traces: List[Trace] = []
     stats: List[Dict[str, str]] = []
     raw_stats: List[str] = []
     trigger_stats: List[Dict[str, str]] = []
     raw_trigger_stats: List[str] = []
+    measurement_stats: List[Dict[str, str]] = []
+    victim_stats: List[Dict[str, str]] = []
+    measurement_boundaries: List[Dict[str, str]] = []
 
     with open(path, "r", encoding="utf-8", errors="replace") as fp:
         for lineno, line in enumerate(fp, 1):
@@ -236,6 +253,9 @@ def parse_input(
                     {
                         "lineno": lineno,
                         "t_us": t_us,
+                        "epoch_t_us": int_or_none(kv.get("epoch_t_us")),
+                        "epoch": int_or_none(kv.get("epoch")) or 0,
+                        "scope": kv.get("scope", "legacy"),
                         "event": event,
                         "section": section,
                         "segno": segno,
@@ -339,19 +359,118 @@ def parse_input(
                         trigger_stats.append(kv)
                         raw_trigger_stats.append(match.group(0))
 
-    return traces, stats, raw_stats, trigger_stats, raw_trigger_stats
+                match = RE_MEASUREMENT_STAT.search(line)
+                if match:
+                    kv = parse_kv_blob(match.group("kv"))
+                    if kv:
+                        measurement_stats.append(kv)
+
+                match = RE_VICTIM_STAT.search(line)
+                if match:
+                    kv = parse_kv_blob(match.group("kv"))
+                    if kv:
+                        victim_stats.append(kv)
+
+                match = RE_MEASUREMENT_BOUNDARY.search(line)
+                if match:
+                    kv = parse_kv_blob(match.group("kv"))
+                    if kv:
+                        measurement_boundaries.append(kv)
+
+    return (
+        traces,
+        stats,
+        raw_stats,
+        trigger_stats,
+        raw_trigger_stats,
+        measurement_stats,
+        victim_stats,
+        measurement_boundaries,
+    )
+
+
+def row_epoch(row: Dict[str, object]) -> int:
+    """Return an explicit epoch id, treating old logs as epoch zero."""
+    value = int_or_none(row.get("epoch"))
+    return value if value is not None else 0
+
+
+def row_scope(row: Dict[str, object]) -> str:
+    """Return the measurement scope, preserving compatibility with old logs."""
+    return str(row.get("scope") or "legacy")
+
+
+def select_measurement_epoch(
+    traces: List[Trace],
+    stats: List[Dict[str, str]],
+    trigger_stats: List[Dict[str, str]],
+    measurement_stats: List[Dict[str, str]],
+    victim_stats: List[Dict[str, str]],
+) -> Tuple[
+    int,
+    str,
+    List[int],
+    List[Trace],
+    List[Dict[str, str]],
+    List[Dict[str, str]],
+    List[Dict[str, str]],
+    List[Dict[str, str]],
+]:
+    """Prefer the latest explicit workload epoch; otherwise analyze legacy data."""
+    rows: List[Dict[str, object]] = []
+    rows.extend(traces)
+    rows.extend(stats)
+    rows.extend(trigger_stats)
+    rows.extend(measurement_stats)
+    rows.extend(victim_stats)
+
+    available_epochs = sorted({row_epoch(row) for row in rows}) or [0]
+    workload_epochs = sorted(
+        {row_epoch(row) for row in rows if row_scope(row) == "workload"}
+    )
+    if workload_epochs:
+        selected_epoch = workload_epochs[-1]
+        selected_scope = "workload"
+    else:
+        selected_epoch = available_epochs[-1]
+        scopes = {
+            row_scope(row)
+            for row in rows
+            if row_epoch(row) == selected_epoch
+        }
+        selected_scope = next(iter(scopes)) if len(scopes) == 1 else "legacy"
+
+    def selected(row: Dict[str, object]) -> bool:
+        if row_epoch(row) != selected_epoch:
+            return False
+        if selected_scope == "workload":
+            return row_scope(row) == "workload"
+        return True
+
+    return (
+        selected_epoch,
+        selected_scope,
+        available_epochs,
+        [row for row in traces if selected(row)],
+        [row for row in stats if selected(row)],
+        [row for row in trigger_stats if selected(row)],
+        [row for row in measurement_stats if selected(row)],
+        [row for row in victim_stats if selected(row)],
+    )
 
 
 def phase_key(phase: str, trace: Trace) -> Tuple[int, ...]:
+    epoch = row_epoch(trace)
     if TRACE_KIND == "f2fs_gc":
-        return (int(trace["call_id"]),)
+        return (epoch, int(trace["call_id"]))
     if TRACE_KIND == "origc":
         if phase == "gc_call":
-            return (0,)
-        return (int(trace["section"]),)
+            return (epoch, 0)
+        return (epoch, int(trace["section"]))
     if phase == "section":
-        return (int(trace["section"]),)
+        return (epoch, int(trace["section"]))
     return (
+        epoch,
         int(trace["section"]),
         int(trace["segno"]),
         int(trace["req_idx"]),
@@ -401,7 +520,7 @@ def build_phase_intervals(
             if not trace_matches_phase(phase, trace):
                 continue
             key = phase_key(phase, trace)
-            t_us = int(trace["t_us"])
+            t_us = trace_time_us(trace)
 
             if kind == "start":
                 starts[phase][key].append(t_us)
@@ -440,7 +559,7 @@ def flatten_intervals(intervals: Dict[Tuple[int, ...], List[int]]) -> List[int]:
 
 def build_f2fs_gc_call_records(traces: List[Trace]) -> List[Dict[str, object]]:
     """Pair unified f2fs_gc call events and retain end-of-call classification."""
-    starts: Dict[int, Trace] = {}
+    starts: Dict[Tuple[int, int], Trace] = {}
     records: List[Dict[str, object]] = []
 
     for trace in traces:
@@ -448,21 +567,24 @@ def build_f2fs_gc_call_records(traces: List[Trace]) -> List[Dict[str, object]]:
         call_id = int_or_none(trace.get("call_id"))
         if call_id is None:
             continue
+        key = (row_epoch(trace), call_id)
         if event == "GC_START":
-            starts[call_id] = trace
+            starts[key] = trace
             continue
-        if event != "GC_END" or call_id not in starts:
+        if event != "GC_END" or key not in starts:
             continue
 
-        start = starts.pop(call_id)
-        duration_us = int(trace["t_us"]) - int(start["t_us"])
+        start = starts.pop(key)
+        duration_us = trace_time_us(trace) - trace_time_us(start)
         if duration_us < 0:
             continue
         records.append(
             {
                 "call_id": call_id,
-                "start_t_us": int(start["t_us"]),
-                "end_t_us": int(trace["t_us"]),
+                "epoch": row_epoch(trace),
+                "scope": row_scope(trace),
+                "start_t_us": trace_time_us(start),
+                "end_t_us": trace_time_us(trace),
                 "duration_us": duration_us,
                 "mode": str(trace.get("mode") or start.get("mode") or "unknown"),
                 "source": str(start.get("source") or "unknown"),
@@ -942,7 +1064,7 @@ def emit_f2fs_gc_lock_breakdown(
 def emit_f2fs_gc_window_breakdown(
     out,
     records: List[Dict[str, object]],
-    since_first_gc_us: Optional[int],
+    epoch_elapsed_us: Optional[int],
 ) -> None:
     """Merge demand-to-completion windows without double-counting overlap."""
     out.write("=== complete GC-related wall-clock window ===\n")
@@ -1085,24 +1207,40 @@ def emit_f2fs_gc_window_breakdown(
             f"{format_float(gc_window_busy_fraction_to_last_end, 6)}\n"
         )
 
-    if since_first_gc_us is not None and gc_window_complete:
-        first_demand_to_unmount_us = since_first_gc_us - first_window_start_us
-        out.write(
-            "gc_window_first_demand_to_unmount_us="
-            f"{max(0, first_demand_to_unmount_us)}\n"
-        )
-        if first_demand_to_unmount_us > 0:
+    if epoch_elapsed_us is not None and gc_window_complete:
+        first_demand_to_epoch_end_us = epoch_elapsed_us - first_window_start_us
+        out.write(f"gc_window_epoch_elapsed_us={epoch_elapsed_us}\n")
+        if epoch_elapsed_us > 0:
             out.write(
-                "gc_window_busy_fraction_first_demand_to_unmount="
-                f"{format_float(gc_window_union_lower_bound_us / float(first_demand_to_unmount_us), 6)}\n"
+                "gc_window_busy_fraction_epoch="
+                f"{format_float(gc_window_union_lower_bound_us / float(epoch_elapsed_us), 6)}\n"
+            )
+            out.write(
+                "gc_window_inactive_us_epoch="
+                f"{max(0, epoch_elapsed_us - gc_window_union_lower_bound_us)}\n"
+            )
+        else:
+            out.write("gc_window_busy_fraction_epoch=unavailable\n")
+            out.write("gc_window_inactive_us_epoch=unavailable\n")
+        out.write(
+            "gc_window_first_demand_to_epoch_end_us="
+            f"{max(0, first_demand_to_epoch_end_us)}\n"
+        )
+        if first_demand_to_epoch_end_us > 0:
+            out.write(
+                "gc_window_busy_fraction_first_demand_to_epoch_end="
+                f"{format_float(gc_window_union_lower_bound_us / float(first_demand_to_epoch_end_us), 6)}\n"
             )
         else:
             out.write(
-                "gc_window_busy_fraction_first_demand_to_unmount=unavailable\n"
+                "gc_window_busy_fraction_first_demand_to_epoch_end=unavailable\n"
             )
     else:
-        out.write("gc_window_first_demand_to_unmount_us=unavailable\n")
-        out.write("gc_window_busy_fraction_first_demand_to_unmount=unavailable\n")
+        out.write("gc_window_epoch_elapsed_us=unavailable\n")
+        out.write("gc_window_busy_fraction_epoch=unavailable\n")
+        out.write("gc_window_inactive_us_epoch=unavailable\n")
+        out.write("gc_window_first_demand_to_epoch_end_us=unavailable\n")
+        out.write("gc_window_busy_fraction_first_demand_to_epoch_end=unavailable\n")
 
     if gc_window_complete:
         out.write(
@@ -1258,7 +1396,7 @@ def reconstruct_active(
 ) -> Dict[str, Dict[str, object]]:
     by_phase: Dict[str, List[Tuple[int, int, int]]] = {phase: [] for phase in PHASES}
     section_times = [
-        int(trace["t_us"])
+        trace_time_us(trace)
         for trace in traces
         if str(trace["event"]) in ("SECTION_START", "SECTION_END")
     ]
@@ -1277,7 +1415,7 @@ def reconstruct_active(
             if not trace_matches_phase(phase, trace):
                 continue
             event_order = 0 if delta < 0 else 1
-            by_phase[phase].append((int(trace["t_us"]), event_order, delta))
+            by_phase[phase].append((trace_time_us(trace), event_order, delta))
 
     result: Dict[str, Dict[str, object]] = {}
     for phase in PHASES:
@@ -1353,7 +1491,9 @@ def parse_kernel_stats(stats: List[Dict[str, str]]) -> Dict[str, object]:
     other_rows: List[Dict[str, str]] = []
 
     for row in stats:
-        if "since_first_gc_us" in row:
+        if "since_first_gc_us" in row or (
+            "epoch_elapsed_us" in row and "phase" not in row
+        ):
             global_rows.append(row)
             continue
         phase = row.get("phase")
@@ -1436,11 +1576,17 @@ def emit_active_summary(out, active_result: Dict[str, Dict[str, object]]) -> Non
 def write_result(
     output_path: str,
     source_path: str,
+    selected_epoch: int,
+    selected_scope: str,
+    available_epochs: List[int],
     traces: List[Trace],
     stats: List[Dict[str, str]],
     raw_stats: List[str],
     trigger_stats: List[Dict[str, str]],
     raw_trigger_stats: List[str],
+    measurement_stats: List[Dict[str, str]],
+    victim_stats: List[Dict[str, str]],
+    measurement_boundaries: List[Dict[str, str]],
 ) -> None:
     intervals, windows, diagnostics = build_phase_intervals(traces)
     active_result = reconstruct_active(
@@ -1458,8 +1604,15 @@ def write_result(
         if global_rows
         else None
     )
-    first_t = min(int(trace["t_us"]) for trace in traces) if traces else 0
-    last_t = max(int(trace["t_us"]) for trace in traces) if traces else 0
+    epoch_elapsed_us = (
+        int_or_none(global_rows[-1].get("epoch_elapsed_us"))
+        if global_rows
+        else None
+    )
+    if epoch_elapsed_us is None:
+        epoch_elapsed_us = since_first_gc_us
+    first_t = min(trace_time_us(trace) for trace in traces) if traces else 0
+    last_t = max(trace_time_us(trace) for trace in traces) if traces else 0
 
     out_dir = os.path.dirname(os.path.abspath(output_path))
     if out_dir:
@@ -1469,6 +1622,11 @@ def write_result(
         out.write(f"=== {TRACE_LABEL} heavy trace analysis ===\n")
         out.write(f"source_file={os.path.abspath(source_path)}\n")
         out.write(f"result_file={os.path.abspath(output_path)}\n")
+        out.write(f"selected_epoch={selected_epoch}\n")
+        out.write(f"selected_scope={selected_scope}\n")
+        out.write(
+            "available_epochs=" + ",".join(str(value) for value in available_epochs) + "\n"
+        )
         out.write(f"trace_events={len(traces)}\n")
         out.write(f"kernel_stat_lines={len(stats)}\n")
         out.write(f"trigger_stat_lines={len(trigger_stats)}\n")
@@ -1483,14 +1641,28 @@ def write_result(
             row = global_rows[-1]
             since_first = since_first_gc_us
             gc_active = int_or_none(row.get("gc_active_us"))
+            epoch_elapsed = int_or_none(row.get("epoch_elapsed_us"))
+            epoch_gc_active = int_or_none(row.get("epoch_gc_active_us"))
+            epoch_gc_inactive = int_or_none(row.get("epoch_gc_inactive_us"))
             tail = int_or_none(row.get("tail_after_last_event_us"))
+            if epoch_elapsed is not None:
+                out.write(f"kernel_epoch_elapsed_us={epoch_elapsed}\n")
+            if epoch_gc_active is not None:
+                out.write(f"kernel_epoch_gc_active_us={epoch_gc_active}\n")
+            if epoch_gc_inactive is not None:
+                out.write(f"kernel_epoch_gc_inactive_us={epoch_gc_inactive}\n")
+            if epoch_elapsed and epoch_gc_active is not None:
+                out.write(
+                    "kernel_gc_call_busy_fraction_epoch="
+                    f"{format_float(epoch_gc_active / float(epoch_elapsed), 6)}\n"
+                )
             if since_first is not None:
-                out.write(f"kernel_first_gc_to_unmount_us={since_first}\n")
+                out.write(f"kernel_first_gc_to_epoch_end_us={since_first}\n")
             if since_first and gc_active is not None:
                 metric_name = (
-                    "kernel_gc_call_busy_fraction_first_gc_to_unmount"
+                    "kernel_gc_call_busy_fraction_first_gc_to_epoch_end"
                     if TRACE_KIND == "f2fs_gc"
-                    else "kernel_section_busy_fraction_first_gc_to_unmount"
+                    else "kernel_section_busy_fraction_first_gc_to_epoch_end"
                 )
                 out.write(
                     f"{metric_name}="
@@ -1499,12 +1671,64 @@ def write_result(
             if tail is not None:
                 out.write(f"kernel_tail_after_last_event_us={tail}\n")
         else:
-            out.write("kernel_first_gc_to_unmount_us=unavailable\n")
+            out.write("kernel_epoch_elapsed_us=unavailable\n")
+            out.write("kernel_first_gc_to_epoch_end_us=unavailable\n")
+
+        if measurement_stats:
+            row = measurement_stats[-1]
+            workload_closed_by_stop = (
+                selected_scope != "workload" or row.get("reason") == "stop"
+            )
+            out.write(
+                f"workload_epoch_closed_by_stop={int(workload_closed_by_stop)}\n"
+            )
+            out.write(
+                "measurement_boundary_summary "
+                + " ".join(f"{key}={value}" for key, value in row.items())
+                + "\n"
+            )
+        elif selected_scope == "workload":
+            out.write("workload_epoch_closed_by_stop=0\n")
+        if victim_stats:
+            row = victim_stats[-1]
+            out.write(
+                "foreground_victim_summary "
+                + " ".join(f"{key}={value}" for key, value in row.items())
+                + "\n"
+            )
         out.write("\n")
 
         out.write("=== event counts ===\n")
         for event, count in sorted(event_counts.items()):
             out.write(f"{event}: count={count}\n")
+        out.write("\n")
+
+        out.write("=== measurement epoch diagnostics ===\n")
+        out.write(f"measurement_boundary_count={len(measurement_boundaries)}\n")
+        for boundary in measurement_boundaries:
+            out.write(
+                "boundary "
+                + " ".join(f"{key}={value}" for key, value in boundary.items())
+                + "\n"
+            )
+        if victim_stats:
+            for row in victim_stats:
+                total = int_or_none(row.get("fg_victim_starts"))
+                csgc = int_or_none(row.get("fg_csgc_victim_starts"))
+                origc = int_or_none(row.get("fg_origc_victim_starts"))
+                invariant_ok = (
+                    total is not None
+                    and csgc is not None
+                    and origc is not None
+                    and total == csgc + origc
+                )
+                out.write(
+                    f"victim_counter_invariant_ok={int(invariant_ok)} "
+                    + " ".join(f"{key}={value}" for key, value in row.items())
+                    + "\n"
+                )
+        else:
+            out.write("victim_counter_summary=unavailable\n")
         out.write("\n")
 
         out.write("=== reconstructed interval statistics (microseconds) ===\n")
@@ -1566,7 +1790,7 @@ def write_result(
             emit_f2fs_gc_lock_breakdown(out, gc_call_records)
             out.write("\n")
             emit_f2fs_gc_window_breakdown(
-                out, gc_call_records, since_first_gc_us
+                out, gc_call_records, epoch_elapsed_us
             )
             out.write("\n")
             emit_f2fs_gc_trigger_stats(out, trigger_stats)
@@ -1626,12 +1850,14 @@ def write_result(
 
         if raw_stats:
             out.write("\n")
-            out.write(f"=== raw kernel {TRACE_LABEL}_HEAVY_STAT lines ===\n")
+            out.write(
+                f"=== raw kernel {TRACE_LABEL}_HEAVY_STAT lines (all epochs) ===\n"
+            )
             for line in raw_stats:
                 out.write(line + "\n")
         if raw_trigger_stats:
             out.write("\n")
-            out.write("=== raw F2FS_GC_TRIGGER_STAT lines ===\n")
+            out.write("=== raw F2FS_GC_TRIGGER_STAT lines (all epochs) ===\n")
             for line in raw_trigger_stats:
                 out.write(line + "\n")
 
@@ -1655,22 +1881,54 @@ def main() -> int:
 
     configure_trace_kind(args.kind)
 
-    traces, stats, raw_stats, trigger_stats, raw_trigger_stats = parse_input(
-        args.logfile
-    )
-
-    # Keep this script silent when the input log has no heavy-trace data.
-    if not traces and not stats and not trigger_stats:
-        return 0
-
-    write_result(
-        args.output,
-        args.logfile,
+    (
         traces,
         stats,
         raw_stats,
         trigger_stats,
         raw_trigger_stats,
+        measurement_stats,
+        victim_stats,
+        measurement_boundaries,
+    ) = parse_input(args.logfile)
+
+    # Keep this script silent when the input log has no heavy-trace data.
+    if (
+        not traces
+        and not stats
+        and not trigger_stats
+        and not measurement_stats
+        and not victim_stats
+    ):
+        return 0
+
+    (
+        selected_epoch,
+        selected_scope,
+        available_epochs,
+        traces,
+        stats,
+        trigger_stats,
+        measurement_stats,
+        victim_stats,
+    ) = select_measurement_epoch(
+        traces, stats, trigger_stats, measurement_stats, victim_stats
+    )
+
+    write_result(
+        args.output,
+        args.logfile,
+        selected_epoch,
+        selected_scope,
+        available_epochs,
+        traces,
+        stats,
+        raw_stats,
+        trigger_stats,
+        raw_trigger_stats,
+        measurement_stats,
+        victim_stats,
+        measurement_boundaries,
     )
     return 0
 

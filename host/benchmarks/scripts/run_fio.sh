@@ -62,7 +62,7 @@ verify_fio_reused_prefill() {
     fi
 }
 
-# Verify that fio and remounts preserved the prefilled file identity and size.
+# Verify that fio and preconditioning preserved the prefilled file identity and size.
 verify_prefill_file_identity() {
     local file_path=$1
     local expected_size=$2
@@ -83,6 +83,31 @@ verify_prefill_file_identity() {
         echo "ERROR: prefill file was replaced: expected_inode=${expected_inode}, actual_inode=${actual_inode}" >&2
         return 1
     fi
+}
+
+# Switch the kernel GC measurement epoch, retrying transient busy boundaries.
+set_gc_measurement_epoch() {
+    local control_path=$1
+    local command=$2
+    local attempt
+    local output
+
+    if [ ! -e "${control_path}" ]; then
+        echo "ERROR: GC measurement control is unavailable: ${control_path}" >&2
+        return 1
+    fi
+
+    for ((attempt = 1; attempt <= 100; attempt++)); do
+        if output=$(printf '%s\n' "${command}" | sudo tee "${control_path}" 2>&1); then
+            echo "GC measurement epoch command succeeded: ${command}"
+            return 0
+        fi
+        sleep 0.05
+    done
+
+    echo "ERROR: GC measurement epoch command failed after 100 attempts: ${command}" >&2
+    echo "${output}" >&2
+    return 1
 }
 
 # Randomly overwrite the prefilled file until foreground GC has started.
@@ -132,7 +157,7 @@ precondition_fio_for_gc() {
         fi
 
         current_gc_calls=$(<"${gc_counter_path}")
-        echo "Foreground GC calls after precondition round ${round}: ${initial_gc_calls} -> ${current_gc_calls}"
+        echo "Foreground victim starts after precondition round ${round}: ${initial_gc_calls} -> ${current_gc_calls}"
         if [ "${current_gc_calls}" -gt "${initial_gc_calls}" ]; then
             emit_kernel_marker "mCSGC fio GC precondition completed in bash"
             return 0
@@ -186,6 +211,24 @@ mkfs_and_mount "${devpath}" "${mntpoint}" "${segs_per_sec}" "${f2fs_enable_disca
 setup_gc_config "${gc_mode}" "${nr_cs_cores}" "${csgc_sync}"
 setup_cgroup_mem "${use_cgroup}" "${host_mem_usage}"
 
+f2fs_sysfs_dir="/sys/fs/f2fs/${devpath##*/}"
+gc_counter_path="${f2fs_sysfs_dir}/fg_victim_starts"
+gc_csgc_counter_path="${f2fs_sysfs_dir}/fg_csgc_victim_starts"
+gc_origc_counter_path="${f2fs_sysfs_dir}/fg_origc_victim_starts"
+gc_measurement_control_path="${f2fs_sysfs_dir}/gc_measurement_control"
+
+for gc_measurement_path in \
+    "${gc_counter_path}" \
+    "${gc_csgc_counter_path}" \
+    "${gc_origc_counter_path}" \
+    "${gc_measurement_control_path}"; do
+    if [ ! -e "${gc_measurement_path}" ]; then
+        echo "ERROR: required GC measurement sysfs entry is unavailable: ${gc_measurement_path}" >&2
+        sudo umount "${devpath}" >/dev/null 2>&1 || true
+        exit 1
+    fi
+done
+
 
 echo "======================================================="
 # exit 0
@@ -237,8 +280,6 @@ if [ "${bmname}" == "randwrite" ]; then
     )
 
     if [ "${fio_gc_precondition}" -eq 1 ]; then
-        f2fs_sysfs_dir="/sys/fs/f2fs/${devpath##*/}"
-        gc_counter_path="${f2fs_sysfs_dir}/stat/gc_foreground_calls"
         precondition_log="${output_path}/${workload_type}.precondition.log"
 
         if ! precondition_fio_for_gc "${gc_counter_path}" "${precondition_log}" "${workload_path}"; then
@@ -246,22 +287,12 @@ if [ "${bmname}" == "randwrite" ]; then
             exit 1
         fi
 
-        if ! remount_f2fs_for_measurement \
-            "${devpath}" "${mntpoint}" "${f2fs_enable_discard}" "${ssd_enable_l2p}"; then
-            exit 1
-        fi
-        setup_gc_config "${gc_mode}" "${nr_cs_cores}" "${csgc_sync}"
-
         if ! verify_prefill_file_identity "${prefill_file}" "${prefill_size}" "${prefill_inode}"; then
             sudo umount "${devpath}" >/dev/null 2>&1 || true
             exit 1
         fi
 
-        if [ ! -r "${gc_counter_path}" ] || [ "$(<"${gc_counter_path}")" -ne 0 ]; then
-            echo "ERROR: foreground GC statistics were not reset by remount" >&2
-            sudo umount "${devpath}" >/dev/null 2>&1 || true
-            exit 1
-        fi
+        echo "Foreground victim starts after precondition: total=$(<"${gc_counter_path}") csgc=$(<"${gc_csgc_counter_path}") origc=$(<"${gc_origc_counter_path}")"
 
         if [ -r "${f2fs_sysfs_dir}/free_segments" ]; then
             echo "Free segments before measured fio: $(<"${f2fs_sysfs_dir}/free_segments")"
@@ -343,13 +374,22 @@ echo "======================================================="
 reset_ssd_stat "${devpath}"
 
 echo "=============begin fio============="
-
-measurement_start_uptime=$(awk '{ printf "%.6f", $1 }' /proc/uptime)
 emit_kernel_marker "mCSGC prepare to run filebench/fio in bash"
+
+if ! set_gc_measurement_epoch "${gc_measurement_control_path}" start; then
+    sudo umount "${devpath}" >/dev/null 2>&1 || true
+    exit 1
+fi
 
 fio_log="${output_path}/${workload_type}.log"
 run_fio_logged "${fio_log}" "${fio_flags[@]}" "${runtime_flags[@]}" "${workload_path}"
 fio_status=$?
+
+if ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
+    echo "ERROR: failed to close the measured workload epoch" >&2
+    fio_status=1
+fi
+emit_kernel_marker "mCSGC finished filebench/fio in bash"
 
 if [ "${bmname}" = "randwrite" ] && ! verify_fio_reused_prefill "${fio_log}"; then
     fio_status=1
@@ -360,19 +400,30 @@ if [ "${bmname}" = "randwrite" ] \
 fi
 
 if [ "${bmname}" = "randwrite" ] && [ "${fio_gc_precondition}" -eq 1 ]; then
-    measured_gc_calls=$(<"${gc_counter_path}")
-    echo "Foreground GC calls during measured fio: ${measured_gc_calls}"
+    measured_gc_calls=$(sudo dmesg --color=never \
+        | sed -n 's/.*F2FS_GC_VICTIM_STAT .*scope=workload .*fg_victim_starts=\([0-9][0-9]*\).*/\1/p' \
+        | tail -n 1)
+    measured_csgc_calls=$(sudo dmesg --color=never \
+        | sed -n 's/.*F2FS_GC_VICTIM_STAT .*scope=workload .*fg_csgc_victim_starts=\([0-9][0-9]*\).*/\1/p' \
+        | tail -n 1)
+    measured_origc_calls=$(sudo dmesg --color=never \
+        | sed -n 's/.*F2FS_GC_VICTIM_STAT .*scope=workload .*fg_origc_victim_starts=\([0-9][0-9]*\).*/\1/p' \
+        | tail -n 1)
+    : "${measured_gc_calls:=0}"
+    : "${measured_csgc_calls:=0}"
+    : "${measured_origc_calls:=0}"
+    echo "Foreground victim starts during measured fio: total=${measured_gc_calls} csgc=${measured_csgc_calls} origc=${measured_origc_calls}"
     if [ "${measured_gc_calls}" -eq 0 ]; then
         echo "ERROR: measured fio completed without foreground GC" >&2
         fio_status=1
     fi
 
-    first_gc_uptime=$(sudo dmesg --color=never \
-        | sed -n 's/^\[ *\([0-9][0-9.]*\)\].*F2FS_GC_HEAVY_TRACE .*event=GC_START.*/\1/p' \
+    first_gc_epoch_us=$(sudo dmesg --color=never \
+        | sed -n 's/.*F2FS_GC_HEAVY_TRACE .*scope=workload .*epoch_t_us=\([0-9][0-9]*\).*event=GC_START.*/\1/p' \
         | head -n 1)
-    if [ -n "${first_gc_uptime}" ]; then
-        first_gc_delay=$(awk -v first="${first_gc_uptime}" -v start="${measurement_start_uptime}" \
-            'BEGIN { printf "%.6f", first - start }')
+    if [ -n "${first_gc_epoch_us}" ]; then
+        first_gc_delay=$(awk -v first_us="${first_gc_epoch_us}" \
+            'BEGIN { printf "%.6f", first_us / 1000000.0 }')
         echo "First foreground GC delay after measured fio start: ${first_gc_delay} seconds" \
             | tee "${output_path}/gc_start_delay.log"
     else
