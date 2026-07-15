@@ -144,13 +144,21 @@ reset_ssd_stat() {
 get_ssd_stat() {
     local devpath=$1
     local output_path=$2
+    local -a pipeline_status
+
     sudo "${NVME_PATH}" read "${devpath}" -s 123 -c 1 -z 4096 -t -L | tee -a "${output_path}"
+    pipeline_status=("${PIPESTATUS[@]}")
+    if [ "${pipeline_status[0]}" -ne 0 ]; then
+        return "${pipeline_status[0]}"
+    fi
+    return "${pipeline_status[1]}"
 }
 
 umount_and_get_stat() {
     local devpath=$1
     local gc_mode=$2
     local output_path=$3
+    local collect_post_umount_ssd_stat=${4:-1}
     local wait_time=5
     
     echo "sleep ${wait_time} seconds before umount and dmesg"
@@ -160,7 +168,10 @@ umount_and_get_stat() {
         echo "csgc status:" `cat ${DEBUGFS_PATH}/csgc_status` | tee -a ${output_path}
 
         echo "umount device"
-        sudo umount ${devpath}
+        if ! sudo umount "${devpath}"; then
+            echo "ERROR: failed to unmount ${devpath}" >&2
+            return 1
+        fi
         dmesg | grep -F 'UNMOUNT mCSGC. mCSGC time(ns)' | tee -a ${output_path}
         dmesg | grep -E '<ORIGC STAT>' | tee -a ${output_path}
         dmesg | grep -E '<CSGC STAT>' | tee -a ${output_path}
@@ -173,12 +184,20 @@ umount_and_get_stat() {
         dmesg | grep -oE 'f2fs gc data page hit count: [0-9]+, total req count: [0-9]+' | tee -a ${output_path}
     else
         echo "umount device"
-        sudo umount ${devpath}
+        if ! sudo umount "${devpath}"; then
+            echo "ERROR: failed to unmount ${devpath}" >&2
+            return 1
+        fi
     fi
 
-    get_ssd_stat "${devpath}" "${output_path}"
+    if [ "${collect_post_umount_ssd_stat}" -ne 0 ]; then
+        if ! get_ssd_stat "${devpath}" "${output_path}"; then
+            echo "ERROR: failed to collect post-unmount SSD statistics" >&2
+            return 1
+        fi
+    fi
 
-    sudo dmesg > $(dirname ${output_path})/dmesg.log
+    sudo dmesg > "$(dirname "${output_path}")/dmesg.log"
 }
 
 # format storage and mount 

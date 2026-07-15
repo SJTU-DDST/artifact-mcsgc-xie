@@ -110,21 +110,92 @@ set_gc_measurement_epoch() {
     return 1
 }
 
-# Randomly overwrite the prefilled file until foreground GC has started.
-precondition_fio_for_gc() {
-    local gc_counter_path=$1
-    local log_file=$2
-    local workload_file=$3
-    local initial_gc_calls
-    local current_gc_calls
-    local round
+# Validate the common victim-counter invariant before interpreting GC mode.
+validate_gc_victim_invariant() {
+    local phase=$1
+    local total=$2
+    local csgc=$3
+    local origc=$4
 
-    if [ ! -r "${gc_counter_path}" ]; then
-        echo "ERROR: foreground GC counter is unavailable: ${gc_counter_path}" >&2
+    if [[ ! "${total}" =~ ^[0-9]+$ ]] \
+        || [[ ! "${csgc}" =~ ^[0-9]+$ ]] \
+        || [[ ! "${origc}" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: invalid ${phase} victim counters: total=${total:-missing} csgc=${csgc:-missing} origc=${origc:-missing}" >&2
+        return 1
+    fi
+    if [ "${total}" -ne $((csgc + origc)) ]; then
+        echo "ERROR: ${phase} victim counter invariant failed: total=${total} csgc=${csgc} origc=${origc}" >&2
+        return 1
+    fi
+}
+
+# Require the measured phase to enter the collector selected by the test mode.
+validate_gc_victim_target() {
+    local phase=$1
+    local mode=$2
+    local total=$3
+    local csgc=$4
+    local origc=$5
+
+    if ! validate_gc_victim_invariant \
+        "${phase}" "${total}" "${csgc}" "${origc}"; then
+        return 1
+    fi
+    if [ "${total}" -eq 0 ]; then
+        echo "ERROR: ${phase} completed without a foreground GC victim" >&2
         return 1
     fi
 
+    case "${mode}" in
+        cs)
+            if [ "${csgc}" -eq 0 ]; then
+                echo "ERROR: ${phase} did not enter the CSGC collector" >&2
+                return 1
+            fi
+            ;;
+        ori)
+            if [ "${origc}" -eq 0 ] || [ "${csgc}" -ne 0 ]; then
+                echo "ERROR: ${phase} did not stay on the ORIGC collector: csgc=${csgc} origc=${origc}" >&2
+                return 1
+            fi
+            ;;
+    esac
+}
+
+# Randomly overwrite the prefilled file until foreground GC has started.
+precondition_fio_for_gc() {
+    local gc_counter_path=$1
+    local gc_csgc_counter_path=$2
+    local gc_origc_counter_path=$3
+    local mode=$4
+    local log_file=$5
+    local workload_file=$6
+    local initial_gc_calls
+    local initial_csgc_calls
+    local initial_origc_calls
+    local current_gc_calls
+    local current_csgc_calls
+    local current_origc_calls
+    local counter_path
+    local round
+
+    for counter_path in \
+        "${gc_counter_path}" \
+        "${gc_csgc_counter_path}" \
+        "${gc_origc_counter_path}"; do
+        if [ ! -r "${counter_path}" ]; then
+            echo "ERROR: foreground GC counter is unavailable: ${counter_path}" >&2
+            return 1
+        fi
+    done
+
     initial_gc_calls=$(<"${gc_counter_path}")
+    initial_csgc_calls=$(<"${gc_csgc_counter_path}")
+    initial_origc_calls=$(<"${gc_origc_counter_path}")
+    if ! validate_gc_victim_invariant "initial precondition" \
+        "${initial_gc_calls}" "${initial_csgc_calls}" "${initial_origc_calls}"; then
+        return 1
+    fi
     : > "${log_file}"
 
     for ((round = 1; round <= fio_gc_precondition_max_rounds; round++)); do
@@ -157,14 +228,33 @@ precondition_fio_for_gc() {
         fi
 
         current_gc_calls=$(<"${gc_counter_path}")
-        echo "Foreground victim starts after precondition round ${round}: ${initial_gc_calls} -> ${current_gc_calls}"
-        if [ "${current_gc_calls}" -gt "${initial_gc_calls}" ]; then
+        current_csgc_calls=$(<"${gc_csgc_counter_path}")
+        current_origc_calls=$(<"${gc_origc_counter_path}")
+        echo "Foreground victim starts after precondition round ${round}: total=${initial_gc_calls}->${current_gc_calls} csgc=${initial_csgc_calls}->${current_csgc_calls} origc=${initial_origc_calls}->${current_origc_calls}"
+        if ! validate_gc_victim_invariant "precondition round ${round}" \
+            "${current_gc_calls}" "${current_csgc_calls}" \
+            "${current_origc_calls}"; then
+            return 1
+        fi
+
+        if { [ "${mode}" = "cs" ] \
+                && [ "${current_csgc_calls}" -gt "${initial_csgc_calls}" ]; } \
+            || { [ "${mode}" = "ori" ] \
+                && [ "${current_origc_calls}" -gt "${initial_origc_calls}" ] \
+                && [ "${current_csgc_calls}" -eq 0 ]; } \
+            || { [ "${mode}" != "cs" ] && [ "${mode}" != "ori" ] \
+                && [ "${current_gc_calls}" -gt "${initial_gc_calls}" ]; }; then
+            if ! validate_gc_victim_target "precondition" "${mode}" \
+                "${current_gc_calls}" "${current_csgc_calls}" \
+                "${current_origc_calls}"; then
+                return 1
+            fi
             emit_kernel_marker "mCSGC fio GC precondition completed in bash"
             return 0
         fi
     done
 
-    echo "ERROR: foreground GC did not start after ${fio_gc_precondition_max_rounds} precondition rounds" >&2
+    echo "ERROR: target foreground GC collector did not start after ${fio_gc_precondition_max_rounds} precondition rounds" >&2
     return 1
 }
 
@@ -282,7 +372,13 @@ if [ "${bmname}" == "randwrite" ]; then
     if [ "${fio_gc_precondition}" -eq 1 ]; then
         precondition_log="${output_path}/${workload_type}.precondition.log"
 
-        if ! precondition_fio_for_gc "${gc_counter_path}" "${precondition_log}" "${workload_path}"; then
+        if ! precondition_fio_for_gc \
+            "${gc_counter_path}" \
+            "${gc_csgc_counter_path}" \
+            "${gc_origc_counter_path}" \
+            "${gc_mode}" \
+            "${precondition_log}" \
+            "${workload_path}"; then
             sudo umount "${devpath}" >/dev/null 2>&1 || true
             exit 1
         fi
@@ -292,7 +388,16 @@ if [ "${bmname}" == "randwrite" ]; then
             exit 1
         fi
 
-        echo "Foreground victim starts after precondition: total=$(<"${gc_counter_path}") csgc=$(<"${gc_csgc_counter_path}") origc=$(<"${gc_origc_counter_path}")"
+        precondition_gc_calls=$(<"${gc_counter_path}")
+        precondition_csgc_calls=$(<"${gc_csgc_counter_path}")
+        precondition_origc_calls=$(<"${gc_origc_counter_path}")
+        echo "Foreground victim starts after precondition: total=${precondition_gc_calls} csgc=${precondition_csgc_calls} origc=${precondition_origc_calls}"
+        if ! validate_gc_victim_target "precondition" "${gc_mode}" \
+            "${precondition_gc_calls}" "${precondition_csgc_calls}" \
+            "${precondition_origc_calls}"; then
+            sudo umount "${devpath}" >/dev/null 2>&1 || true
+            exit 1
+        fi
 
         if [ -r "${f2fs_sysfs_dir}/free_segments" ]; then
             echo "Free segments before measured fio: $(<"${f2fs_sysfs_dir}/free_segments")"
@@ -371,12 +476,20 @@ printf '\n'
 [ -n "${prefill_size}" ] && echo "prefill_size:         ${prefill_size}"
 echo "======================================================="
 
-reset_ssd_stat "${devpath}"
-
 echo "=============begin fio============="
 emit_kernel_marker "mCSGC prepare to run filebench/fio in bash"
 
 if ! set_gc_measurement_epoch "${gc_measurement_control_path}" start; then
+    sudo umount "${devpath}" >/dev/null 2>&1 || true
+    exit 1
+fi
+
+# Reset device statistics only after the Host confirms that CSGC work is idle.
+if ! reset_ssd_stat "${devpath}"; then
+    echo "ERROR: failed to reset SSD statistics before measured fio" >&2
+    if ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
+        echo "WARNING: failed to close the workload epoch after SSD reset failure" >&2
+    fi
     sudo umount "${devpath}" >/dev/null 2>&1 || true
     exit 1
 fi
@@ -387,6 +500,13 @@ fio_status=$?
 
 if ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
     echo "ERROR: failed to close the measured workload epoch" >&2
+    fio_status=1
+fi
+
+ssd_workload_stat="${output_path}/ssd-workload-stat.log"
+: > "${ssd_workload_stat}"
+if ! get_ssd_stat "${devpath}" "${ssd_workload_stat}"; then
+    echo "ERROR: failed to collect measured-workload SSD statistics" >&2
     fio_status=1
 fi
 emit_kernel_marker "mCSGC finished filebench/fio in bash"
@@ -409,12 +529,10 @@ if [ "${bmname}" = "randwrite" ] && [ "${fio_gc_precondition}" -eq 1 ]; then
     measured_origc_calls=$(sudo dmesg --color=never \
         | sed -n 's/.*F2FS_GC_VICTIM_STAT .*scope=workload .*fg_origc_victim_starts=\([0-9][0-9]*\).*/\1/p' \
         | tail -n 1)
-    : "${measured_gc_calls:=0}"
-    : "${measured_csgc_calls:=0}"
-    : "${measured_origc_calls:=0}"
-    echo "Foreground victim starts during measured fio: total=${measured_gc_calls} csgc=${measured_csgc_calls} origc=${measured_origc_calls}"
-    if [ "${measured_gc_calls}" -eq 0 ]; then
-        echo "ERROR: measured fio completed without foreground GC" >&2
+    echo "Foreground victim starts during measured fio: total=${measured_gc_calls:-missing} csgc=${measured_csgc_calls:-missing} origc=${measured_origc_calls:-missing}"
+    if ! validate_gc_victim_target "measured fio" "${gc_mode}" \
+        "${measured_gc_calls}" "${measured_csgc_calls}" \
+        "${measured_origc_calls}"; then
         fio_status=1
     fi
 
@@ -432,7 +550,11 @@ if [ "${bmname}" = "randwrite" ] && [ "${fio_gc_precondition}" -eq 1 ]; then
 fi
 echo "======================================================="
 
-umount_and_get_stat "${devpath}" "${gc_mode}" "${output_path}/stat.log"
+if ! umount_and_get_stat \
+    "${devpath}" "${gc_mode}" "${output_path}/stat.log" 0; then
+    echo "ERROR: failed to unmount or collect Host statistics" >&2
+    fio_status=1
+fi
 
 emit_kernel_marker "mCSGC finish umount in bash"
 echo "=============end fio============="
