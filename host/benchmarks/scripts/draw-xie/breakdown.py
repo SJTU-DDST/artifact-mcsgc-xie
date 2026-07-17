@@ -294,26 +294,21 @@ def analyze_lseg_lsection_pattern(events: List[str]) -> Dict[Tuple[int, int], in
     pattern_counts: Dict[Tuple[int, int], int] = defaultdict(int)
 
     seg_run = 0
-    section_run = 0
 
     for ev in events:
         if ev == "seg":
-            if section_run > 0:
-                pattern_counts[(seg_run, section_run)] += 1
-                seg_run = 1
-                section_run = 0
-            else:
-                seg_run += 1
+            seg_run += 1
         elif ev == "section":
-            if seg_run == 0 and section_run == 0:
-                section_run = 1
-            else:
-                section_run += 1
+            # A collector attempt can abort before any per-segment STAT line.
+            # Keep that section as (0, 1) instead of merging it into the
+            # preceding section's run and reporting a misleading (a, 2).
+            pattern_counts[(seg_run, 1)] += 1
+            seg_run = 0
         else:
             raise ValueError(f"unknown event type: {ev}")
 
-    if seg_run > 0 or section_run > 0:
-        pattern_counts[(seg_run, section_run)] += 1
+    if seg_run > 0:
+        pattern_counts[(seg_run, 0)] += 1
 
     return dict(pattern_counts)
 
@@ -324,7 +319,7 @@ def invalid_lseg_lsection_patterns(
     bad: Dict[Tuple[int, int], int] = {}
     for pair, cnt in pattern_counts.items():
         a, b = pair
-        if not (1 <= a <= 8 and b == 1):
+        if not (0 <= a <= 8 and b == 1):
             bad[pair] = cnt
     return bad
 
@@ -466,7 +461,8 @@ def main() -> int:
         emit("Lseg means a line matched by RE_STAT.")
         emit("Lsection means a line matched by RE_SECTION.")
         emit("Only the relative order of these two kinds of lines is considered.")
-        emit("Each pair (a, b) means: a consecutive Lseg lines followed by b consecutive Lsection lines.")
+        emit("Each pair (a, b) means: a Lseg lines observed before one Lsection line.")
+        emit("a=0 is valid when a collector attempt aborts before emitting per-segment STAT lines.")
         emit(f"total_Lseg={len(segno)}")
         emit(f"total_Lsection={len(section_gc_time_us)}")
         emit("pattern_counts:")
@@ -476,7 +472,7 @@ def main() -> int:
 
         if bad_patterns:
             emit("ERROR: invalid Lseg/Lsection pattern(s) found.", stderr=True)
-            emit("Allowed pattern constraints are: 1 <= a <= 8 and b == 1.", stderr=True)
+            emit("Allowed pattern constraints are: 0 <= a <= 8 and b == 1.", stderr=True)
             for (a, b), cnt in sorted(bad_patterns.items()):
                 emit(f"  invalid (a,b)=({a},{b}) count={cnt}", stderr=True)
             return 6
