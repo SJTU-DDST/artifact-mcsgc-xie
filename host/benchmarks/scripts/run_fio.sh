@@ -33,7 +33,7 @@ run_fio_logged() {
     return "${command_status}"
 }
 
-# Emit a timestamped marker to both kern.log and the kernel ring buffer.
+# Emit a timestamped marker to the kernel ring buffer for dmesg collectors.
 emit_kernel_marker() {
     local message=$1
     local ts_local
@@ -44,9 +44,6 @@ emit_kernel_marker() {
     host_local=$(hostname)
     ts_upt=$(awk '{ printf "%.6f", $1 }' /proc/uptime)
 
-    printf 'IN BASH %s %s [%s] %s\n' \
-        "${ts_local}" "${host_local}" "${ts_upt}" "${message}" \
-        | sudo tee -a /var/log/kern.log >/dev/null
     printf '<6>IN BASH %s %s [%s] %s\n' \
         "${ts_local}" "${host_local}" "${ts_upt}" "${message}" \
         | sudo tee /dev/kmsg >/dev/null
@@ -495,8 +492,10 @@ if ! reset_ssd_stat "${devpath}"; then
 fi
 
 fio_log="${output_path}/${workload_type}.log"
+emit_kernel_marker "MEASURED_FIO_START mode=${gc_mode} workload=${bmname}"
 run_fio_logged "${fio_log}" "${fio_flags[@]}" "${runtime_flags[@]}" "${workload_path}"
 fio_status=$?
+emit_kernel_marker "MEASURED_FIO_END mode=${gc_mode} workload=${bmname} status=${fio_status}"
 
 if ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
     echo "ERROR: failed to close the measured workload epoch" >&2
