@@ -107,6 +107,67 @@ set_gc_measurement_epoch() {
     return 1
 }
 
+# Read and validate the currently active GC measurement epoch from sysfs.
+read_gc_measurement_epoch() {
+    local control_path=$1
+    local expected_scope=$2
+    local expected_active=$3
+    local state
+    local epoch
+    local scope
+    local active
+
+    if ! state=$(<"${control_path}"); then
+        echo "ERROR: failed to read GC measurement state: ${control_path}" >&2
+        return 1
+    fi
+    if [[ ! "${state}" =~ ^epoch=([0-9]+)[[:space:]]+scope=([^[:space:]]+)[[:space:]]+workload_active=([01])[[:space:]]+epoch_start_ns=([0-9]+)$ ]]; then
+        echo "ERROR: invalid GC measurement state: ${state}" >&2
+        return 1
+    fi
+
+    epoch=${BASH_REMATCH[1]}
+    scope=${BASH_REMATCH[2]}
+    active=${BASH_REMATCH[3]}
+    if [ "${scope}" != "${expected_scope}" ] || [ "${active}" != "${expected_active}" ]; then
+        echo "ERROR: unexpected GC measurement state: epoch=${epoch} scope=${scope} workload_active=${active}" >&2
+        return 1
+    fi
+
+    printf '%s\n' "${epoch}"
+}
+
+# Persist the just-closed epoch summaries before later printk traffic can overwrite them.
+capture_gc_measurement_summary() {
+    local epoch=$1
+    local scope=$2
+    local output_file=$3
+
+    sudo dmesg --color=never | awk -v epoch="${epoch}" -v scope="${scope}" '
+        BEGIN {
+            target = "epoch=" epoch " scope=" scope " "
+        }
+        index($0, "F2FS_GC_VICTIM_STAT " target) {
+            victim = $0
+        }
+        index($0, "F2FS_GC_HEAVY_STAT " target) &&
+            index($0, "epoch_elapsed_us=") &&
+            (index($0, "epoch_start_to_first_gc_us=") ||
+             index($0, "no_first_gc=1")) {
+            heavy = $0
+        }
+        END {
+            if (victim == "" || heavy == "") {
+                print "ERROR: completed GC measurement summary is missing for epoch=" \
+                    epoch " scope=" scope > "/dev/stderr"
+                exit 1
+            }
+            print victim
+            print heavy
+        }
+    ' > "${output_file}"
+}
+
 # Validate the common victim-counter invariant before interpreting GC mode.
 validate_gc_victim_invariant() {
     local phase=$1
@@ -480,6 +541,12 @@ if ! set_gc_measurement_epoch "${gc_measurement_control_path}" start; then
     sudo umount "${devpath}" >/dev/null 2>&1 || true
     exit 1
 fi
+if ! workload_gc_epoch=$(read_gc_measurement_epoch \
+    "${gc_measurement_control_path}" workload 1); then
+    set_gc_measurement_epoch "${gc_measurement_control_path}" stop || true
+    sudo umount "${devpath}" >/dev/null 2>&1 || true
+    exit 1
+fi
 
 # Reset device statistics only after the Host confirms that CSGC work is idle.
 if ! reset_ssd_stat "${devpath}"; then
@@ -497,9 +564,23 @@ run_fio_logged "${fio_log}" "${fio_flags[@]}" "${runtime_flags[@]}" "${workload_
 fio_status=$?
 emit_kernel_marker "MEASURED_FIO_END mode=${gc_mode} workload=${bmname} status=${fio_status}"
 
+workload_epoch_closed=0
 if ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
     echo "ERROR: failed to close the measured workload epoch" >&2
     fio_status=1
+else
+    workload_epoch_closed=1
+fi
+
+gc_measurement_summary="${output_path}/gc-measurement-summary.log"
+if [ "${bmname}" = "randwrite" ] && [ "${fio_gc_precondition}" -eq 1 ]; then
+    if [ "${workload_epoch_closed}" -ne 1 ] \
+        || ! capture_gc_measurement_summary \
+            "${workload_gc_epoch}" workload "${gc_measurement_summary}"; then
+        echo "ERROR: failed to capture the measured workload GC summary" >&2
+        gc_measurement_summary=""
+        fio_status=1
+    fi
 fi
 
 ssd_workload_stat="${output_path}/ssd-workload-stat.log"
@@ -519,15 +600,12 @@ if [ "${bmname}" = "randwrite" ] \
 fi
 
 if [ "${bmname}" = "randwrite" ] && [ "${fio_gc_precondition}" -eq 1 ]; then
-    measured_gc_calls=$(sudo dmesg --color=never \
-        | sed -n 's/.*F2FS_GC_VICTIM_STAT .*scope=workload .*fg_victim_starts=\([0-9][0-9]*\).*/\1/p' \
-        | tail -n 1)
-    measured_csgc_calls=$(sudo dmesg --color=never \
-        | sed -n 's/.*F2FS_GC_VICTIM_STAT .*scope=workload .*fg_csgc_victim_starts=\([0-9][0-9]*\).*/\1/p' \
-        | tail -n 1)
-    measured_origc_calls=$(sudo dmesg --color=never \
-        | sed -n 's/.*F2FS_GC_VICTIM_STAT .*scope=workload .*fg_origc_victim_starts=\([0-9][0-9]*\).*/\1/p' \
-        | tail -n 1)
+    measured_gc_calls=$(sed -n 's/.*fg_victim_starts=\([0-9][0-9]*\).*/\1/p' \
+        "${gc_measurement_summary:-/dev/null}" | tail -n 1)
+    measured_csgc_calls=$(sed -n 's/.*fg_csgc_victim_starts=\([0-9][0-9]*\).*/\1/p' \
+        "${gc_measurement_summary:-/dev/null}" | tail -n 1)
+    measured_origc_calls=$(sed -n 's/.*fg_origc_victim_starts=\([0-9][0-9]*\).*/\1/p' \
+        "${gc_measurement_summary:-/dev/null}" | tail -n 1)
     echo "Foreground victim starts during measured fio: total=${measured_gc_calls:-missing} csgc=${measured_csgc_calls:-missing} origc=${measured_origc_calls:-missing}"
     if ! validate_gc_victim_target "measured fio" "${gc_mode}" \
         "${measured_gc_calls}" "${measured_csgc_calls}" \
@@ -535,16 +613,26 @@ if [ "${bmname}" = "randwrite" ] && [ "${fio_gc_precondition}" -eq 1 ]; then
         fio_status=1
     fi
 
-    first_gc_epoch_us=$(sudo dmesg --color=never \
-        | sed -n 's/.*F2FS_GC_HEAVY_TRACE .*scope=workload .*epoch_t_us=\([0-9][0-9]*\).*event=GC_START.*/\1/p' \
-        | head -n 1)
-    if [ -n "${first_gc_epoch_us}" ]; then
+    first_gc_epoch_us=$(sed -n \
+        's/.*epoch_start_to_first_gc_us=\([0-9][0-9]*\).*/\1/p' \
+        "${gc_measurement_summary:-/dev/null}" | tail -n 1)
+    if [[ "${first_gc_epoch_us}" =~ ^[0-9]+$ ]]; then
         first_gc_delay=$(awk -v first_us="${first_gc_epoch_us}" \
             'BEGIN { printf "%.6f", first_us / 1000000.0 }')
-        echo "First foreground GC delay after measured fio start: ${first_gc_delay} seconds" \
+        echo "First foreground GC delay after workload measurement epoch start: ${first_gc_delay} seconds" \
             | tee "${output_path}/gc_start_delay.log"
+    elif grep -q 'no_first_gc=1' "${gc_measurement_summary:-/dev/null}"; then
+        if [[ "${measured_gc_calls}" =~ ^[0-9]+$ ]] \
+            && [ "${measured_gc_calls}" -ne 0 ]; then
+            echo "ERROR: GC summary reports no first GC but victim starts are nonzero: ${measured_gc_calls}" >&2
+            fio_status=1
+        else
+            echo "No foreground GC call occurred during the workload measurement epoch" \
+                | tee "${output_path}/gc_start_delay.log"
+        fi
     else
-        echo "WARNING: GC occurred, but no F2FS_GC_HEAVY_TRACE start timestamp was found" >&2
+        echo "ERROR: invalid first-GC field in the measured workload GC summary" >&2
+        fio_status=1
     fi
 fi
 echo "======================================================="
