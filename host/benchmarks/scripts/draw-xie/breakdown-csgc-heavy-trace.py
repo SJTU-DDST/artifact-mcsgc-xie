@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import errno
 import math
 import os
 import re
@@ -78,6 +79,8 @@ F2FS_GC_LOCK_END_FIELDS = (
     "gc_lock_held_us",
     "gc_call_post_unlock_us",
 )
+GC_RELATED_GAP_TOP_COUNT = 20
+GC_RELATED_GAP_THRESHOLDS_US = (1000, 10000, 100000, 1000000)
 
 
 def configure_trace_kind(kind: str) -> None:
@@ -585,6 +588,8 @@ def build_f2fs_gc_call_records(traces: List[Trace]) -> List[Dict[str, object]]:
                 "scope": row_scope(trace),
                 "start_t_us": trace_time_us(start),
                 "end_t_us": trace_time_us(trace),
+                "start_lineno": int(start["lineno"]),
+                "end_lineno": int(trace["lineno"]),
                 "duration_us": duration_us,
                 "mode": str(trace.get("mode") or start.get("mode") or "unknown"),
                 "source": str(start.get("source") or "unknown"),
@@ -624,8 +629,180 @@ def build_f2fs_gc_call_records(traces: List[Trace]) -> List[Dict[str, object]]:
     return records
 
 
+def gc_call_has_victim(record: Dict[str, object]) -> Optional[bool]:
+    """Return whether one completed f2fs_gc call selected a victim."""
+    path = str(record.get("path") or "unknown")
+    if path == "no_victim":
+        return False
+    if path in ("csgc", "origc", "mixed"):
+        return True
+    return None
+
+
+def gc_call_completion_reason(record: Dict[str, object]) -> str:
+    """Classify whether a call did work or exited before/after victim search."""
+    has_victim = gc_call_has_victim(record)
+    if has_victim is True:
+        return "with_victim"
+    if has_victim is None:
+        return "unknown"
+
+    final_gc_type = int_or_none(record.get("final_gc_type"))
+    ret = int_or_none(record.get("ret"))
+    if final_gc_type == 0 and ret == -errno.EINVAL:
+        return "bg_no_foreground_work"
+    if final_gc_type == 1 and ret == -errno.ENODATA:
+        return "fg_victim_search_enodata"
+    return "other_no_victim"
+
+
+def emit_f2fs_gc_wait_outcome_breakdown(
+    out,
+    records: List[Dict[str, object]],
+    epoch_elapsed_us: Optional[int],
+) -> None:
+    """Cross-classify lock waiting and victim selection outcomes."""
+    out.write("=== f2fs_gc wait/victim outcome breakdown ===\n")
+    if not records:
+        out.write("gc_wait_outcome_breakdown=unavailable\n")
+        return
+
+    buckets: DefaultDict[
+        Tuple[str, str], List[Dict[str, object]]
+    ] = defaultdict(list)
+    reason_buckets: DefaultDict[str, List[Dict[str, object]]] = defaultdict(list)
+    for record in records:
+        tracked = (
+            record.get("gc_lock_wait_tracked") is not None
+            and int(record["gc_lock_wait_tracked"]) == 1
+            and record.get("gc_lock_wait_us") is not None
+        )
+        if not tracked:
+            wait_state = "untracked"
+        elif int(record["gc_lock_wait_us"]) > 0:
+            wait_state = "waited"
+        else:
+            wait_state = "not_waited"
+
+        has_victim = gc_call_has_victim(record)
+        victim_state = (
+            "with_victim"
+            if has_victim is True
+            else "no_victim"
+            if has_victim is False
+            else "unknown_victim"
+        )
+        buckets[(wait_state, victim_state)].append(record)
+        reason_buckets[gc_call_completion_reason(record)].append(record)
+
+    total_calls = len(records)
+    waited_known = sum(
+        len(bucket)
+        for (wait_state, victim_state), bucket in buckets.items()
+        if wait_state == "waited"
+        and victim_state in ("with_victim", "no_victim")
+    )
+    waited_with_victim = len(buckets[("waited", "with_victim")])
+    victim_time_us = sum(
+        int(record["duration_us"])
+        for (wait_state, victim_state), bucket in buckets.items()
+        if victim_state == "with_victim"
+        for record in bucket
+    )
+    no_victim_time_us = sum(
+        int(record["duration_us"])
+        for (wait_state, victim_state), bucket in buckets.items()
+        if victim_state == "no_victim"
+        for record in bucket
+    )
+    out.write(f"gc_wait_outcome_calls={total_calls}\n")
+    out.write(
+        "gc_waited_victim_hit_rate="
+        + (
+            format_float(waited_with_victim / float(waited_known), 6)
+            if waited_known
+            else "nan"
+        )
+        + "\n"
+    )
+    out.write(f"gc_with_victim_call_time_us={victim_time_us}\n")
+    out.write(f"gc_no_victim_call_time_us={no_victim_time_us}\n")
+    if epoch_elapsed_us and epoch_elapsed_us > 0:
+        out.write(
+            "gc_with_victim_call_time_fraction_of_epoch="
+            f"{format_float(victim_time_us / float(epoch_elapsed_us), 6)}\n"
+        )
+        out.write(
+            "gc_no_victim_call_time_fraction_of_epoch="
+            f"{format_float(no_victim_time_us / float(epoch_elapsed_us), 6)}\n"
+        )
+    else:
+        out.write("gc_with_victim_call_time_fraction_of_epoch=unavailable\n")
+        out.write("gc_no_victim_call_time_fraction_of_epoch=unavailable\n")
+
+    for reason in (
+        "with_victim",
+        "bg_no_foreground_work",
+        "fg_victim_search_enodata",
+        "other_no_victim",
+        "unknown",
+    ):
+        bucket = reason_buckets.get(reason, [])
+        duration_sum_us = sum(int(record["duration_us"]) for record in bucket)
+        waited_calls = sum(
+            1
+            for record in bucket
+            if record.get("gc_lock_wait_tracked") is not None
+            and int(record["gc_lock_wait_tracked"]) == 1
+            and record.get("gc_lock_wait_us") is not None
+            and int(record["gc_lock_wait_us"]) > 0
+        )
+        out.write(
+            f"gc_completion_reason={reason} calls={len(bucket)} "
+            f"fraction_of_all_calls={format_float(len(bucket) / float(total_calls), 6)} "
+            f"waited_calls={waited_calls} duration_sum_us={duration_sum_us}\n"
+        )
+
+    for wait_state in ("waited", "not_waited", "untracked"):
+        for victim_state in ("with_victim", "no_victim", "unknown_victim"):
+            bucket = buckets.get((wait_state, victim_state), [])
+            if not bucket and victim_state == "unknown_victim":
+                continue
+            prefix = f"gc_outcome_{wait_state}_{victim_state}"
+            duration_values = [int(record["duration_us"]) for record in bucket]
+            wait_values = [
+                int(record["gc_lock_wait_us"])
+                for record in bucket
+                if record.get("gc_lock_wait_us") is not None
+            ]
+            collector_sections = sum(
+                sum(
+                    int(record.get(field) or 0)
+                    for field in F2FS_GC_COLLECTOR_COUNT_FIELDS
+                )
+                for record in bucket
+            )
+            sections_freed = sum(
+                int(record.get("sec_freed") or 0) for record in bucket
+            )
+            out.write(
+                f"wait_state={wait_state} victim_state={victim_state} "
+                f"calls={len(bucket)} "
+                f"fraction_of_all_calls={format_float(len(bucket) / float(total_calls), 6)} "
+                f"duration_sum_us={sum(duration_values)} "
+                f"lock_wait_sum_us={sum(wait_values)} "
+                f"collector_sections={collector_sections} "
+                f"sections_freed={sections_freed}\n"
+            )
+            out.write(summarize_values(f"{prefix}_duration_us", duration_values) + "\n")
+            if wait_values:
+                out.write(summarize_values(f"{prefix}_lock_wait_us", wait_values) + "\n")
+
+
 def emit_f2fs_gc_collector_breakdown(
-    out, records: List[Dict[str, object]]
+    out,
+    records: List[Dict[str, object]],
+    epoch_elapsed_us: Optional[int],
 ) -> None:
     """Summarize data/node collector coverage from complete GC_END records."""
     complete = [
@@ -678,6 +855,18 @@ def emit_f2fs_gc_collector_breakdown(
     out.write(f"total_collector_time_us={total_collector_time_us}\n")
     out.write(f"f2fs_gc_call_time_sum_us={f2fs_gc_call_time_sum_us}\n")
     out.write(f"non_collector_f2fs_gc_time_us={non_collector_time_us}\n")
+    if epoch_elapsed_us and epoch_elapsed_us > 0:
+        out.write(
+            "collector_time_fraction_of_epoch="
+            f"{format_float(total_collector_time_us / float(epoch_elapsed_us), 6)}\n"
+        )
+        out.write(
+            "non_collector_f2fs_gc_time_fraction_of_epoch="
+            f"{format_float(non_collector_time_us / float(epoch_elapsed_us), 6)}\n"
+        )
+    else:
+        out.write("collector_time_fraction_of_epoch=unavailable\n")
+        out.write("non_collector_f2fs_gc_time_fraction_of_epoch=unavailable\n")
 
     ratios = {
         "csgc_data_section_fraction_of_all_sections": (
@@ -833,6 +1022,154 @@ def merge_windows(windows: Iterable[Tuple[int, int]]) -> List[Tuple[int, int]]:
 def merged_window_time(windows: List[Tuple[int, int]]) -> int:
     """Return union time for windows already merged by merge_windows()."""
     return sum(end - start for start, end in windows)
+
+
+def build_f2fs_gc_related_windows(
+    records: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    """Merge demand-to-completion windows while retaining boundary calls."""
+    raw_windows: List[Dict[str, object]] = []
+    for record in records:
+        demand_tracked = (
+            all(record.get(field) is not None for field in F2FS_GC_DEMAND_START_FIELDS)
+            and int(record["gc_demand_tracked"]) == 1
+            and int(record["gc_demand_to_call_us"]) >= 0
+        )
+        start_t_us = int(record["start_t_us"])
+        if demand_tracked:
+            start_t_us -= int(record["gc_demand_to_call_us"])
+        raw_windows.append(
+            {
+                "start_t_us": start_t_us,
+                "end_t_us": int(record["end_t_us"]),
+                "start_record": record,
+                "end_record": record,
+                "call_count": 1,
+                "demand_untracked_calls": 0 if demand_tracked else 1,
+            }
+        )
+
+    merged: List[Dict[str, object]] = []
+    for window in sorted(
+        raw_windows,
+        key=lambda item: (int(item["start_t_us"]), int(item["end_t_us"])),
+    ):
+        if not merged or int(window["start_t_us"]) > int(merged[-1]["end_t_us"]):
+            merged.append(dict(window))
+            continue
+
+        current = merged[-1]
+        current["call_count"] = int(current["call_count"]) + 1
+        current["demand_untracked_calls"] = int(
+            current["demand_untracked_calls"]
+        ) + int(window["demand_untracked_calls"])
+        if int(window["end_t_us"]) > int(current["end_t_us"]):
+            current["end_t_us"] = int(window["end_t_us"])
+            current["end_record"] = window["end_record"]
+
+    return merged
+
+
+def emit_f2fs_gc_related_gap_breakdown(
+    out, records: List[Dict[str, object]]
+) -> None:
+    """Report idle gaps between merged GC demand-to-completion windows."""
+    out.write("=== adjacent complete GC-related window gaps (microseconds) ===\n")
+    merged = build_f2fs_gc_related_windows(records)
+    demand_untracked_calls = sum(
+        int(window["demand_untracked_calls"]) for window in merged
+    )
+    out.write(f"gc_related_merged_windows={len(merged)}\n")
+    out.write(f"gc_related_demand_untracked_calls={demand_untracked_calls}\n")
+    out.write(f"gc_related_gap_complete={int(demand_untracked_calls == 0)}\n")
+    if not merged:
+        out.write(summarize_values("gc_related_gap_us", []) + "\n")
+        out.write("gc_related_gap_breakdown=unavailable\n")
+        return
+
+    gaps: List[Dict[str, object]] = []
+    for previous, following in zip(merged, merged[1:]):
+        gap_us = int(following["start_t_us"]) - int(previous["end_t_us"])
+        if gap_us <= 0:
+            continue
+        gaps.append(
+            {
+                "gap_us": gap_us,
+                "gap_start_t_us": int(previous["end_t_us"]),
+                "gap_end_t_us": int(following["start_t_us"]),
+                "previous": previous,
+                "following": following,
+            }
+        )
+
+    gap_values = [int(gap["gap_us"]) for gap in gaps]
+    out.write(summarize_values("gc_related_gap_us", gap_values) + "\n")
+    out.write(f"gc_related_gap_sum_us={sum(gap_values)}\n")
+    for threshold_us in GC_RELATED_GAP_THRESHOLDS_US:
+        selected = [value for value in gap_values if value >= threshold_us]
+        out.write(
+            f"gc_related_gap_ge_{threshold_us}us_count={len(selected)} "
+            f"time_us={sum(selected)}\n"
+        )
+
+    transition_counts: Counter = Counter()
+    transition_time_us: Counter = Counter()
+    next_comm_counts: Counter = Counter()
+    next_comm_time_us: Counter = Counter()
+    for gap in gaps:
+        previous_record = gap["previous"]["end_record"]
+        following_record = gap["following"]["start_record"]
+        transition = (str(previous_record["path"]), str(following_record["path"]))
+        next_comm = str(following_record.get("comm") or "unknown")
+        transition_counts[transition] += 1
+        transition_time_us[transition] += int(gap["gap_us"])
+        next_comm_counts[next_comm] += 1
+        next_comm_time_us[next_comm] += int(gap["gap_us"])
+
+    for (previous_path, next_path), count in sorted(transition_counts.items()):
+        out.write(
+            f"gc_related_gap_transition prev_path={previous_path} "
+            f"next_path={next_path} count={count} "
+            f"time_us={transition_time_us[(previous_path, next_path)]}\n"
+        )
+    for comm, count in sorted(next_comm_counts.items()):
+        out.write(
+            f"gc_related_gap_next_comm comm={comm} count={count} "
+            f"time_us={next_comm_time_us[comm]}\n"
+        )
+
+    longest = sorted(
+        gaps,
+        key=lambda item: (
+            int(item["gap_us"]),
+            -int(item["gap_start_t_us"]),
+        ),
+        reverse=True,
+    )[:GC_RELATED_GAP_TOP_COUNT]
+    out.write(f"gc_related_top_gap_count={len(longest)}\n")
+    for rank, gap in enumerate(longest, 1):
+        previous_window = gap["previous"]
+        following_window = gap["following"]
+        previous_record = previous_window["end_record"]
+        following_record = following_window["start_record"]
+        out.write(
+            f"gc_related_top_gap rank={rank} "
+            f"gap_us={int(gap['gap_us'])} "
+            f"gap_start_t_us={int(gap['gap_start_t_us'])} "
+            f"gap_end_t_us={int(gap['gap_end_t_us'])} "
+            f"prev_call_id={int(previous_record['call_id'])} "
+            f"prev_path={previous_record['path']} "
+            f"prev_ret={previous_record['ret']} "
+            f"prev_sec_freed={previous_record['sec_freed']} "
+            f"prev_end_lineno={int(previous_record['end_lineno'])} "
+            f"next_call_id={int(following_record['call_id'])} "
+            f"next_path={following_record['path']} "
+            f"next_ret={following_record['ret']} "
+            f"next_sec_freed={following_record['sec_freed']} "
+            f"next_start_lineno={int(following_record['start_lineno'])} "
+            f"next_gc_lock_wait_us={following_record['gc_lock_wait_us']} "
+            f"next_gc_demand_to_call_us={following_record['gc_demand_to_call_us']}\n"
+        )
 
 
 def intersect_merged_windows(
@@ -1785,13 +2122,21 @@ def write_result(
             out.write(f"total_freed_sum={total_freed}\n")
             out.write(f"sections_freed_sum={sections_freed}\n")
             out.write("\n")
-            emit_f2fs_gc_collector_breakdown(out, gc_call_records)
+            emit_f2fs_gc_wait_outcome_breakdown(
+                out, gc_call_records, epoch_elapsed_us
+            )
+            out.write("\n")
+            emit_f2fs_gc_collector_breakdown(
+                out, gc_call_records, epoch_elapsed_us
+            )
             out.write("\n")
             emit_f2fs_gc_lock_breakdown(out, gc_call_records)
             out.write("\n")
             emit_f2fs_gc_window_breakdown(
                 out, gc_call_records, epoch_elapsed_us
             )
+            out.write("\n")
+            emit_f2fs_gc_related_gap_breakdown(out, gc_call_records)
             out.write("\n")
             emit_f2fs_gc_trigger_stats(out, trigger_stats)
             out.write("\n")

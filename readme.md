@@ -3,6 +3,12 @@ con06: fio，单个51GB大文件，4个线程各自随机写20GB
 con01: filebench,54K个1M小文件 300秒  _4t_60G_1M_54k_ **但是三百秒可能跑不通，现在用下面这个更短的版本**
 con21:filebench,和上面比就是时间缩短到150秒 fileserver_4t_60G_1M_54k_period_150s h
 
+# 常用命令
+## tmux
+tmux attach -t log
+即可回到之前的终端和正在运行的任务。duplicate session: log 只是说明同名会话已经存在，不代表损坏。
+
+
 # 各个脚本的用法
 ## mydmesg.sh
 
