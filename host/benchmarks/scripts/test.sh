@@ -17,8 +17,8 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   echo "Usage: $0 <mode> <ssd1t|ssd2t> <config>"
-  echo "  mode: one of mcsgc, csgc, mcsgcdebug, csgcdebug, mcsgcmakefile, mcsgcv2, mcsgc8t, mcsgc2t, csgcva"
-  echo "        ori and iplfs are still accepted for existing baseline runs"
+  echo "  mode: any value containing the case-sensitive substring 'csgc' selects CSGC"
+  echo "        ori and iplfs select the existing baseline paths"
 }
 
 if [ $# -ne 3 ]; then
@@ -48,40 +48,19 @@ if [ ! -f "${config_path}" ]; then
     fi
 fi
 
-# determine gc_mode based on mcsgc_mode
-
-cs_modes=(
-    "mcsgc"
-    "csgc"
-    "mcsgcdebug"
-    "csgcdebug"
-    "mcsgcmakefile"
-    "mcsgcv2"
-    "mcsgc8t"
-    "mcsgc2t"
-    "csgcva"
-)
-
-is_in_list() {
-    local target="$1"
-    shift
-    local item
-    for item in "$@"; do
-        if [[ "$item" == "$target" ]]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
-if is_in_list "$mcsgc_mode" "${cs_modes[@]}"; then
-    gc_mode="cs"
-elif [[ "$mcsgc_mode" == "ori" || "$mcsgc_mode" == "iplfs" ]]; then
-  gc_mode="$mcsgc_mode"
-else
-  echo "Error: unsupported mode '$mcsgc_mode'."
-  exit 1
-fi
+# Keep the user-provided mode as an output label while normalizing CSGC variants.
+case "${mcsgc_mode}" in
+    *csgc*)
+        gc_mode="cs"
+        ;;
+    "ori"|"iplfs")
+        gc_mode="${mcsgc_mode}"
+        ;;
+    *)
+        echo "Error: unsupported mode '${mcsgc_mode}'."
+        exit 1
+        ;;
+esac
 echo "gc_mode=$gc_mode"
 echo "ssd_thread_mode=$ssd_thread_mode"
 
