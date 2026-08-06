@@ -1,0 +1,6 @@
+interface:
+  display_name: "Run CSGC Experiment"
+  short_description: "Safely orchestrate CSGC benchmark batches"
+  default_prompt: "Use $csgc-run-experiment to validate, run, monitor, and analyze the CSGC experiment batch I specify."
+policy:
+  allow_implicit_invocation: false
