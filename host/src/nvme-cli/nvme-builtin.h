@@ -98,6 +98,7 @@ COMMAND_LIST(
 	ENTRY("raid-stop", "Signal the device that RAID has been stopped", raid_stop_cmd)
 	ENTRY("fs-ready", "Signal the device that file system is ready", fs_ready_cmd)
 	ENTRY("io-test", "Perform in storage io test", io_test_cmd)
+	ENTRY("cdma-bench", "Run the OpenSSD Core3 CDMA microbenchmark", cdma_bench_cmd)
 	ENTRY("ssd-admin", "Get/Set SSD configuration", ssd_admin_cmd)
 	ENTRY("fs-stop", "Signal the device that file system has been stopped", fs_stop_cmd)
 	ENTRY("get-inode", "Print specified inode info", get_inode_cmd)

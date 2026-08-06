@@ -6771,6 +6771,109 @@ ret:
 	return nvme_status_to_errno(err, false);
 }
 
+#define OPENSSD_CDMA_BENCH_MAGIC          0xcb000000U
+#define OPENSSD_CDMA_BENCH_WARMUP_SHIFT   16U
+#define OPENSSD_CDMA_BENCH_REPEAT_SHIFT   8U
+#define OPENSSD_CDMA_BENCH_MODE_SHIFT     4U
+#define OPENSSD_CDMA_BENCH_MAX_VECTORS    32U
+#define OPENSSD_CDMA_BENCH_MAX_REPEATS    16U
+
+/* Submit the destructive benchmark and wait for the Core3 completion. */
+static int signal_cdma_bench(int argc, char **argv, const char *desc)
+{
+	int fd, err;
+	struct nvme_admin_cmd cmd;
+	struct config {
+		unsigned int mode;
+		unsigned int src_lba;
+		unsigned int dst_lba;
+		unsigned int transfer_size;
+		unsigned int vector_count;
+		unsigned int vector_interval;
+		unsigned int warmup_iterations;
+		unsigned int measure_iterations;
+		unsigned int repeat_count;
+		unsigned int flush_cache;
+		unsigned int timeout_ms;
+	};
+	struct config cfg = {
+		.mode = 1,
+		.src_lba = 0,
+		.dst_lba = 16384,
+		.transfer_size = 4096,
+		.vector_count = 32,
+		.vector_interval = 1,
+		.warmup_iterations = 32,
+		.measure_iterations = 8192,
+		.repeat_count = 5,
+		.flush_cache = 0,
+		.timeout_ms = 120000,
+	};
+
+	OPT_ARGS(opts) = {
+		OPT_UINT("mode", 'm', &cfg.mode, "0=simple, 1=scatter-gather"),
+		OPT_UINT("src-lba", 'a', &cfg.src_lba, "destructive source LBA"),
+		OPT_UINT("dst-lba", 'd', &cfg.dst_lba, "destructive destination LBA"),
+		OPT_UINT("transfer-size", 'z', &cfg.transfer_size, "bytes per vector"),
+		OPT_UINT("vectors", 'v', &cfg.vector_count, "vectors per batch"),
+		OPT_UINT("interval", 'i', &cfg.vector_interval, "source stride in transfer-size units"),
+		OPT_UINT("warmup", 'w', &cfg.warmup_iterations, "warmup batches"),
+		OPT_UINT("iterations", 'n', &cfg.measure_iterations, "measured batches per repeat"),
+		OPT_UINT("repeat", 'r', &cfg.repeat_count, "measured repeat count"),
+		OPT_UINT("flush", 'f', &cfg.flush_cache, "flush source and destination caches"),
+		OPT_UINT("timeout", 't', &cfg.timeout_ms, "admin command timeout in milliseconds"),
+		OPT_END()
+	};
+
+	err = fd = parse_and_open(argc, argv, desc, opts);
+	if (fd < 0)
+		goto ret;
+
+	if (cfg.mode > 1 || cfg.flush_cache > 1 ||
+	    cfg.vector_count == 0 ||
+	    cfg.vector_count > OPENSSD_CDMA_BENCH_MAX_VECTORS ||
+	    cfg.vector_interval == 0 || cfg.vector_interval > 0xffffU ||
+	    cfg.warmup_iterations > 0xffU ||
+	    cfg.measure_iterations == 0 || cfg.repeat_count == 0 ||
+	    cfg.repeat_count > OPENSSD_CDMA_BENCH_MAX_REPEATS ||
+	    cfg.transfer_size < 4096 || cfg.transfer_size % 4096 != 0 ||
+	    (cfg.mode == 0 && cfg.vector_count != 1)) {
+		fprintf(stderr, "Invalid CDMA benchmark parameters\n");
+		errno = EINVAL;
+		err = -1;
+		goto close_fd;
+	}
+
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.opcode = nvme_admin_io_test;
+	cmd.cdw10 = OPENSSD_CDMA_BENCH_MAGIC |
+		    (cfg.warmup_iterations << OPENSSD_CDMA_BENCH_WARMUP_SHIFT) |
+		    (cfg.repeat_count << OPENSSD_CDMA_BENCH_REPEAT_SHIFT) |
+		    (cfg.mode << OPENSSD_CDMA_BENCH_MODE_SHIFT) |
+		    cfg.flush_cache;
+	cmd.cdw11 = cfg.src_lba;
+	cmd.cdw12 = cfg.dst_lba;
+	cmd.cdw13 = cfg.transfer_size;
+	cmd.cdw14 = (cfg.vector_interval << 16) | cfg.vector_count;
+	cmd.cdw15 = cfg.measure_iterations;
+	cmd.timeout_ms = cfg.timeout_ms;
+
+	fprintf(stderr,
+		"WARNING: this command overwrites raw OpenSSD DDR4 storage ranges. "
+		"Run it only while the namespace is unmounted and before mkfs.\n");
+	err = nvme_submit_admin_passthru(fd, &cmd);
+	if (err == 0) {
+		printf("CDMA benchmark completed: %.3f MiB/s "
+		       "(result_x1000=%u)\n", cmd.result / 1000.0, cmd.result);
+		printf("Run 'nvme read -L' to retrieve the full cdma_bench result.\n");
+	}
+
+close_fd:
+	close(fd);
+ret:
+	return nvme_status_to_errno(err, false);
+}
+
 // example:
 // sudo ./nvme ssd-admin /dev/nvme1n1 --op 0					# get config
 // sudo ./nvme ssd-admin /dev/nvme1n1 --op 1 --l2p 1 --nand 0	# set config
@@ -6844,6 +6947,13 @@ static int io_test_cmd(int argc, char **argv, struct command *command, struct pl
 {
 	const char *desc = "Perform in-storage io test";
 	return signal_io_test(argc, argv, desc);
+}
+
+static int cdma_bench_cmd(int argc, char **argv, struct command *command,
+			  struct plugin *plugin)
+{
+	const char *desc = "Run the destructive OpenSSD Core3 CDMA microbenchmark";
+	return signal_cdma_bench(argc, argv, desc);
 }
 
 static int ssd_admin_cmd(int argc, char **argv, struct command *command, struct plugin *plugin)
