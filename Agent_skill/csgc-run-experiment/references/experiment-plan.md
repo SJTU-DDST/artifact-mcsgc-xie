@@ -44,7 +44,8 @@ ASCII. The plan is copied into the experiment record directory when execution st
 - `tests`: nonempty ordered list of test cases.
 - `mode`: exact first argument passed to `test.sh`. It must be `ori`, `iplfs`, or contain
   the case-sensitive substring `csgc`.
-- `ssd_thread_mode`: exact second argument, either `ssd1t` or `ssd2t`.
+- `ssd_thread_mode`: expected mode, either `ssd1t` or `ssd2t`. The orchestrator compares
+  it with the value detected from the Vitis workspace; it is not passed to `test.sh`.
 - `config`: path relative to the benchmark directory and contained under `configs/`.
 - `repetitions`: positive integer. Each repetition gets a new Host build, collector, kernel
   log, test invocation, output root, and record entry.

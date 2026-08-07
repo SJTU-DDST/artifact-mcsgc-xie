@@ -76,7 +76,7 @@ class VersionExpectation:
 
 @dataclasses.dataclass(frozen=True)
 class TestCase:
-    """Store one exact test.sh argument tuple and repetition policy."""
+    """Store one test.sh request, expected SSD mode, and repetition policy."""
 
     mode: str
     ssd_thread_mode: str
@@ -578,6 +578,7 @@ class ExperimentRecorder:
             f"- Server-31 branch: `{ssd.get('branch', '-')}`",
             f"- Server-31 commit: `{ssd.get('commit', '-')}`",
             f"- Server-31 dirty paths: `{', '.join(ssd.get('dirty_paths', [])) or '-'}`",
+            f"- Detected SSD thread mode: `{environment.get('ssd_thread_mode', '-')}`",
             f"- Device: `{environment.get('device_line', '-')}`",
             f"- Kernel: `{environment.get('kernel_release', '-')}`",
             "",
@@ -771,6 +772,35 @@ def remote_git_info() -> dict[str, Any]:
     }
 
 
+def detect_ssd_thread_mode() -> dict[str, str]:
+    """Run test.sh's read-only Vitis detector and preserve its diagnostics."""
+
+    try:
+        result = subprocess.run(
+            (str(TEST_SCRIPT), "--detect-ssd-thread-mode"),
+            cwd=BENCHMARK_DIR,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ExperimentError("SSD thread-mode detection timed out") from exc
+    except OSError as exc:
+        raise ExperimentError(f"cannot run SSD thread-mode detection: {exc}") from exc
+
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no diagnostics"
+        raise ExperimentError(
+            f"SSD thread-mode detection failed with status {result.returncode}: {detail}"
+        )
+    mode = result.stdout.strip()
+    if mode not in {"ssd1t", "ssd2t"}:
+        raise ExperimentError(f"SSD thread-mode detector returned invalid output: {mode!r}")
+    return {"mode": mode, "diagnostics": result.stderr.strip()}
+
+
 def check_version_expectation(
     label: str, actual: Mapping[str, Any], expected: VersionExpectation
 ) -> None:
@@ -888,6 +918,7 @@ def preflight_environment(plan: ExperimentPlan, require_sudo: bool) -> dict[str,
     conflicts = ensure_no_active_experiment()
     host = local_git_info(HOST_REPO)
     ssd = remote_git_info()
+    ssd_thread = detect_ssd_thread_mode()
     check_version_expectation("Host", host, plan.expected_host)
     check_version_expectation("server-31 SSD", ssd, plan.expected_ssd)
     if require_sudo:
@@ -898,6 +929,8 @@ def preflight_environment(plan: ExperimentPlan, require_sudo: bool) -> dict[str,
         "device_line": device_identity(),
         "host_git": host,
         "ssd_git": ssd,
+        "ssd_thread_mode": ssd_thread["mode"],
+        "ssd_thread_detection": ssd_thread["diagnostics"],
         "sudo_noninteractive": require_sudo,
         **conflicts,
     }
@@ -1258,6 +1291,12 @@ def run_one_repetition(
         recorder.event("INFO", "Running per-test preflight", run=run_number)
         environment = preflight_environment(plan, require_sudo=True)
         recorder.update_run(run_state_index, environment=environment)
+        detected_ssd_mode = environment["ssd_thread_mode"]
+        if detected_ssd_mode != case.ssd_thread_mode:
+            raise ExperimentError(
+                "server-31 Vitis SSD thread mode mismatch: "
+                f"expected {case.ssd_thread_mode}, detected {detected_ssd_mode}"
+            )
         module_digest = prepare_host_module(recorder, run_state_index)
         recorder.update_run(
             run_state_index,
@@ -1293,9 +1332,9 @@ def run_one_repetition(
         test_command = (
             "sudo",
             "-n",
+            f"CSGC_EXPECTED_SSD_THREAD_MODE={case.ssd_thread_mode}",
             str(TEST_SCRIPT),
             case.mode,
-            case.ssd_thread_mode,
             case.config,
         )
         test_payload = build_session_script(

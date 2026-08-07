@@ -29,7 +29,8 @@ orchestrator for state-changing steps instead of reproducing the shell sequence 
 1. Convert the user's requested tuples into one JSON plan.
 2. Store the plan under `/home/xin/artifact-csgc/experiment_plans/` with a unique
    `experiment_id`.
-3. Preserve the exact `test.sh` arguments and repetition count for every case.
+3. Preserve the exact mode/config arguments, expected SSD-thread mode, and repetition
+   count for every case.
 4. Run:
 
 ```bash
@@ -42,9 +43,9 @@ python3 <skill-dir>/scripts/csgc_experiment.py validate --plan <plan.json>
 python3 <skill-dir>/scripts/csgc_experiment.py preflight --plan <plan.json>
 ```
 
-6. Compare the reported Host branch/commit, server-31 branch/commit/dirty state, device
-   identity, mode label, SSD-thread label, and config with the user's request. Do not claim
-   that the server-31 checkout proves which firmware binary is flashed onto the SSD.
+6. Compare the reported Host branch/commit, server-31 branch/commit/dirty state, Vitis
+   SSD-thread detection, device identity, mode label, and config with the user's request.
+   Do not claim that source provenance proves which firmware binary is flashed onto the SSD.
 7. Stop for clarification if the requested labels cannot be reconciled with the observed
    versions.
 
@@ -80,8 +81,9 @@ The orchestrator writes `state.json`, command logs, and `record.md` under
 
 ## Enforce Safety Boundaries
 
-- Keep all server-31 operations read-only. Use only the fixed SSH Git queries implemented
-  by the orchestrator. Never edit, copy to, build on, or otherwise mutate server 31.
+- Keep all server-31 operations read-only. Use only the fixed SSH Git and Vitis-source
+  queries implemented by the orchestrator and `test.sh`. Never edit, copy to, build on,
+  or otherwise mutate server 31.
 - The orchestrator must never invoke `rm`, `unlink`, or another deletion operation on
   existing files. Existing approved build and benchmark scripts may perform their own
   normal clean steps, temporary-file cleanup, and managed output replacement.

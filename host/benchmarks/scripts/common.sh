@@ -343,6 +343,11 @@ prefill_smallfiles_filewriter() {
     size_bytes=$(( size_per_file * 1024 * 1024 ))
     good_files=$(find "${mntpoint}" -maxdepth 1 -type f -name 'smallfiles.*' -size "${size_bytes}c" | wc -l)
     echo "Verification: expected files=${expected}, total found=${total_created}, correct size files=${good_files}"
+    if [ "${total_created}" -ne "${expected}" ] \
+        || [ "${good_files}" -ne "${expected}" ]; then
+        echo "ERROR: small-file prefill verification failed" >&2
+        return 1
+    fi
 }
 
 

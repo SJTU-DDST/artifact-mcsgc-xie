@@ -1,0 +1,23 @@
+[global]
+ioengine=libaio
+thread=1
+group_reporting=1
+
+# Use a large inode pool so concurrently selected victim sections are less
+# likely to reference the same inode and serialize the section pipeline.
+filename_format=/home/xin/ssd/mnt/smallfiles.$filenum
+filesize=1M
+nrfiles=52000
+allow_file_create=0
+overwrite=1
+
+[pipeline_smallfiles_randwrite]
+rw=randwrite
+direct=0
+bs=4k
+iodepth=16
+numjobs=16
+size=52000M
+openfiles=128
+file_service_type=random:16
+randrepeat=1

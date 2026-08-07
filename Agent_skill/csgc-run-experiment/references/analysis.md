@@ -42,8 +42,8 @@ It records the new directory created under:
 - Compare repetitions using the same metric and denominator. Report sample count, mean,
   spread, and obvious outliers when available.
 - Separate Host evidence, device-log evidence, end-to-end workload results, and hypotheses.
-- Do not claim that `ssd1t` or `ssd2t` changed firmware behavior merely because it appears
-  in the command or directory name.
+- Do not claim that detected `ssd1t` or `ssd2t` proves the corresponding firmware binary
+  is running merely because it appears in the Vitis source or directory name.
 - Do not treat the server-31 checkout commit as proof of the flashed firmware binary.
 
 ## Finish The Record

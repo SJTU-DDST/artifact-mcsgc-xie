@@ -573,14 +573,12 @@ else
 fi
 
 gc_measurement_summary="${output_path}/gc-measurement-summary.log"
-if [ "${bmname}" = "randwrite" ] && [ "${fio_gc_precondition}" -eq 1 ]; then
-    if [ "${workload_epoch_closed}" -ne 1 ] \
-        || ! capture_gc_measurement_summary \
-            "${workload_gc_epoch}" workload "${gc_measurement_summary}"; then
-        echo "ERROR: failed to capture the measured workload GC summary" >&2
-        gc_measurement_summary=""
-        fio_status=1
-    fi
+if [ "${workload_epoch_closed}" -ne 1 ] \
+    || ! capture_gc_measurement_summary \
+        "${workload_gc_epoch}" workload "${gc_measurement_summary}"; then
+    echo "ERROR: failed to capture the measured workload GC summary" >&2
+    gc_measurement_summary=""
+    fio_status=1
 fi
 
 ssd_workload_stat="${output_path}/ssd-workload-stat.log"
@@ -591,7 +589,8 @@ if ! get_ssd_stat "${devpath}" "${ssd_workload_stat}"; then
 fi
 emit_kernel_marker "mCSGC finished filebench/fio in bash"
 
-if [ "${bmname}" = "randwrite" ] && ! verify_fio_reused_prefill "${fio_log}"; then
+if { [ "${bmname}" = "randwrite" ] || [[ "${bmname}" == rw*file ]]; } \
+    && ! verify_fio_reused_prefill "${fio_log}"; then
     fio_status=1
 fi
 if [ "${bmname}" = "randwrite" ] \
@@ -599,7 +598,7 @@ if [ "${bmname}" = "randwrite" ] \
     fio_status=1
 fi
 
-if [ "${bmname}" = "randwrite" ] && [ "${fio_gc_precondition}" -eq 1 ]; then
+if [ -n "${gc_measurement_summary}" ]; then
     measured_gc_calls=$(sed -n 's/.*fg_victim_starts=\([0-9][0-9]*\).*/\1/p' \
         "${gc_measurement_summary:-/dev/null}" | tail -n 1)
     measured_csgc_calls=$(sed -n 's/.*fg_csgc_victim_starts=\([0-9][0-9]*\).*/\1/p' \

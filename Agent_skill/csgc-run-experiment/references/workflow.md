@@ -5,6 +5,12 @@
 - Host and experiment server: server 52, the local machine.
 - SSD source server: `192.168.98.31`.
 - Server-31 repository: `/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc`.
+- Server-31 sync script:
+  `/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc/scripts/sync_code.sh`.
+- The Vitis workspace and four project names are resolved from literal assignments in that
+  sync script. All four generated `<workspace>/<project>/src/config.h` copies must exist
+  and be identical; the detector does not use the repository copy of
+  `src/shared/config.h` as its worker-mode source.
 - Host F2FS repository: `/home/xin/work-xie/mcsgc-real/linux-cs`.
 - Host build script: `/home/xin/work-xie/mcsgc-real/linux-cs/build_f2fs.sh`.
 - Benchmark directory: `/home/xin/artifact-csgc/host/benchmarks/scripts`.
@@ -52,7 +58,9 @@ the next repetition and do not retry automatically.
 4. Record the local Host Git branch, commit, and dirty paths.
 5. Query and record the fixed server-31 repository branch, commit, and dirty paths through
    fixed read-only SSH commands.
-6. Compare optional expected branches and commits from the plan. Fail on mismatch.
+6. Compare optional expected branches and commits from the plan. Read `sync_code.sh` on
+   server 31, resolve all four Vitis project configs, and compare their detected SSD-thread
+   mode with the plan's expected mode. Fail on mismatch.
 7. Confirm non-interactive sudo is available. Detached tmux sessions cannot answer a sudo
    password prompt.
 8. If F2FS is loaded, run `sudo -n rmmod f2fs`.
@@ -61,8 +69,9 @@ the next repetition and do not retry automatically.
 10. Allocate a unique kernel-log name and unique tmux session names.
 11. Start `sudo -n old-mydmesg.sh <absolute-log-path>` in the new collector session. Wait
     until its console reports `Tracing dmesg to:`.
-12. Snapshot the matching `outputs-<mode>-<ssd-thread>/` timestamp directories.
-13. Start `sudo -n ./test.sh <mode> <ssd-thread> <config>` in the new lab session.
+12. Snapshot the matching `outputs-<mode>-<detected-ssd-thread>/` timestamp directories.
+13. Start `sudo -n ./test.sh <mode> <config>` in the new lab session. `test.sh` repeats the
+    fail-closed Vitis detection before creating its output directory.
 14. Monitor only appended console and kernel-log bytes at the configured interval. Stop on
     a fatal signature, unexpected session loss, or nonzero status.
 15. Require the test process to exit successfully and require `Test script completed.` in
@@ -93,9 +102,10 @@ has a unique numeric suffix, for example:
 0804-csgcv0731-ssd1t-fio-ssdbreak-1.log
 ```
 
-The user-provided `mode` and `ssd_thread_mode` remain the exact first two `test.sh`
-arguments. They are labels that must match the actual Host and SSD code configuration; the
-script does not infer or change firmware worker count from the label.
+The user-provided `mode` remains the first `test.sh` argument. `ssd_thread_mode` is an
+expected plan constraint. The workflow derives the label from `CONFIG_CSGC_ACTIVE_WORKERS`
+in all four Vitis `config.h` copies named by `sync_code.sh` and fails if they disagree or do
+not match the plan. This source evidence does not independently attest the flashed binary.
 
 ## Failure Handling
 

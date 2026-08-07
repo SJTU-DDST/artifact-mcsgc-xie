@@ -3,24 +3,14 @@
 set -u
 set -o pipefail
 
-if [ $# -ne 4 ]; then
-  echo "Usage: $0 <mode> <ssd1t|ssd2t> <config> <N>"
+if [ $# -ne 3 ]; then
+  echo "Usage: $0 <mode> <config> <N>"
   exit 1
 fi
 
 mode=$1
-ssd_thread_mode=$2
-config_path=$3
-N=$4
-
-case "${ssd_thread_mode}" in
-  "ssd1t"|"ssd2t")
-    ;;
-  *)
-    echo "Error: unsupported SSD thread mode '${ssd_thread_mode}', expected 'ssd1t' or 'ssd2t'."
-    exit 1
-    ;;
-esac
+config_path=$2
+N=$3
 
 if ! [[ "$N" =~ ^[1-9][0-9]*$ ]]; then
   echo "Error: N must be a positive integer, got: $N"
@@ -36,6 +26,11 @@ if [ ! -x "$test_script" ]; then
   exit 1
 fi
 
+if ! ssd_thread_mode="$("${test_script}" --detect-ssd-thread-mode)"; then
+  echo "Error: cannot detect the SSD thread mode; no test was started." >&2
+  exit 1
+fi
+
 mkdir -p -- "$log_dir"
 
 name_mode="${mode##*/}"
@@ -47,7 +42,7 @@ log_file="${log_dir}/${date_part}${time_part}${name_mode}${ssd_thread_mode}${nam
 
 exec > >(tee -a "$log_file") 2>&1
 
-cmd=(sudo "$test_script" "$mode" "$ssd_thread_mode" "$config_path")
+cmd=(sudo "CSGC_EXPECTED_SSD_THREAD_MODE=${ssd_thread_mode}" "$test_script" "$mode" "$config_path")
 
 echo "==== [INFO] Log file: $log_file ===="
 echo "==== [INFO] Will run ${cmd[*]} for N=$N times in $script_dir at $(date) ===="
@@ -66,6 +61,11 @@ for ((i=1; i<=N; i++)); do
   echo "[INFO] Exit code: $ret"
   echo "----------------------------------------"
   echo
+
+  if (( ret != 0 )); then
+    echo "[ERROR] Run $i failed; aborting the remaining repetitions."
+    exit "${ret}"
+  fi
 done
 
 echo "==== [INFO] All $N runs completed at $(date) ===="
