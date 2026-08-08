@@ -6,6 +6,14 @@ mntpoint=${MNTPOINT}
 : "${fio_gc_precondition:=0}"
 : "${fio_gc_precondition_size_per_job:=4G}"
 : "${fio_gc_precondition_max_rounds:=4}"
+: "${smallfile_layout:=flat}"
+: "${smallfile_jobs:=16}"
+: "${smallfile_files_per_job:=0}"
+: "${smallfile_size_mb:=1}"
+: "${smallfile_prefill_threads:=8}"
+: "${require_pipeline_stats:=0}"
+: "${expected_gc_heavy_mode:=}"
+: "${fio_nofile_limit:=65536}"
 
 if [[ ! "${fio_gc_precondition}" =~ ^[01]$ ]]; then
     echo "ERROR: fio_gc_precondition must be 0 or 1" >&2
@@ -15,20 +23,56 @@ if [[ ! "${fio_gc_precondition_max_rounds}" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: fio_gc_precondition_max_rounds must be a positive integer" >&2
     exit 1
 fi
+if [[ ! "${require_pipeline_stats}" =~ ^[01]$ ]]; then
+    echo "ERROR: require_pipeline_stats must be 0 or 1" >&2
+    exit 1
+fi
+if [[ ! "${fio_nofile_limit}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: fio_nofile_limit must be a positive integer" >&2
+    exit 1
+fi
 
 # Run fio with the configured cgroup and preserve fio's exit status through tee.
 run_fio_logged() {
     local log_file=$1
     shift
     local command_status
+    local nofile_hard
+    local nofile_soft
+    local -a fio_command
+
+    nofile_soft=$(ulimit -Sn)
+    nofile_hard=$(ulimit -Hn)
+    if [ "${nofile_soft}" != "unlimited" ] \
+        && [ "${nofile_soft}" -lt "${fio_nofile_limit}" ]; then
+        if ! ulimit -Sn "${fio_nofile_limit}"; then
+            printf 'ERROR: cannot raise fio nofile soft limit: current=%s requested=%s hard=%s\n' \
+                "${nofile_soft}" "${fio_nofile_limit}" "${nofile_hard}" \
+                | tee -a "${log_file}" >&2
+            return 1
+        fi
+        nofile_soft=$(ulimit -Sn)
+        nofile_hard=$(ulimit -Hn)
+    fi
+
+    printf 'fio launch limits: nofile_soft=%s nofile_hard=%s euid=%s\n' \
+        "${nofile_soft}" "${nofile_hard}" "${EUID}" \
+        | tee -a "${log_file}"
 
     if [ "${use_cgroup}" -eq 1 ]; then
-        sudo cgexec -g "memory:${CGROUP_NAME}" fio "$@" 2>&1 | tee -a "${log_file}"
-        command_status=${PIPESTATUS[0]}
+        # The benchmark wrapper already runs as root. Avoid a nested sudo here:
+        # sudo resets RLIMIT_NOFILE on this host before launching fio.
+        if [ "${EUID}" -eq 0 ]; then
+            fio_command=(cgexec -g "memory:${CGROUP_NAME}" fio)
+        else
+            fio_command=(sudo cgexec -g "memory:${CGROUP_NAME}" fio)
+        fi
     else
-        fio "$@" 2>&1 | tee -a "${log_file}"
-        command_status=${PIPESTATUS[0]}
+        fio_command=(fio)
     fi
+
+    "${fio_command[@]}" "$@" 2>&1 | tee -a "${log_file}"
+    command_status=${PIPESTATUS[0]}
 
     return "${command_status}"
 }
@@ -168,6 +212,69 @@ capture_gc_measurement_summary() {
     ' > "${output_file}"
 }
 
+# Aggregate the measured-window pipeline records still present in dmesg.
+capture_pipeline_summary() {
+    local output_file=$1
+    local -a pipeline_status
+
+    sudo dmesg --color=never | awk '
+        index($0, "CSGC_PIPELINE_STAT ") {
+            sections = seg_freed = full = wall = section_sum = ""
+            for (i = 1; i <= NF; i++) {
+                split($i, pair, "=")
+                if (pair[1] == "sections")
+                    sections = pair[2] + 0
+                else if (pair[1] == "seg_freed")
+                    seg_freed = pair[2] + 0
+                else if (pair[1] == "full_sections")
+                    full = pair[2] + 0
+                else if (pair[1] == "wall_us")
+                    wall = pair[2] + 0
+                else if (pair[1] == "section_sum_us")
+                    section_sum = pair[2] + 0
+            }
+            if (sections == "" || full == "" || wall == "" ||
+                section_sum == "")
+                next
+            records++
+            sections_total += sections
+            full_total += full
+            seg_freed_total += seg_freed
+            wall_total += wall
+            section_sum_total += section_sum
+            if (sections >= 2 && full >= 2)
+                full_pair_records++
+            if (full < sections)
+                partial_records++
+        }
+        END {
+            if (records == 0) {
+                print "ERROR: no CSGC_PIPELINE_STAT records found" > "/dev/stderr"
+                exit 1
+            }
+            print "scope=dmesg_tail_sample"
+            printf "pipeline_records=%d sections_total=%d full_sections_total=%d seg_freed_total=%d\n", \
+                records, sections_total, full_total, seg_freed_total
+            printf "full_pair_records=%d full_pair_fraction=%.6f partial_records=%d partial_fraction=%.6f\n", \
+                full_pair_records, full_pair_records / records, \
+                partial_records, partial_records / records
+            printf "wall_us_total=%.0f section_sum_us_total=%.0f lifecycle_overlap=%.6f\n", \
+                wall_total, section_sum_total, \
+                wall_total ? section_sum_total / wall_total : 0
+        }
+    ' > "${output_file}"
+    pipeline_status=("${PIPESTATUS[@]}")
+    if [ "${pipeline_status[0]}" -ne 0 ]; then
+        echo "ERROR: failed to read dmesg for pipeline summary" >&2
+        return "${pipeline_status[0]}"
+    fi
+    if [ "${pipeline_status[1]}" -ne 0 ]; then
+        return "${pipeline_status[1]}"
+    fi
+
+    cat "${output_file}"
+}
+
 # Validate the common victim-counter invariant before interpreting GC mode.
 validate_gc_victim_invariant() {
     local phase=$1
@@ -228,6 +335,10 @@ precondition_fio_for_gc() {
     local mode=$4
     local log_file=$5
     local workload_file=$6
+    local profile=${7:-single_file}
+    local partition_jobs=${8:-0}
+    local partition_files_per_job=${9:-0}
+    local partition_file_size_mb=${10:-0}
     local initial_gc_calls
     local initial_csgc_calls
     local initial_origc_calls
@@ -260,30 +371,63 @@ precondition_fio_for_gc() {
         echo "Starting GC precondition round ${round}/${fio_gc_precondition_max_rounds}, size_per_job=${fio_gc_precondition_size_per_job}"
         emit_kernel_marker "mCSGC prepare to run fio GC precondition round ${round} in bash"
 
-        if ! run_fio_logged "${log_file}" \
-            --directory="${mntpoint}" \
-            --alloc-size=16m \
-            --filesize="${prefill_size}" \
-            --size="${fio_gc_precondition_size_per_job}" \
-            --numjobs="${nthreads}" \
-            --random_distribution="${random_distribution}" \
-            --time_based=0 \
-            --overwrite=1 \
-            --allow_file_create=0 \
-            --end_fsync=1 \
-            --eta=never \
-            "${workload_file}"; then
-            echo "ERROR: fio GC precondition round ${round} failed" >&2
-            return 1
-        fi
+        case "${profile}" in
+            single_file)
+                if ! run_fio_logged "${log_file}" \
+                    --directory="${mntpoint}" \
+                    --alloc-size=16m \
+                    --filesize="${prefill_size}" \
+                    --size="${fio_gc_precondition_size_per_job}" \
+                    --numjobs="${nthreads}" \
+                    --random_distribution="${random_distribution}" \
+                    --time_based=0 \
+                    --overwrite=1 \
+                    --allow_file_create=0 \
+                    --end_fsync=1 \
+                    --eta=never \
+                    "${workload_file}"; then
+                    echo "ERROR: fio GC precondition round ${round} failed" >&2
+                    return 1
+                fi
+                ;;
+            partitioned_smallfiles)
+                # io_size limits precondition traffic without shrinking the
+                # addressable file pool defined by filesize and nrfiles.
+                if ! run_fio_logged "${log_file}" \
+                    --io_size="${fio_gc_precondition_size_per_job}" \
+                    --time_based=0 \
+                    --end_fsync=1 \
+                    --eta=never \
+                    "${workload_file}"; then
+                    echo "ERROR: partitioned fio GC precondition round ${round} failed" >&2
+                    return 1
+                fi
+                ;;
+            *)
+                echo "ERROR: unsupported fio GC precondition profile: ${profile}" >&2
+                return 1
+                ;;
+        esac
 
         if ! verify_fio_reused_prefill "${log_file}"; then
             return 1
         fi
-        if ! verify_prefill_file_identity \
-            "${prefill_file}" "${prefill_size}" "${prefill_inode}"; then
-            return 1
-        fi
+        case "${profile}" in
+            single_file)
+                if ! verify_prefill_file_identity \
+                    "${prefill_file}" "${prefill_size}" "${prefill_inode}"; then
+                    return 1
+                fi
+                ;;
+            partitioned_smallfiles)
+                if ! verify_partitioned_smallfiles \
+                    "${mntpoint}" "${partition_jobs}" \
+                    "${partition_files_per_job}" \
+                    "${partition_file_size_mb}"; then
+                    return 1
+                fi
+                ;;
+        esac
 
         current_gc_calls=$(<"${gc_counter_path}")
         current_csgc_calls=$(<"${gc_csgc_counter_path}")
@@ -500,13 +644,83 @@ if [[ "${bmname}" == rw*file ]]; then
 
     echo "Extracted num_files=${num_files}"
     if [[ "${should_prefill}" -eq 1 ]]; then
-    prefill_size=$(
-  prefill_smallfiles_filewriter "${mntpoint}" "${num_files}" \
-    | tee >(grep -vF 'writing file: /home/xin/ssd/mnt/' >&2) \
-    | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p'
-    ) || exit 1
+        case "${smallfile_layout}" in
+            flat)
+                prefill_size=$(
+                    prefill_smallfiles_filewriter \
+                        "${mntpoint}" "${num_files}" \
+                    | tee >(grep -vF \
+                        'writing file: /home/xin/ssd/mnt/' >&2) \
+                    | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p'
+                ) || exit 1
+                ;;
+            partitioned)
+                if [[ ! "${smallfile_jobs}" =~ ^[1-9][0-9]*$ ]] \
+                    || [[ ! "${smallfile_files_per_job}" =~ ^[1-9][0-9]*$ ]] \
+                    || [[ ! "${smallfile_size_mb}" =~ ^[1-9][0-9]*$ ]] \
+                    || [[ ! "${smallfile_prefill_threads}" =~ ^[1-9][0-9]*$ ]]; then
+                    echo "ERROR: invalid partitioned small-file configuration" >&2
+                    exit 1
+                fi
+                if [ "${num_files}" -ne \
+                    $((smallfile_jobs * smallfile_files_per_job)) ]; then
+                    echo "ERROR: workload file count ${num_files} does not match partitioned layout $((smallfile_jobs * smallfile_files_per_job))" >&2
+                    exit 1
+                fi
+
+                partitioned_prefill_log="${output_path}/smallfile-prefill.log"
+                : > "${partitioned_prefill_log}"
+                prefill_partitioned_smallfiles_filewriter \
+                    "${mntpoint}" "${smallfile_jobs}" \
+                    "${smallfile_files_per_job}" "${smallfile_size_mb}" \
+                    "${smallfile_prefill_threads}" 1M no \
+                    2>&1 \
+                    | tee -a "${partitioned_prefill_log}" \
+                    | grep -vF 'writing file: /home/xin/ssd/mnt/'
+                prefill_status=${PIPESTATUS[0]}
+                if [ "${prefill_status}" -ne 0 ]; then
+                    echo "ERROR: partitioned small-file prefill failed" >&2
+                    exit "${prefill_status}"
+                fi
+                prefill_size=$(sed -n \
+                    's/.*total_bytes: <\([0-9][0-9]*\)>.*/\1/p' \
+                    "${partitioned_prefill_log}" | tail -n 1)
+                if [[ ! "${prefill_size}" =~ ^[0-9]+$ ]]; then
+                    echo "ERROR: failed to parse partitioned prefill size" >&2
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "ERROR: unsupported smallfile_layout=${smallfile_layout}" >&2
+                exit 1
+                ;;
+        esac
     else
         echo "Prefill skipped: should_prefill=${should_prefill}"
+    fi
+
+    if [ "${smallfile_layout}" = "partitioned" ] \
+        && [ "${fio_gc_precondition}" -eq 1 ]; then
+        precondition_log="${output_path}/${workload_type}.precondition.log"
+        if ! precondition_fio_for_gc \
+            "${gc_counter_path}" \
+            "${gc_csgc_counter_path}" \
+            "${gc_origc_counter_path}" \
+            "${gc_mode}" \
+            "${precondition_log}" \
+            "${workload_path}" \
+            partitioned_smallfiles \
+            "${smallfile_jobs}" \
+            "${smallfile_files_per_job}" \
+            "${smallfile_size_mb}"; then
+            sudo umount "${devpath}" >/dev/null 2>&1 || true
+            exit 1
+        fi
+
+        if [ -r "${f2fs_sysfs_dir}/free_segments" ]; then
+            echo "Free segments after small-file precondition: $(<"${f2fs_sysfs_dir}/free_segments")"
+        fi
+        sudo dmesg -c > "${output_path}/dmesg.precondition.log"
     fi
 
 else
@@ -581,6 +795,14 @@ if [ "${workload_epoch_closed}" -ne 1 ] \
     fio_status=1
 fi
 
+if [ "${require_pipeline_stats}" -eq 1 ]; then
+    pipeline_summary="${output_path}/pipeline-summary.log"
+    if ! capture_pipeline_summary "${pipeline_summary}"; then
+        echo "ERROR: required cross-section pipeline statistics are unavailable" >&2
+        fio_status=1
+    fi
+fi
+
 ssd_workload_stat="${output_path}/ssd-workload-stat.log"
 : > "${ssd_workload_stat}"
 if ! get_ssd_stat "${devpath}" "${ssd_workload_stat}"; then
@@ -597,8 +819,26 @@ if [ "${bmname}" = "randwrite" ] \
     && ! verify_prefill_file_identity "${prefill_file}" "${prefill_size}" "${prefill_inode}"; then
     fio_status=1
 fi
+if [[ "${bmname}" == rw*file ]] \
+    && [ "${smallfile_layout}" = "partitioned" ] \
+    && ! verify_partitioned_smallfiles \
+        "${mntpoint}" "${smallfile_jobs}" \
+        "${smallfile_files_per_job}" "${smallfile_size_mb}"; then
+    fio_status=1
+fi
 
 if [ -n "${gc_measurement_summary}" ]; then
+    measured_gc_mode=$(sed -n \
+        's/.*F2FS_GC_HEAVY_STAT .* mode=\([^ ]*\) .*/\1/p' \
+        "${gc_measurement_summary:-/dev/null}" | tail -n 1)
+    if [ -n "${expected_gc_heavy_mode}" ] \
+        && [ "${measured_gc_mode}" != "${expected_gc_heavy_mode}" ]; then
+        echo "ERROR: loaded Host mode does not match this experiment: expected=${expected_gc_heavy_mode} measured=${measured_gc_mode:-missing}" >&2
+        fio_status=1
+    else
+        echo "Measured Host GC mode: ${measured_gc_mode:-unknown}"
+    fi
+
     measured_gc_calls=$(sed -n 's/.*fg_victim_starts=\([0-9][0-9]*\).*/\1/p' \
         "${gc_measurement_summary:-/dev/null}" | tail -n 1)
     measured_csgc_calls=$(sed -n 's/.*fg_csgc_victim_starts=\([0-9][0-9]*\).*/\1/p' \

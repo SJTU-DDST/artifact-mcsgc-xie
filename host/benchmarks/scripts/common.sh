@@ -350,6 +350,129 @@ prefill_smallfiles_filewriter() {
     fi
 }
 
+# Verify a job-partitioned small-file layout used by the pipeline workload.
+verify_partitioned_smallfiles() {
+    local mntpoint=$1
+    local jobs=$2
+    local files_per_job=$3
+    local size_per_file_mb=$4
+    local expected_size=$((size_per_file_mb * 1024 * 1024))
+    local expected_total=$((jobs * files_per_job))
+    local found_total=0
+    local good_total=0
+    local job job_dir found good
+
+    for ((job = 0; job < jobs; job++)); do
+        job_dir="${mntpoint}/pipeline.${job}"
+        if [ ! -d "${job_dir}" ]; then
+            echo "ERROR: missing partitioned small-file directory: ${job_dir}" >&2
+            return 1
+        fi
+
+        if ! found=$(find "${job_dir}" -maxdepth 1 -type f \
+                -name 'file.*' | wc -l); then
+            echo "ERROR: failed to count files in ${job_dir}" >&2
+            return 1
+        fi
+        if ! good=$(find "${job_dir}" -maxdepth 1 -type f \
+                -name 'file.*' -size "${expected_size}c" | wc -l); then
+            echo "ERROR: failed to verify file sizes in ${job_dir}" >&2
+            return 1
+        fi
+        if [ "${found}" -ne "${files_per_job}" ] \
+            || [ "${good}" -ne "${files_per_job}" ]; then
+            echo "ERROR: invalid partition ${job_dir}: expected=${files_per_job} found=${found} correct_size=${good}" >&2
+            return 1
+        fi
+
+        found_total=$((found_total + found))
+        good_total=$((good_total + good))
+    done
+
+    if [ "${found_total}" -ne "${expected_total}" ] \
+        || [ "${good_total}" -ne "${expected_total}" ]; then
+        echo "ERROR: invalid partitioned layout totals: expected=${expected_total} found=${found_total} correct_size=${good_total}" >&2
+        return 1
+    fi
+
+    echo "Partitioned small-file verification: jobs=${jobs} files_per_job=${files_per_job} total=${found_total} file_size=${expected_size}"
+}
+
+# Write real data into disjoint per-job file pools before the measured fio run.
+prefill_partitioned_smallfiles_filewriter() {
+    local mntpoint=$1
+    local jobs=$2
+    local files_per_job=$3
+    local size_per_file_mb=$4
+    local writer_threads=${5:-8}
+    local io_size=${6:-1M}
+    local use_fallocate=${7:-no}
+    local total_files=$((jobs * files_per_job))
+    local total_mib=$((total_files * size_per_file_mb))
+    local total_bytes=$((total_mib * 1024 * 1024))
+    local partition_mib=$((files_per_job * size_per_file_mb))
+    local job job_dir file_id
+
+    if [ "${jobs}" -le 0 ] || [ "${files_per_job}" -le 0 ] \
+        || [ "${size_per_file_mb}" -le 0 ] \
+        || [ "${writer_threads}" -le 0 ]; then
+        echo "ERROR: partitioned prefill arguments must be positive integers" >&2
+        return 1
+    fi
+
+    echo "Partitioned small-file prefill parameters:"
+    echo "  mntpoint=${mntpoint}"
+    echo "  jobs=${jobs}"
+    echo "  files_per_job=${files_per_job}"
+    echo "  total_files=${total_files}"
+    echo "  size_per_file=${size_per_file_mb}M"
+    echo "  total_size=${total_mib}M"
+    echo "  writer_threads=${writer_threads}"
+    echo "  io_size=${io_size}"
+    echo "  use_fallocate=${use_fallocate}"
+
+    if ! "${FILE_WRITER_DIR}/build.sh"; then
+        echo "ERROR: failed to build file_writer" >&2
+        return 1
+    fi
+
+    # Fill one job pool at a time so each pool has a more localized layout.
+    for ((job = 0; job < jobs; job++)); do
+        job_dir="${mntpoint}/pipeline.${job}"
+        if ! mkdir -p "${job_dir}"; then
+            echo "ERROR: failed to create ${job_dir}" >&2
+            return 1
+        fi
+        echo "Prefilling job partition ${job}/${jobs}: ${job_dir}"
+        if ! "${FILE_WRITER_DIR}/file_writer" \
+                "${job_dir}" "file." "${files_per_job}" \
+                "${partition_mib}M" "${writer_threads}" "${io_size}" \
+                independent "${use_fallocate}"; then
+            echo "ERROR: file_writer failed for ${job_dir}" >&2
+            return 1
+        fi
+
+        # file_writer uses 1..N while fio's $filenum uses 0..N-1.
+        for ((file_id = 1; file_id <= files_per_job; file_id++)); do
+            if ! mv "${job_dir}/file.${file_id}" \
+                    "${job_dir}/file.$((file_id - 1))"; then
+                echo "ERROR: failed to normalize filenames in ${job_dir}" >&2
+                return 1
+            fi
+        done
+    done
+
+    # Persist prefill metadata before generating invalid blocks in precondition.
+    sync
+    if ! verify_partitioned_smallfiles \
+            "${mntpoint}" "${jobs}" "${files_per_job}" \
+            "${size_per_file_mb}"; then
+        return 1
+    fi
+
+    echo "Prefilled partitioned small files, total_bytes: <${total_bytes}>"
+}
+
 
 prefill_storage_fio() {
     local devpath=$1

@@ -1,0 +1,28 @@
+[global]
+ioengine=libaio
+thread=1
+group_reporting=1
+
+# Each fio job owns a disjoint file pool. A 2 MiB file is close to one
+# F2FS segment, reducing the chance that two victim sections share an inode.
+filename_format=/home/xin/ssd/mnt/pipeline.$jobnum/file.$filenum
+filesize=2M
+nrfiles=1646
+size=3292M
+openfiles=128
+allow_file_create=0
+overwrite=1
+
+[pipeline_partitioned_randwrite]
+rw=randwrite
+direct=0
+bs=4k
+iodepth=16
+numjobs=16
+
+# Keep 256 KiB of writes on one inode before switching. This improves
+# locality without fully invalidating the 2 MiB source file at once.
+file_service_type=random:64
+random_distribution=random
+randrepeat=1
+randseed=20260807
