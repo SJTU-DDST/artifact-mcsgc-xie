@@ -26,6 +26,16 @@ else
     exit 1
 fi
 
+# Allow formal performance wrappers to load a module built in an isolated
+# worktree without changing the main linux-cs checkout.
+if [[ -n "${F2FS_KERNEL_PATH_OVERRIDE:-}" ]]; then
+    if [[ ! -d "${F2FS_KERNEL_PATH_OVERRIDE}" ]]; then
+        echo "ERROR: F2FS kernel path override is not a directory: ${F2FS_KERNEL_PATH_OVERRIDE}" >&2
+        exit 1
+    fi
+    VANILLA_KERNEL_PATH=$(realpath "${F2FS_KERNEL_PATH_OVERRIDE}")
+fi
+
 #VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc/linux-cs
 #VANILLA_KERNEL_PATH=/home/xin/work-xie/mcsgc-real/linux-cs
 IPLFS_KERNEL_PATH=$(realpath ../../src/linux-iplfs)

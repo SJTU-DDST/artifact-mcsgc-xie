@@ -28,6 +28,9 @@ detect_ssd_thread_mode() {
   local reported_target_count=""
   local config_digest=""
   local worker_count=""
+  local production_mode=""
+  local move_plan_v2=""
+  local move_plan_fast_unsafe=""
   local key value extra
 
   # A sudo-launched benchmark must use the invoking user's SSH identity, not root's.
@@ -102,6 +105,32 @@ require_shared_copy() {
   ' "${sync_script}"
 }
 
+# Read one numeric configuration macro without invoking the build system.
+# Missing optional protocol switches are reported as "undefined".
+read_optional_macro() {
+  config_path=$1
+  macro_name=$2
+  awk -v name="${macro_name}" '
+    $0 ~ "^[[:space:]]*#[[:space:]]*define[[:space:]]+" name "([[:space:]]|$)" {
+      line = $0
+      sub("^[[:space:]]*#[[:space:]]*define[[:space:]]+" name "[[:space:]]+", "", line)
+      sub(/[[:space:]].*$/, "", line)
+      count++
+      value = line
+    }
+    END {
+      if (count == 0) {
+        print "undefined"
+      } else if (count == 1 && (value == "0" || value == "1" || value == "2")) {
+        print value
+      } else {
+        printf "Remote error: expected zero or one literal definition for %s in %s, found %d value=%s\n", name, FILENAME, count, value > "/dev/stderr"
+        exit 1
+      }
+    }
+  ' "${config_path}"
+}
+
 workspace=$(read_assignment VITIS_WORKSPACE_DIR) || exit 21
 ftl_project=$(read_assignment VITIS_FTL_PROJECT_NAME) || exit 21
 leader_project=$(read_assignment VITIS_CS_PROJECT_NAME) || exit 21
@@ -120,6 +149,9 @@ fi
 
 common_workers=''
 common_digest=''
+common_production=''
+common_move_plan_v2=''
+common_move_plan_fast_unsafe=''
 config_paths=''
 seen_projects=''
 target_count=0
@@ -166,11 +198,21 @@ for project in "${ftl_project}" "${leader_project}" "${worker1_project}" "${work
   ' "${config}") || exit 27
   digest_line=$(sha256sum "${config}") || exit 28
   digest=${digest_line%% *}
+  production=$(read_optional_macro "${config}" CONFIG_OPENSSD_PRODUCTION_PERFORMANCE) || exit 30
+  move_plan_v2=$(read_optional_macro "${config}" CONFIG_CSGC_MOVE_PLAN_V2) || exit 30
+  move_plan_fast_unsafe=$(read_optional_macro "${config}" CONFIG_CSGC_MOVE_PLAN_FAST_UNSAFE) || exit 30
 
   if [ -z "${common_workers}" ]; then
     common_workers="${workers}"
     common_digest="${digest}"
-  elif [ "${workers}" != "${common_workers}" ] || [ "${digest}" != "${common_digest}" ]; then
+    common_production="${production}"
+    common_move_plan_v2="${move_plan_v2}"
+    common_move_plan_fast_unsafe="${move_plan_fast_unsafe}"
+  elif [ "${workers}" != "${common_workers}" ] \
+      || [ "${digest}" != "${common_digest}" ] \
+      || [ "${production}" != "${common_production}" ] \
+      || [ "${move_plan_v2}" != "${common_move_plan_v2}" ] \
+      || [ "${move_plan_fast_unsafe}" != "${common_move_plan_fast_unsafe}" ]; then
     echo "Remote error: Vitis config.h copies are inconsistent; rerun sync_code.sh and rebuild the firmware." >&2
     exit 29
   fi
@@ -189,6 +231,9 @@ printf 'configs\t%s\n' "${config_paths}"
 printf 'target_count\t%s\n' "${target_count}"
 printf 'digest\t%s\n' "${common_digest}"
 printf 'workers\t%s\n' "${common_workers}"
+printf 'production\t%s\n' "${common_production}"
+printf 'move_plan_v2\t%s\n' "${common_move_plan_v2}"
+printf 'move_plan_fast_unsafe\t%s\n' "${common_move_plan_fast_unsafe}"
 REMOTE_SCRIPT
 )
 
@@ -222,6 +267,15 @@ REMOTE_SCRIPT
       workers)
         worker_count="${value}"
         ;;
+      production)
+        production_mode="${value}"
+        ;;
+      move_plan_v2)
+        move_plan_v2="${value}"
+        ;;
+      move_plan_fast_unsafe)
+        move_plan_fast_unsafe="${value}"
+        ;;
       *)
         echo "Error: unexpected SSD worker detection output: ${key}" >&2
         return 1
@@ -234,7 +288,10 @@ REMOTE_SCRIPT
         -z "${reported_configs}" ||
         "${reported_target_count}" != "4" ||
         ! "${config_digest}" =~ ^[0-9a-fA-F]{64}$ ||
-        ! "${worker_count}" =~ ^[12]$ ]]; then
+        ! "${worker_count}" =~ ^[12]$ ||
+        ! "${production_mode}" =~ ^(0|1|undefined)$ ||
+        ! "${move_plan_v2}" =~ ^(0|1|undefined)$ ||
+        ! "${move_plan_fast_unsafe}" =~ ^(0|1|undefined)$ ]]; then
     echo "Error: incomplete or invalid provenance from the remote Vitis workspace." >&2
     echo "Action: inspect ${openssd_remote_host}:${openssd_sync_script} and rerun the command." >&2
     return 1
@@ -242,6 +299,23 @@ REMOTE_SCRIPT
 
   echo "OpenSSD Vitis workspace: host=${openssd_remote_host} path=${reported_workspace}" >&2
   echo "Validated Vitis configs: count=${reported_target_count} sha256=${config_digest} files=${reported_configs}" >&2
+  echo "Validated OpenSSD mode: production=${production_mode} move_plan_v2=${move_plan_v2} move_plan_fast_unsafe=${move_plan_fast_unsafe}" >&2
+
+  if [[ -n "${CSGC_EXPECTED_OPENSSD_PRODUCTION_PERFORMANCE:-}" \
+        && "${production_mode}" != "${CSGC_EXPECTED_OPENSSD_PRODUCTION_PERFORMANCE}" ]]; then
+    echo "Error: OpenSSD production mode mismatch: expected=${CSGC_EXPECTED_OPENSSD_PRODUCTION_PERFORMANCE} actual=${production_mode}." >&2
+    return 1
+  fi
+  if [[ -n "${CSGC_EXPECTED_MOVE_PLAN_V2:-}" \
+        && "${move_plan_v2}" != "${CSGC_EXPECTED_MOVE_PLAN_V2}" ]]; then
+    echo "Error: OpenSSD Move Plan v2 mismatch: expected=${CSGC_EXPECTED_MOVE_PLAN_V2} actual=${move_plan_v2}." >&2
+    return 1
+  fi
+  if [[ -n "${CSGC_EXPECTED_MOVE_PLAN_FAST_UNSAFE:-}" \
+        && "${move_plan_fast_unsafe}" != "${CSGC_EXPECTED_MOVE_PLAN_FAST_UNSAFE}" ]]; then
+    echo "Error: OpenSSD unsafe fast-path mismatch: expected=${CSGC_EXPECTED_MOVE_PLAN_FAST_UNSAFE} actual=${move_plan_fast_unsafe}." >&2
+    return 1
+  fi
 
   case "${worker_count}" in
     1)
@@ -377,7 +451,8 @@ echo "Running evaluation for $gc_mode..."
         export gc_mode ssd_thread_mode workload_type bmname random_distribution segs_per_sec output_path_base \
         prefill_ratio use_cgroup host_mem_usage nr_cs_cores csgc_sync fio_timebased\
         ssd_enable_l2p ssd_enable_nand_lat ssd_enable_dsm fsck_after_run light_evaluation \
-        fio_gc_precondition fio_gc_precondition_size_per_job fio_gc_precondition_max_rounds
+        fio_gc_precondition fio_gc_precondition_size_per_job fio_gc_precondition_max_rounds \
+        formal_performance_only FORMAL_HOST_BRANCH FORMAL_HOST_COMMIT FORMAL_MODULE_SHA256
         
         case "${workload_type}" in 
             "filebench")

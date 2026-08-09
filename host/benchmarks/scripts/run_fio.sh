@@ -14,6 +14,7 @@ mntpoint=${MNTPOINT}
 : "${require_pipeline_stats:=0}"
 : "${expected_gc_heavy_mode:=}"
 : "${fio_nofile_limit:=65536}"
+: "${formal_performance_only:=0}"
 
 if [[ ! "${fio_gc_precondition}" =~ ^[01]$ ]]; then
     echo "ERROR: fio_gc_precondition must be 0 or 1" >&2
@@ -29,6 +30,10 @@ if [[ ! "${require_pipeline_stats}" =~ ^[01]$ ]]; then
 fi
 if [[ ! "${fio_nofile_limit}" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: fio_nofile_limit must be a positive integer" >&2
+    exit 1
+fi
+if [[ ! "${formal_performance_only}" =~ ^[01]$ ]]; then
+    echo "ERROR: formal_performance_only must be 0 or 1" >&2
     exit 1
 fi
 
@@ -466,10 +471,87 @@ precondition_fio_for_gc() {
     return 1
 }
 
+# Apply one fixed amount of preconditioning traffic without consulting custom
+# kernel counters. This keeps the formal comparison usable with the original
+# CSGC kernel and gives every mode the same precondition traffic.
+precondition_fio_fixed() {
+    local log_file=$1
+    local workload_file=$2
+    local profile=${3:-single_file}
+    local partition_jobs=${4:-0}
+    local partition_files_per_job=${5:-0}
+    local partition_file_size_mb=${6:-0}
+
+    : > "${log_file}"
+    echo "Starting fixed GC precondition: size_per_job=${fio_gc_precondition_size_per_job}"
+    emit_kernel_marker "mCSGC prepare to run fixed fio GC precondition in bash"
+
+    case "${profile}" in
+        single_file)
+            if ! run_fio_logged "${log_file}" \
+                --directory="${mntpoint}" \
+                --alloc-size=16m \
+                --filesize="${prefill_size}" \
+                --size="${fio_gc_precondition_size_per_job}" \
+                --numjobs="${nthreads}" \
+                --random_distribution="${random_distribution}" \
+                --time_based=0 \
+                --overwrite=1 \
+                --allow_file_create=0 \
+                --end_fsync=1 \
+                --eta=never \
+                "${workload_file}"; then
+                echo "ERROR: fixed fio GC precondition failed" >&2
+                return 1
+            fi
+            ;;
+        partitioned_smallfiles)
+            if ! run_fio_logged "${log_file}" \
+                --io_size="${fio_gc_precondition_size_per_job}" \
+                --time_based=0 \
+                --end_fsync=1 \
+                --eta=never \
+                "${workload_file}"; then
+                echo "ERROR: fixed partitioned fio GC precondition failed" >&2
+                return 1
+            fi
+            ;;
+        *)
+            echo "ERROR: unsupported fixed fio GC precondition profile: ${profile}" >&2
+            return 1
+            ;;
+    esac
+
+    if ! verify_fio_reused_prefill "${log_file}"; then
+        return 1
+    fi
+    case "${profile}" in
+        single_file)
+            verify_prefill_file_identity \
+                "${prefill_file}" "${prefill_size}" "${prefill_inode}" \
+                || return 1
+            ;;
+        partitioned_smallfiles)
+            verify_partitioned_smallfiles \
+                "${mntpoint}" "${partition_jobs}" \
+                "${partition_files_per_job}" "${partition_file_size_mb}" \
+                || return 1
+            ;;
+    esac
+
+    emit_kernel_marker "mCSGC fixed fio GC precondition completed in bash"
+}
+
 workload_path="${WORKLOAD_PATH_BASE}/${workload_type}/${bmname}.fio"
 output_path=${output_path_base}/${workload_type}_${bmname}_s${segs_per_sec}_${prefill_ratio}_${random_distribution}
 mkdir -p ${output_path}
 exec > >(tee -a "${output_path}/terminal.log") 2>&1
+
+if [ "${formal_performance_only}" -eq 1 ]; then
+    echo "Formal Host branch: ${FORMAL_HOST_BRANCH:-unknown}"
+    echo "Formal Host commit: ${FORMAL_HOST_COMMIT:-unknown}"
+    echo "Formal f2fs module SHA-256: ${FORMAL_MODULE_SHA256:-unknown}"
+fi
 
 if [ $light_evaluation -eq 1 ]; then
     io_size_per_thread="20G"
@@ -515,17 +597,19 @@ gc_csgc_counter_path="${f2fs_sysfs_dir}/fg_csgc_victim_starts"
 gc_origc_counter_path="${f2fs_sysfs_dir}/fg_origc_victim_starts"
 gc_measurement_control_path="${f2fs_sysfs_dir}/gc_measurement_control"
 
-for gc_measurement_path in \
-    "${gc_counter_path}" \
-    "${gc_csgc_counter_path}" \
-    "${gc_origc_counter_path}" \
-    "${gc_measurement_control_path}"; do
-    if [ ! -e "${gc_measurement_path}" ]; then
-        echo "ERROR: required GC measurement sysfs entry is unavailable: ${gc_measurement_path}" >&2
-        sudo umount "${devpath}" >/dev/null 2>&1 || true
-        exit 1
-    fi
-done
+if [ "${formal_performance_only}" -eq 0 ]; then
+    for gc_measurement_path in \
+        "${gc_counter_path}" \
+        "${gc_csgc_counter_path}" \
+        "${gc_origc_counter_path}" \
+        "${gc_measurement_control_path}"; do
+        if [ ! -e "${gc_measurement_path}" ]; then
+            echo "ERROR: required GC measurement sysfs entry is unavailable: ${gc_measurement_path}" >&2
+            sudo umount "${devpath}" >/dev/null 2>&1 || true
+            exit 1
+        fi
+    done
+fi
 
 
 echo "======================================================="
@@ -537,10 +621,18 @@ else
     runtime_flags=()
 fi
 
-fio_flags=(
-    "--time_based=${fio_timebased}"
-    "--status-interval=5"
-)
+if [ "${formal_performance_only}" -eq 1 ]; then
+    fio_flags=(
+        "--time_based=${fio_timebased}"
+        "--eta=never"
+        "--output-format=json"
+    )
+else
+    fio_flags=(
+        "--time_based=${fio_timebased}"
+        "--status-interval=5"
+    )
+fi
 emit_kernel_marker "mCSGC prepare to run prefill_storage_fio in bash"
 
 # only do prefill and build fio_flags when not the special bmname
@@ -580,13 +672,21 @@ if [ "${bmname}" == "randwrite" ]; then
     if [ "${fio_gc_precondition}" -eq 1 ]; then
         precondition_log="${output_path}/${workload_type}.precondition.log"
 
-        if ! precondition_fio_for_gc \
-            "${gc_counter_path}" \
-            "${gc_csgc_counter_path}" \
-            "${gc_origc_counter_path}" \
-            "${gc_mode}" \
-            "${precondition_log}" \
-            "${workload_path}"; then
+        if [ "${formal_performance_only}" -eq 1 ]; then
+            precondition_fio_fixed \
+                "${precondition_log}" "${workload_path}"
+            precondition_status=$?
+        else
+            precondition_fio_for_gc \
+                "${gc_counter_path}" \
+                "${gc_csgc_counter_path}" \
+                "${gc_origc_counter_path}" \
+                "${gc_mode}" \
+                "${precondition_log}" \
+                "${workload_path}"
+            precondition_status=$?
+        fi
+        if [ "${precondition_status}" -ne 0 ]; then
             sudo umount "${devpath}" >/dev/null 2>&1 || true
             exit 1
         fi
@@ -596,15 +696,17 @@ if [ "${bmname}" == "randwrite" ]; then
             exit 1
         fi
 
-        precondition_gc_calls=$(<"${gc_counter_path}")
-        precondition_csgc_calls=$(<"${gc_csgc_counter_path}")
-        precondition_origc_calls=$(<"${gc_origc_counter_path}")
-        echo "Foreground victim starts after precondition: total=${precondition_gc_calls} csgc=${precondition_csgc_calls} origc=${precondition_origc_calls}"
-        if ! validate_gc_victim_target "precondition" "${gc_mode}" \
-            "${precondition_gc_calls}" "${precondition_csgc_calls}" \
-            "${precondition_origc_calls}"; then
-            sudo umount "${devpath}" >/dev/null 2>&1 || true
-            exit 1
+        if [ "${formal_performance_only}" -eq 0 ]; then
+            precondition_gc_calls=$(<"${gc_counter_path}")
+            precondition_csgc_calls=$(<"${gc_csgc_counter_path}")
+            precondition_origc_calls=$(<"${gc_origc_counter_path}")
+            echo "Foreground victim starts after precondition: total=${precondition_gc_calls} csgc=${precondition_csgc_calls} origc=${precondition_origc_calls}"
+            if ! validate_gc_victim_target "precondition" "${gc_mode}" \
+                "${precondition_gc_calls}" "${precondition_csgc_calls}" \
+                "${precondition_origc_calls}"; then
+                sudo umount "${devpath}" >/dev/null 2>&1 || true
+                exit 1
+            fi
         fi
 
         if [ -r "${f2fs_sysfs_dir}/free_segments" ]; then
@@ -708,17 +810,29 @@ if [[ "${bmname}" == rw*file ]]; then
     if [ "${smallfile_layout}" = "partitioned" ] \
         && [ "${fio_gc_precondition}" -eq 1 ]; then
         precondition_log="${output_path}/${workload_type}.precondition.log"
-        if ! precondition_fio_for_gc \
-            "${gc_counter_path}" \
-            "${gc_csgc_counter_path}" \
-            "${gc_origc_counter_path}" \
-            "${gc_mode}" \
-            "${precondition_log}" \
-            "${workload_path}" \
-            partitioned_smallfiles \
-            "${smallfile_jobs}" \
-            "${smallfile_files_per_job}" \
-            "${smallfile_size_mb}"; then
+        if [ "${formal_performance_only}" -eq 1 ]; then
+            precondition_fio_fixed \
+                "${precondition_log}" "${workload_path}" \
+                partitioned_smallfiles \
+                "${smallfile_jobs}" \
+                "${smallfile_files_per_job}" \
+                "${smallfile_size_mb}"
+            precondition_status=$?
+        else
+            precondition_fio_for_gc \
+                "${gc_counter_path}" \
+                "${gc_csgc_counter_path}" \
+                "${gc_origc_counter_path}" \
+                "${gc_mode}" \
+                "${precondition_log}" \
+                "${workload_path}" \
+                partitioned_smallfiles \
+                "${smallfile_jobs}" \
+                "${smallfile_files_per_job}" \
+                "${smallfile_size_mb}"
+            precondition_status=$?
+        fi
+        if [ "${precondition_status}" -ne 0 ]; then
             sudo umount "${devpath}" >/dev/null 2>&1 || true
             exit 1
         fi
@@ -757,63 +871,69 @@ echo "======================================================="
 echo "=============begin fio============="
 emit_kernel_marker "mCSGC prepare to run filebench/fio in bash"
 
-if ! set_gc_measurement_epoch "${gc_measurement_control_path}" start; then
-    sudo umount "${devpath}" >/dev/null 2>&1 || true
-    exit 1
-fi
-if ! workload_gc_epoch=$(read_gc_measurement_epoch \
-    "${gc_measurement_control_path}" workload 1); then
-    set_gc_measurement_epoch "${gc_measurement_control_path}" stop || true
-    sudo umount "${devpath}" >/dev/null 2>&1 || true
-    exit 1
-fi
-
-# Reset device statistics only after the Host confirms that CSGC work is idle.
-if ! reset_ssd_stat "${devpath}"; then
-    echo "ERROR: failed to reset SSD statistics before measured fio" >&2
-    if ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
-        echo "WARNING: failed to close the workload epoch after SSD reset failure" >&2
-    fi
-    sudo umount "${devpath}" >/dev/null 2>&1 || true
-    exit 1
-fi
-
 fio_log="${output_path}/${workload_type}.log"
+gc_measurement_summary=""
+workload_epoch_closed=0
+
+if [ "${formal_performance_only}" -eq 0 ]; then
+    if ! set_gc_measurement_epoch "${gc_measurement_control_path}" start; then
+        sudo umount "${devpath}" >/dev/null 2>&1 || true
+        exit 1
+    fi
+    if ! workload_gc_epoch=$(read_gc_measurement_epoch \
+        "${gc_measurement_control_path}" workload 1); then
+        set_gc_measurement_epoch "${gc_measurement_control_path}" stop || true
+        sudo umount "${devpath}" >/dev/null 2>&1 || true
+        exit 1
+    fi
+
+    # Reset device statistics only after the Host confirms that CSGC work is idle.
+    if ! reset_ssd_stat "${devpath}"; then
+        echo "ERROR: failed to reset SSD statistics before measured fio" >&2
+        if ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
+            echo "WARNING: failed to close the workload epoch after SSD reset failure" >&2
+        fi
+        sudo umount "${devpath}" >/dev/null 2>&1 || true
+        exit 1
+    fi
+fi
+
 emit_kernel_marker "MEASURED_FIO_START mode=${gc_mode} workload=${bmname}"
 run_fio_logged "${fio_log}" "${fio_flags[@]}" "${runtime_flags[@]}" "${workload_path}"
 fio_status=$?
 emit_kernel_marker "MEASURED_FIO_END mode=${gc_mode} workload=${bmname} status=${fio_status}"
 
-workload_epoch_closed=0
-if ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
-    echo "ERROR: failed to close the measured workload epoch" >&2
-    fio_status=1
-else
-    workload_epoch_closed=1
-fi
+if [ "${formal_performance_only}" -eq 0 ]; then
+    if ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
+        echo "ERROR: failed to close the measured workload epoch" >&2
+        fio_status=1
+    else
+        workload_epoch_closed=1
+    fi
 
-gc_measurement_summary="${output_path}/gc-measurement-summary.log"
-if [ "${workload_epoch_closed}" -ne 1 ] \
-    || ! capture_gc_measurement_summary \
-        "${workload_gc_epoch}" workload "${gc_measurement_summary}"; then
-    echo "ERROR: failed to capture the measured workload GC summary" >&2
-    gc_measurement_summary=""
-    fio_status=1
-fi
-
-if [ "${require_pipeline_stats}" -eq 1 ]; then
-    pipeline_summary="${output_path}/pipeline-summary.log"
-    if ! capture_pipeline_summary "${pipeline_summary}"; then
-        echo "ERROR: required cross-section pipeline statistics are unavailable" >&2
+    gc_measurement_summary="${output_path}/gc-measurement-summary.log"
+    if [ "${workload_epoch_closed}" -ne 1 ] \
+        || ! capture_gc_measurement_summary \
+            "${workload_gc_epoch}" workload "${gc_measurement_summary}"; then
+        echo "ERROR: failed to capture the measured workload GC summary" >&2
+        gc_measurement_summary=""
         fio_status=1
     fi
-fi
 
-ssd_workload_stat="${output_path}/ssd-workload-stat.log"
-: > "${ssd_workload_stat}"
-if ! get_ssd_stat "${devpath}" "${ssd_workload_stat}"; then
-    echo "ERROR: failed to collect measured-workload SSD statistics" >&2
-    fio_status=1
+    if [ "${require_pipeline_stats}" -eq 1 ]; then
+        pipeline_summary="${output_path}/pipeline-summary.log"
+        if ! capture_pipeline_summary "${pipeline_summary}"; then
+            echo "ERROR: required cross-section pipeline statistics are unavailable" >&2
+            fio_status=1
+        fi
+    fi
+
+    ssd_workload_stat="${output_path}/ssd-workload-stat.log"
+    : > "${ssd_workload_stat}"
+    if ! get_ssd_stat "${devpath}" "${ssd_workload_stat}"; then
+        echo "ERROR: failed to collect measured-workload SSD statistics" >&2
+        fio_status=1
+    fi
 fi
 emit_kernel_marker "mCSGC finished filebench/fio in bash"
 
