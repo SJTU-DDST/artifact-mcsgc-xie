@@ -1,65 +1,54 @@
-# Formal F2FS/CSGC Performance Comparison Checklist
+# F2FS/CSGC 正式性能对比测试执行清单
 
-## Goal
+## 测试目标
 
-Measure fio end-to-end write throughput with optional Host and OpenSSD debug,
-trace, timing, and aggregate diagnostic calculations compiled out. The three
-primary configurations are:
+在编译阶段彻底关闭 Host 和 OpenSSD 上可选的调试、跟踪、计时及汇总诊断计算，测量 fio 端到端写吞吐。主要测试以下三种配置：
 
-1. Original F2FS (`ori`) with the original OpenSSD firmware path.
-2. Original CSGC with the same original Host and OpenSSD builds.
-3. Current optimized mCSGC8t pipeline with the current Move Plan firmware and
-   one active device worker.
+1. 原始 F2FS（`ori`）配合原始 OpenSSD 固件路径。
+2. 原始 CSGC，使用与 ORI 相同的原始 Host 和 OpenSSD 构建版本。
+3. 当前优化后的 mCSGC8t pipeline，配合当前 Move Plan 固件，并启用 1 个设备端 worker。
 
-Run the optimized no-pipeline build once as a selection check. Keep whichever
-optimized build has the higher fio throughput as the final third configuration.
+另外运行一次优化版 no-pipeline 构建作为选择性检查。在两个优化版中，保留 fio 吞吐更高的一版，作为最终对比中的第三种配置。
 
-## Fixed Workload
+## 固定测试负载
 
-- 86% partitioned prefill: 26,336 files, 2 MiB each, 16 disjoint job pools.
-- Fixed precondition: one 1 GiB random-write round per job.
-- Measured workload: 16 jobs, 4 KiB uniform random overwrite, `iodepth=16`,
-  buffered I/O, 300 seconds.
-- F2FS mount: `mode=lfs,background_gc=off,fsync_mode=strict,discard`.
-- Primary result: fio JSON write bandwidth in MiB/s.
+- 86% 分区式预填充：共 26,336 个文件，每个文件 2 MiB，划分为 16 个互不重叠的 job 文件池。
+- 固定预热：每个 job 执行一轮 1 GiB 随机写。
+- 正式负载：16 个 job，4 KiB 均匀随机覆盖写，`iodepth=16`，buffered I/O，运行 300 秒。
+- F2FS 挂载参数：`mode=lfs,background_gc=off,fsync_mode=strict,discard`。
+- 主要结果指标：fio JSON 中以 MiB/s 为单位的写带宽。
 
-Formal mode deliberately does not read custom GC sysfs counters, reset or read
-device statistics, start a Host measurement epoch, print periodic fio status,
-or require pipeline statistics. It retains only two kernel markers around fio.
+正式性能模式有意不读取自定义 GC sysfs 计数器，不重置或读取设备统计，不启动 Host 测量 epoch，也不要求 pipeline 统计。fio 每 5 秒输出一条轻量进度信息，包含当前带宽、IOPS、完成比例和预计剩余时间，便于观察吞吐变化并及时发现停滞；测试结束时仍输出完整 JSON 结果。fio 前后只保留两个内核日志标记。
 
-## Quiet Branches
+## 静默测试分支
 
-| Role | Branch | Local worktree |
+| 用途 | 分支 | 本地 worktree |
 |---|---|---|
-| Original Host for ORI and CSGC | `exp/formal-csgc-original-quiet-20260809` | `/tmp/linux-cs-formal-original-quiet` |
-| Optimized Host pipeline | `exp/formal-mcsgc8t-pipeline-quiet-20260809` | `/tmp/linux-cs-formal-mcsgc8t-pipe-quiet` |
-| Optimized Host no-pipeline | `exp/formal-mcsgc8t-nopipe-quiet-20260809` | `/tmp/linux-cs-formal-mcsgc8t-nopipe-quiet` |
-| Original OpenSSD | `exp/formal-csgc-original-quiet-20260809` | `/tmp/openssd-formal-original-quiet` |
-| Current OpenSSD, SSD1t | `exp/formal-mcsgc-quiet-20260809` | `/tmp/openssd-formal-mcsgc-quiet` |
+| ORI 和 CSGC 使用的原始 Host | `exp/formal-csgc-original-quiet-20260809` | `/tmp/linux-cs-formal-original-quiet` |
+| 优化版 Host pipeline | `exp/formal-mcsgc8t-pipeline-quiet-20260809` | `/tmp/linux-cs-formal-mcsgc8t-pipe-quiet` |
+| 优化版 Host no-pipeline | `exp/formal-mcsgc8t-nopipe-quiet-20260809` | `/tmp/linux-cs-formal-mcsgc8t-nopipe-quiet` |
+| 原始 OpenSSD | `exp/formal-csgc-original-quiet-20260809` | `/tmp/openssd-formal-original-quiet` |
+| 当前 OpenSSD，SSD1t | `exp/formal-mcsgc-quiet-20260809` | `/tmp/openssd-formal-mcsgc-quiet` |
 
-The Host runtime log and runtime breakdown macros are both disabled. The latter
-also removes diagnostic clock reads, atomic increments, accumulation, locks,
-and extra `get_valid_blocks()` calls. OpenSSD production mode similarly forces
-device timeline, Move Plan breakdown, optional runtime statistics, and
-`GET_SSD_LOG`-only traffic/WAF counters off. The formal Host build helper also
-disables the standard `CONFIG_F2FS_STAT_FS` Kconfig option.
+Host 的运行时日志宏和运行时 breakdown 宏均已关闭。关闭后者还会一并移除诊断用时钟读取、原子计数、自增累加、锁操作以及额外的 `get_valid_blocks()` 调用。OpenSSD 的正式性能模式同样会强制关闭设备时间线、Move Plan breakdown、可选运行时统计，以及仅供 `GET_SSD_LOG` 使用的流量/WAF 计数。正式 Host 构建辅助脚本还会关闭标准 Kconfig 选项 `CONFIG_F2FS_STAT_FS`。
 
-## Build And Test Original ORI/CSGC
+## 构建并测试原始 ORI/CSGC
 
-On the Host:
+在 Host 上执行：
 
 ```bash
 cd /home/xin/artifact-csgc/host/benchmarks/scripts
 ./prepare_formal_host_module.sh original-csgc
 ```
 
-On server 31, check out `exp/formal-csgc-original-quiet-20260809`, run the
-existing `scripts/sync_code.sh`, rebuild all Vitis applications, and restart
-the OpenSSD with that complete image. The synchronized `config.h` must report
-`CONFIG_OPENSSD_PRODUCTION_PERFORMANCE=1` and
-`CONFIG_CSGC_ACTIVE_WORKERS=1` in all four Vitis projects.
+在 31 服务器上切换到 `exp/formal-csgc-original-quiet-20260809`，运行已有的 `scripts/sync_code.sh`，重新构建全部 Vitis application，并使用这套完整镜像重启 OpenSSD。同步后的四个 Vitis 项目的 `config.h` 都必须显示：
 
-Then run on the Host:
+```text
+CONFIG_OPENSSD_PRODUCTION_PERFORMANCE=1
+CONFIG_CSGC_ACTIVE_WORKERS=1
+```
+
+然后在 Host 上执行：
 
 ```bash
 cd /home/xin/artifact-csgc/host/benchmarks/scripts
@@ -67,16 +56,13 @@ sudo ./run_formal_performance_test.sh original-ori
 sudo ./run_formal_performance_test.sh original-csgc
 ```
 
-Do not rebuild or restart either side between these two commands. The test
-script resets and reformats the namespace for each command.
+这两条命令之间不要重新构建或重启 Host、OpenSSD。测试脚本会在每条命令运行时分别重置并重新格式化 namespace。
 
-## Build And Test Optimized mCSGC8t
+## 构建并测试优化版 mCSGC8t
 
-On server 31, check out `exp/formal-mcsgc-quiet-20260809`, synchronize, rebuild
-all Vitis applications, and restart the OpenSSD. Confirm production mode is 1,
-Move Plan fast unsafe mode is 1, and active workers is 1.
+在 31 服务器上切换到 `exp/formal-mcsgc-quiet-20260809`，完成代码同步，重新构建全部 Vitis application，并重启 OpenSSD。确认正式性能模式为 1、Move Plan unsafe fast 模式为 1、active workers 为 1。
 
-Pipeline Host:
+测试 pipeline Host：
 
 ```bash
 cd /home/xin/artifact-csgc/host/benchmarks/scripts
@@ -84,7 +70,7 @@ cd /home/xin/artifact-csgc/host/benchmarks/scripts
 sudo ./run_formal_performance_test.sh mcsgc8t-pipeline
 ```
 
-No-pipeline Host selection check:
+测试 no-pipeline Host，作为优化版本选择检查：
 
 ```bash
 cd /home/xin/artifact-csgc/host/benchmarks/scripts
@@ -92,13 +78,11 @@ cd /home/xin/artifact-csgc/host/benchmarks/scripts
 sudo ./run_formal_performance_test.sh mcsgc8t-nopipeline
 ```
 
-The wrapper validates the Host branch, records the Host commit and module
-SHA-256, requires a built module from the matching worktree, and requires the
-server-31 Vitis workspace to report SSD1t.
+封装脚本会验证 Host 分支，记录 Host commit 和模块 SHA-256，要求使用对应 worktree 构建出的模块，并要求 31 服务器的 Vitis workspace 报告 SSD1t 配置。
 
-## Summarize Results
+## 汇总测试结果
 
-Locate each generated `fio.log`, then run:
+找到各次测试生成的 `fio.log` 后，执行：
 
 ```bash
 python3 ./summarize_formal_fio.py \
@@ -108,7 +92,4 @@ python3 ./summarize_formal_fio.py \
   optimized=/absolute/path/to/selected-optimized/fio.log
 ```
 
-The output reports MiB/s, IOPS, written GiB, runtime, fio errors, and speedup
-relative to original CSGC. A formal result is invalid if `errors` is nonzero,
-the runtime is materially shorter than 300 seconds, or the selected Host and
-device provenance does not match this checklist.
+脚本会输出 MiB/s、IOPS、写入 GiB、运行时间、fio 错误数，以及相对原始 CSGC 的加速比。出现以下任一情况时，正式测试结果无效：`errors` 非零；实际运行时间明显短于 300 秒；所使用的 Host 或设备端代码来源与本清单不一致。

@@ -624,8 +624,10 @@ fi
 if [ "${formal_performance_only}" -eq 1 ]; then
     fio_flags=(
         "--time_based=${fio_timebased}"
-        "--eta=never"
-        "--output-format=json"
+        "--eta=always"
+        "--eta-interval=5s"
+        "--eta-newline=5s"
+        "--output-format=normal,json"
     )
 else
     fio_flags=(
