@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+host_repo=/home/xin/work-xie/mcsgc-real/linux-cs
+source "${script_dir}/formal_host_worktree.sh"
+
 usage() {
     cat <<'EOF'
 Usage: ./prepare_formal_host_module.sh <configuration>
@@ -21,15 +25,12 @@ fi
 
 case "$1" in
     original-ori|original-csgc)
-        host_tree=/tmp/linux-cs-formal-original-quiet
         expected_branch=exp/formal-csgc-original-quiet-20260809
         ;;
     mcsgc8t-pipeline)
-        host_tree=/tmp/linux-cs-formal-mcsgc8t-pipe-quiet
         expected_branch=exp/formal-mcsgc8t-pipeline-quiet-20260809
         ;;
     mcsgc8t-nopipeline)
-        host_tree=/tmp/linux-cs-formal-mcsgc8t-nopipe-quiet
         expected_branch=exp/formal-mcsgc8t-nopipe-quiet-20260809
         ;;
     *)
@@ -38,6 +39,7 @@ case "$1" in
         ;;
 esac
 
+host_tree=$(resolve_formal_host_tree "${host_repo}" "${expected_branch}")
 actual_branch=$(git -C "${host_tree}" branch --show-current)
 if [ "${actual_branch}" != "${expected_branch}" ]; then
     echo "ERROR: wrong Host branch: expected=${expected_branch} actual=${actual_branch:-detached}" >&2
@@ -57,12 +59,18 @@ if [ ! -r "${host_tree}/.config" ]; then
 fi
 
 cd "${host_tree}"
-./scripts/config --disable F2FS_STAT_FS
+./scripts/config --enable F2FS_STAT_FS
 make -s olddefconfig LOCALVERSION=-csgcmt
-if grep -q '^CONFIG_F2FS_STAT_FS=y$' .config; then
-    echo "ERROR: failed to disable CONFIG_F2FS_STAT_FS" >&2
+if ! grep -q '^CONFIG_F2FS_STAT_FS=y$' .config; then
+    echo "ERROR: failed to enable CONFIG_F2FS_STAT_FS" >&2
     exit 1
 fi
 
 echo "Building formal Host module from ${actual_branch}"
-exec sudo ./build_f2fs.sh
+sudo ./build_f2fs.sh
+
+if ! nm fs/f2fs/f2fs.ko \
+    | awk '$NF == "f2fs_build_stats" { found = 1 } END { exit !found }'; then
+    echo "ERROR: the formal Host module was not built with CONFIG_F2FS_STAT_FS=y" >&2
+    exit 1
+fi

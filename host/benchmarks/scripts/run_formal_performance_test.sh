@@ -4,6 +4,8 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 config_path="configs/config24_fio_formal_performance_16t26336file.sh"
+host_repo=/home/xin/work-xie/mcsgc-real/linux-cs
+source "${script_dir}/formal_host_worktree.sh"
 
 usage() {
     cat <<'EOF'
@@ -24,28 +26,24 @@ fi
 
 case "$1" in
     original-ori)
-        host_tree=/tmp/linux-cs-formal-original-quiet
         expected_branch=exp/formal-csgc-original-quiet-20260809
         test_mode=ori
         expected_move_plan_v2=undefined
         expected_move_plan_fast_unsafe=undefined
         ;;
     original-csgc)
-        host_tree=/tmp/linux-cs-formal-original-quiet
         expected_branch=exp/formal-csgc-original-quiet-20260809
         test_mode=csgc-original-formal
         expected_move_plan_v2=undefined
         expected_move_plan_fast_unsafe=undefined
         ;;
     mcsgc8t-pipeline)
-        host_tree=/tmp/linux-cs-formal-mcsgc8t-pipe-quiet
         expected_branch=exp/formal-mcsgc8t-pipeline-quiet-20260809
         test_mode=mcsgc8t-pipeline-formal-csgc
         expected_move_plan_v2=1
         expected_move_plan_fast_unsafe=1
         ;;
     mcsgc8t-nopipeline)
-        host_tree=/tmp/linux-cs-formal-mcsgc8t-nopipe-quiet
         expected_branch=exp/formal-mcsgc8t-nopipe-quiet-20260809
         test_mode=mcsgc8t-nopipeline-formal-csgc
         expected_move_plan_v2=1
@@ -57,6 +55,7 @@ case "$1" in
         ;;
 esac
 
+host_tree=$(resolve_formal_host_tree "${host_repo}" "${expected_branch}")
 if [ ! -d "${host_tree}/.git" ] && [ ! -f "${host_tree}/.git" ]; then
     echo "ERROR: expected Host worktree is unavailable: ${host_tree}" >&2
     exit 1
@@ -75,8 +74,9 @@ if [ ! -r "${module_path}" ]; then
     exit 1
 fi
 
-if grep -q '^CONFIG_F2FS_STAT_FS=y$' "${host_tree}/.config"; then
-    echo "ERROR: CONFIG_F2FS_STAT_FS is enabled in the formal Host build." >&2
+if ! nm "${module_path}" \
+    | awk '$NF == "f2fs_build_stats" { found = 1 } END { exit !found }'; then
+    echo "ERROR: CONFIG_F2FS_STAT_FS is not enabled in the formal Host module." >&2
     echo "Action: run './prepare_formal_host_module.sh $1' first." >&2
     exit 1
 fi
