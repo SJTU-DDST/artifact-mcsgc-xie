@@ -181,6 +181,37 @@ def run_heavy_trace_parser(logfile: str, output_path: str, kind: str = "csgc") -
     return 0
 
 
+def run_supply_parser(logfile: str, output_path: str) -> int:
+    """Run the standalone low-overhead Host CSGC supply parser."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_path = os.path.join(script_dir, "breakdown-csgc-supply.py")
+
+    try:
+        completed = subprocess.run(
+            [sys.executable, script_path, logfile, output_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        print(f"WARNING: failed to run CSGC supply parser: {exc}", file=sys.stderr)
+        return 1
+
+    if completed.returncode != 0:
+        if completed.stderr:
+            print(completed.stderr.rstrip(), file=sys.stderr)
+        print(
+            f"WARNING: CSGC supply parser exited with {completed.returncode}",
+            file=sys.stderr,
+        )
+        return completed.returncode
+
+    if completed.stdout:
+        print(completed.stdout.rstrip())
+    return 0
+
+
 def safe_float_array(xs: List[Optional[int]]) -> np.ndarray:
     arr = np.array([np.nan if (v is None) else float(v) for v in xs], dtype=float)
     arr = arr[np.isfinite(arr)]
@@ -341,6 +372,7 @@ def main() -> int:
     f2fs_gc_heavy_trace_result_path = os.path.join(
         run_dir, "f2fs_gc_heavy_trace_result.txt"
     )
+    csgc_supply_result_path = os.path.join(run_dir, "csgc_supply_result.txt")
 
     original_stdout = sys.stdout
     original_stderr = sys.stderr
@@ -453,6 +485,8 @@ def main() -> int:
         f2fs_gc_heavy_trace_generated = os.path.exists(
             f2fs_gc_heavy_trace_result_path
         )
+        run_supply_parser(args.logfile, csgc_supply_result_path)
+        csgc_supply_generated = os.path.exists(csgc_supply_result_path)
 
         pattern_counts = analyze_lseg_lsection_pattern(lseg_lsection_events)
         bad_patterns = invalid_lseg_lsection_patterns(pattern_counts)
@@ -481,6 +515,7 @@ def main() -> int:
             f2fs_gc_heavy_trace_generated
             or origc_heavy_trace_generated
             or heavy_trace_generated
+            or csgc_supply_generated
         ):
             emit("=== GC heavy-only analysis ===")
             emit(f"run_dir={run_dir}")
@@ -497,6 +532,8 @@ def main() -> int:
                 )
             if heavy_trace_generated:
                 emit(f"heavy_trace_result_file={heavy_trace_result_path}")
+            if csgc_supply_generated:
+                emit(f"csgc_supply_result_file={csgc_supply_result_path}")
             emit("segment_samples=0")
             emit("section_samples=0")
             return 0
@@ -525,6 +562,10 @@ def main() -> int:
         emit(
             "f2fs_gc_heavy_trace_result_file="
             f"{f2fs_gc_heavy_trace_result_path if f2fs_gc_heavy_trace_generated else 'not_generated'}"
+        )
+        emit(
+            "csgc_supply_result_file="
+            f"{csgc_supply_result_path if csgc_supply_generated else 'not_generated'}"
         )
         emit(f"stat_prefix={used_prefix}")
         emit(f"segment_samples={seg_count}")
@@ -653,6 +694,10 @@ def main() -> int:
                 "f2fs_gc_heavy_trace_result_file="
                 f"{f2fs_gc_heavy_trace_result_path}"
             )
+        if csgc_supply_generated:
+            emit("")
+            emit("=== Host CSGC supply coverage parser ===")
+            emit(f"csgc_supply_result_file={csgc_supply_result_path}")
         return 0
 
     finally:

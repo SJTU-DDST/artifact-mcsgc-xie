@@ -200,6 +200,10 @@ capture_gc_measurement_summary() {
              index($0, "no_first_gc=1")) {
             heavy = $0
         }
+        index($0, "F2FS_CSGC_SUPPLY_STAT " target) &&
+            index($0, "kind=summary") {
+            supply = $0
+        }
         END {
             if (victim == "" || heavy == "") {
                 print "ERROR: completed GC measurement summary is missing for epoch=" \
@@ -208,6 +212,8 @@ capture_gc_measurement_summary() {
             }
             print victim
             print heavy
+            if (supply != "")
+                print supply
         }
     ' > "${output_file}"
 }
