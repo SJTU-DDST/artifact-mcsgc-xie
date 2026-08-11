@@ -129,14 +129,44 @@ def parse_original_record(
     """Parse one structured record emitted by the original CSGC branch."""
     if "F2FS_GC_DIAG " in line:
         values = parse_kv(line)
-        for key in ("duration_us", "collector_us", "non_collector_us"):
+        for key in (
+            "duration_us",
+            "collector_us",
+            "non_collector_us",
+            "victim_select_us",
+            "checkpoint_us",
+            "other_us",
+            "victim_select_attempts",
+            "victims_found",
+            "checkpoint_calls",
+        ):
             add_if_present(metrics, values, key, f"gc_call_{key}")
         csgc_count = int_value(values, "csgc_collectors") or 0
         origc_count = int_value(values, "origc_collectors") or 0
-        if csgc_count + origc_count > 0:
+        collector_invoked = int_value(values, "collector_invoked")
+        if collector_invoked is None:
+            collector_invoked = int(csgc_count + origc_count > 0)
+        if collector_invoked:
             add_if_present(metrics, values, "duration_us", "gc_with_work_duration_us")
         else:
+            add_if_present(
+                metrics,
+                values,
+                "duration_us",
+                "gc_no_collector_duration_us",
+            )
             add_if_present(metrics, values, "duration_us", "gc_no_work_duration_us")
+        path = values.get("gc_path")
+        if path:
+            add_if_present(metrics, values, "duration_us", f"gc_path_{path}_duration_us")
+
+        phase_keys = ("victim_select_us", "checkpoint_us", "collector_us", "other_us")
+        phase_values = [int_value(values, key) for key in phase_keys]
+        duration = int_value(values, "duration_us")
+        if duration is not None and all(value is not None for value in phase_values):
+            accounted = sum(value for value in phase_values if value is not None)
+            metrics["gc_call_accounted_us"].append(accounted)
+            metrics["gc_call_accounting_delta_us"].append(duration - accounted)
         return True
 
     if "F2FS_GC_COLLECTOR_DIAG " in line:
@@ -176,6 +206,105 @@ def parse_original_record(
             "segment_finish_offset_us",
         ):
             add_if_present(metrics, values, key, f"original_segment_{key}")
+        return True
+
+    if "CSGC_ORIGINAL_SEGMENT_DETAIL " in line:
+        values = parse_kv(line)
+        detail_keys = (
+            "pre_work_total_us",
+            "pre_attempts",
+            "pre_success_attempt_us",
+            "pre_failed_attempts_us",
+            "pre_retry_gap_us",
+            "pre_sum_us",
+            "pre_node_list_us",
+            "pre_inode_lock_us",
+            "pre_data_lock_us",
+            "pre_cp_rwsem_lock_us",
+            "pre_node_pages_lock_precise_us",
+            "pre_data_revalidate_us",
+            "pre_pack_node_us",
+            "pre_pack_sit_us",
+            "pre_preallocate_us",
+            "pre_prealloc_lock_wait_us",
+            "pre_prealloc_sync_us",
+            "pre_prealloc_wait_sync_us",
+            "pre_prealloc_alloc_us",
+            "ssd_trigger_roundtrip_us",
+            "ssd_inter_submit_gap_us",
+            "ssd_completion_wait_us",
+            "approx_gc_cs_ssd_us",
+        )
+        for key in detail_keys:
+            add_if_present(metrics, values, key, f"original_detail_{key}")
+
+        precise_pre_keys = (
+            "pre_sum_us",
+            "pre_node_list_us",
+            "pre_inode_lock_us",
+            "pre_data_lock_us",
+            "pre_cp_rwsem_lock_us",
+            "pre_node_pages_lock_precise_us",
+            "pre_data_revalidate_us",
+            "pre_pack_node_us",
+            "pre_pack_sit_us",
+            "pre_preallocate_us",
+        )
+        precise_pre_values = [int_value(values, key) for key in precise_pre_keys]
+        pre_total = int_value(values, "pre_success_attempt_us")
+        if pre_total is not None and all(value is not None for value in precise_pre_values):
+            accounted = sum(value for value in precise_pre_values if value is not None)
+            metrics["original_detail_pre_success_accounted_us"].append(accounted)
+            metrics["original_detail_pre_success_accounting_delta_us"].append(
+                pre_total - accounted
+            )
+
+        ssd_keys = (
+            "ssd_trigger_roundtrip_us",
+            "ssd_inter_submit_gap_us",
+            "ssd_completion_wait_us",
+        )
+        ssd_values = [int_value(values, key) for key in ssd_keys]
+        ssd_total = int_value(values, "approx_gc_cs_ssd_us")
+        if ssd_total is not None and all(value is not None for value in ssd_values):
+            accounted = sum(value for value in ssd_values if value is not None)
+            metrics["original_detail_ssd_accounted_us"].append(accounted)
+            metrics["original_detail_ssd_accounting_delta_us"].append(
+                ssd_total - accounted
+            )
+        return True
+
+    if "CSGC_ORIGINAL_SEGMENT_POST_DETAIL " in line:
+        values = parse_kv(line)
+        post_keys = (
+            "post_update_meta_us",
+            "post_status_check_us",
+            "post_seg_update_us",
+            "post_dnode_update_us",
+            "post_unlock_op_us",
+            "post_put_data_pages_us",
+            "post_cleanup_us",
+        )
+        for key in post_keys:
+            add_if_present(metrics, values, key, f"original_post_detail_{key}")
+
+        update_keys = (
+            "post_status_check_us",
+            "post_seg_update_us",
+            "post_dnode_update_us",
+            "post_unlock_op_us",
+            "post_put_data_pages_us",
+        )
+        update_values = [int_value(values, key) for key in update_keys]
+        update_total = int_value(values, "post_update_meta_us")
+        if update_total is not None and all(
+            value is not None for value in update_values
+        ):
+            accounted = sum(value for value in update_values if value is not None)
+            metrics["original_post_detail_update_accounted_us"].append(accounted)
+            metrics["original_post_detail_update_accounting_delta_us"].append(
+                update_total - accounted
+            )
         return True
 
     return False
@@ -354,6 +483,8 @@ def main() -> int:
     emit_group(output, "section wall-clock", metrics, ("original_section_", "phase_section_"))
     emit_group(output, "coarse PRE/SSD/POST intervals", metrics, ("phase_pre_", "phase_ssd_", "phase_post_"))
     emit_group(output, "original CSGC segment breakdown", metrics, ("original_segment_",))
+    emit_group(output, "original CSGC detailed PRE/SSD breakdown", metrics, ("original_detail_",))
+    emit_group(output, "original CSGC detailed POST breakdown", metrics, ("original_post_detail_",))
     emit_group(output, "mCSGC8t segment breakdown", metrics, ("modern_segment_",))
 
     Path(args.output).write_text("\n".join(output), encoding="utf-8")
