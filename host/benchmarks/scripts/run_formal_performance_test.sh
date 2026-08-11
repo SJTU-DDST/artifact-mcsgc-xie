@@ -3,49 +3,70 @@
 set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-config_path="configs/config24_fio_formal_performance_16t26336file.sh"
 host_repo=/home/xin/work-xie/mcsgc-real/linux-cs
 source "${script_dir}/formal_host_worktree.sh"
 
 usage() {
     cat <<'EOF'
-Usage: sudo ./run_formal_performance_test.sh <configuration>
+Usage: sudo ./run_formal_performance_test.sh <configuration> [workload]
 
 Configurations:
   original-ori          Original Host and device code, conventional F2FS
   original-csgc         Original Host and device code, original CSGC
   mcsgc8t-pipeline      Current optimized mCSGC8t with cross-section pipeline
   mcsgc8t-nopipeline    Current optimized mCSGC8t without the pipeline
+
+Workloads:
+  smallfile             16-job partitioned small-file workload (default)
+  bigfile               4-job single-big-file workload
 EOF
 }
 
-if [ $# -ne 1 ]; then
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
     usage
     exit 1
 fi
+
+workload=${2:-smallfile}
+case "${workload}" in
+    smallfile)
+        config_path="configs/config24_fio_formal_performance_16t26336file.sh"
+        ;;
+    bigfile)
+        config_path="configs/config25_fio_formal_performance_bigfile_randwrite.sh"
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac
 
 case "$1" in
     original-ori)
         expected_branch=exp/formal-csgc-original-quiet-20260809
         test_mode=ori
+        expected_openssd_production=undefined
         expected_move_plan_v2=undefined
         expected_move_plan_fast_unsafe=undefined
         ;;
     original-csgc)
         expected_branch=exp/formal-csgc-original-quiet-20260809
         test_mode=csgc-original-formal
+        expected_openssd_production=undefined
         expected_move_plan_v2=undefined
         expected_move_plan_fast_unsafe=undefined
         ;;
     mcsgc8t-pipeline)
         expected_branch=exp/formal-mcsgc8t-pipeline-quiet-20260809
         test_mode=mcsgc8t-pipeline-formal-csgc
+        expected_openssd_production=1
         expected_move_plan_v2=1
         expected_move_plan_fast_unsafe=1
         ;;
     mcsgc8t-nopipeline)
         expected_branch=exp/formal-mcsgc8t-nopipe-quiet-20260809
         test_mode=mcsgc8t-nopipeline-formal-csgc
+        expected_openssd_production=1
         expected_move_plan_v2=1
         expected_move_plan_fast_unsafe=1
         ;;
@@ -100,6 +121,7 @@ if [ -r /sys/module/f2fs/srcversion ]; then
 fi
 
 echo "Formal configuration: $1"
+echo "Formal workload: ${workload}"
 echo "Host tree: ${host_tree}"
 echo "Host branch: ${actual_branch}"
 echo "Host commit: ${host_commit}"
@@ -108,7 +130,7 @@ echo "Expected OpenSSD worker mode: ssd1t"
 
 export F2FS_KERNEL_PATH_OVERRIDE="${host_tree}"
 export CSGC_EXPECTED_SSD_THREAD_MODE=ssd1t
-export CSGC_EXPECTED_OPENSSD_PRODUCTION_PERFORMANCE=1
+export CSGC_EXPECTED_OPENSSD_PRODUCTION_PERFORMANCE="${expected_openssd_production}"
 export CSGC_EXPECTED_MOVE_PLAN_V2="${expected_move_plan_v2}"
 export CSGC_EXPECTED_MOVE_PLAN_FAST_UNSAFE="${expected_move_plan_fast_unsafe}"
 export FORMAL_HOST_BRANCH="${actual_branch}"

@@ -666,10 +666,20 @@ if [ "${bmname}" == "randwrite" ]; then
         "--numjobs=${nthreads}"
         "--random_distribution=${random_distribution}"
         "--time_based=${fio_timebased}"
-        "--status-interval=1"
         "--overwrite=1"
         "--allow_file_create=0"
     )
+
+    if [ "${formal_performance_only}" -eq 1 ]; then
+        fio_flags+=(
+            "--eta=always"
+            "--eta-interval=5s"
+            "--eta-newline=5s"
+            "--output-format=normal,json"
+        )
+    else
+        fio_flags+=("--status-interval=1")
+    fi
 
     if [ "${fio_gc_precondition}" -eq 1 ]; then
         precondition_log="${output_path}/${workload_type}.precondition.log"

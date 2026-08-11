@@ -10,6 +10,7 @@ light_evaluation=0
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 openssd_remote_host="192.168.98.31"
 openssd_sync_script="/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc/scripts/sync_code.sh"
+nr_cs_cores="1"
 
 # Detect the active worker label from every Vitis project populated by sync_code.sh.
 detect_ssd_thread_mode() {
@@ -25,9 +26,13 @@ detect_ssd_thread_mode() {
   local reported_sync_script=""
   local reported_workspace=""
   local reported_configs=""
+  local reported_worker_headers=""
   local reported_target_count=""
   local config_digest=""
+  local shared_digest=""
   local worker_count=""
+  local worker_source=""
+  local legacy_worker_cap=""
   local production_mode=""
   local move_plan_v2=""
   local move_plan_fast_unsafe=""
@@ -148,11 +153,15 @@ if ! printf '%s\n' "${workspace}" | grep -Eq '^/[A-Za-z0-9._/-]+$'; then
 fi
 
 common_workers=''
+common_worker_source=''
+common_legacy_worker_cap=''
 common_digest=''
+common_shared_digest=''
 common_production=''
 common_move_plan_v2=''
 common_move_plan_fast_unsafe=''
 config_paths=''
+worker_header_paths=''
 seen_projects=''
 target_count=0
 for project in "${ftl_project}" "${leader_project}" "${worker1_project}" "${worker2_project}"; do
@@ -170,46 +179,50 @@ for project in "${ftl_project}" "${leader_project}" "${worker1_project}" "${work
   seen_projects="${seen_projects} ${project}"
 
   config="${workspace}/${project}/src/config.h"
+  worker_header="${workspace}/${project}/src/shared_mem.h"
   if [ ! -r "${config}" ]; then
     echo "Remote error: Vitis config is not readable: ${config}" >&2
     exit 26
   fi
+  if [ ! -r "${worker_header}" ]; then
+    echo "Remote error: Vitis worker header is not readable: ${worker_header}" >&2
+    exit 26
+  fi
 
-  workers=$(awk '
-    BEGIN { count = 0; value = "" }
-    $0 ~ /^[[:space:]]*#[[:space:]]*define[[:space:]]+CONFIG_CSGC_ACTIVE_WORKERS([[:space:]]|$)/ {
-      line = $0
-      sub(/^[[:space:]]*#[[:space:]]*define[[:space:]]+CONFIG_CSGC_ACTIVE_WORKERS[[:space:]]+/, "", line)
-      sub(/[[:space:]].*$/, "", line)
-      count++
-      value = line
-    }
-    END {
-      if (count != 1) {
-        printf "Remote error: expected exactly one active CONFIG_CSGC_ACTIVE_WORKERS definition in %s, found %d\n", FILENAME, count > "/dev/stderr"
-        exit 1
-      }
-      if (value != "1" && value != "2") {
-        printf "Remote error: CONFIG_CSGC_ACTIVE_WORKERS in %s must be the literal 1 or 2, got: %s\n", FILENAME, value > "/dev/stderr"
-        exit 1
-      }
-      print value
-    }
-  ' "${config}") || exit 27
+  workers=$(read_optional_macro "${config}" CONFIG_CSGC_ACTIVE_WORKERS) || exit 27
+  legacy_worker_cap=undefined
+  if [ "${workers}" = "undefined" ]; then
+    legacy_worker_cap=$(read_optional_macro "${worker_header}" MAX_NR_CS_GC_WORKERS) || exit 27
+    if [ "${legacy_worker_cap}" != "1" ] && [ "${legacy_worker_cap}" != "2" ]; then
+      echo "Remote error: neither CONFIG_CSGC_ACTIVE_WORKERS nor a supported MAX_NR_CS_GC_WORKERS is defined for ${project}." >&2
+      exit 27
+    fi
+    worker_source=legacy_max_nr_cs_gc_workers
+  else
+    worker_source=config_csgc_active_workers
+  fi
   digest_line=$(sha256sum "${config}") || exit 28
   digest=${digest_line%% *}
+  shared_digest_line=$(sha256sum "${worker_header}") || exit 28
+  project_shared_digest=${shared_digest_line%% *}
   production=$(read_optional_macro "${config}" CONFIG_OPENSSD_PRODUCTION_PERFORMANCE) || exit 30
   move_plan_v2=$(read_optional_macro "${config}" CONFIG_CSGC_MOVE_PLAN_V2) || exit 30
   move_plan_fast_unsafe=$(read_optional_macro "${config}" CONFIG_CSGC_MOVE_PLAN_FAST_UNSAFE) || exit 30
 
   if [ -z "${common_workers}" ]; then
     common_workers="${workers}"
+    common_worker_source="${worker_source}"
+    common_legacy_worker_cap="${legacy_worker_cap}"
     common_digest="${digest}"
+    common_shared_digest="${project_shared_digest}"
     common_production="${production}"
     common_move_plan_v2="${move_plan_v2}"
     common_move_plan_fast_unsafe="${move_plan_fast_unsafe}"
   elif [ "${workers}" != "${common_workers}" ] \
+      || [ "${worker_source}" != "${common_worker_source}" ] \
+      || [ "${legacy_worker_cap}" != "${common_legacy_worker_cap}" ] \
       || [ "${digest}" != "${common_digest}" ] \
+      || [ "${project_shared_digest}" != "${common_shared_digest}" ] \
       || [ "${production}" != "${common_production}" ] \
       || [ "${move_plan_v2}" != "${common_move_plan_v2}" ] \
       || [ "${move_plan_fast_unsafe}" != "${common_move_plan_fast_unsafe}" ]; then
@@ -219,8 +232,10 @@ for project in "${ftl_project}" "${leader_project}" "${worker1_project}" "${work
 
   if [ -z "${config_paths}" ]; then
     config_paths="${config}"
+    worker_header_paths="${worker_header}"
   else
     config_paths="${config_paths},${config}"
+    worker_header_paths="${worker_header_paths},${worker_header}"
   fi
   target_count=$((target_count + 1))
 done
@@ -228,9 +243,13 @@ done
 printf 'sync_script\t%s\n' "${sync_script}"
 printf 'workspace\t%s\n' "${workspace}"
 printf 'configs\t%s\n' "${config_paths}"
+printf 'worker_headers\t%s\n' "${worker_header_paths}"
 printf 'target_count\t%s\n' "${target_count}"
 printf 'digest\t%s\n' "${common_digest}"
+printf 'shared_digest\t%s\n' "${common_shared_digest}"
 printf 'workers\t%s\n' "${common_workers}"
+printf 'worker_source\t%s\n' "${common_worker_source}"
+printf 'legacy_worker_cap\t%s\n' "${common_legacy_worker_cap}"
 printf 'production\t%s\n' "${common_production}"
 printf 'move_plan_v2\t%s\n' "${common_move_plan_v2}"
 printf 'move_plan_fast_unsafe\t%s\n' "${common_move_plan_fast_unsafe}"
@@ -258,14 +277,26 @@ REMOTE_SCRIPT
       configs)
         reported_configs="${value}"
         ;;
+      worker_headers)
+        reported_worker_headers="${value}"
+        ;;
       target_count)
         reported_target_count="${value}"
         ;;
       digest)
         config_digest="${value}"
         ;;
+      shared_digest)
+        shared_digest="${value}"
+        ;;
       workers)
         worker_count="${value}"
+        ;;
+      worker_source)
+        worker_source="${value}"
+        ;;
+      legacy_worker_cap)
+        legacy_worker_cap="${value}"
         ;;
       production)
         production_mode="${value}"
@@ -286,9 +317,13 @@ REMOTE_SCRIPT
   if [[ "${reported_sync_script}" != "${openssd_sync_script}" ||
         ! "${reported_workspace}" =~ ^/[A-Za-z0-9._/-]+$ ||
         -z "${reported_configs}" ||
+        -z "${reported_worker_headers}" ||
         "${reported_target_count}" != "4" ||
         ! "${config_digest}" =~ ^[0-9a-fA-F]{64}$ ||
-        ! "${worker_count}" =~ ^[12]$ ||
+        ! "${shared_digest}" =~ ^[0-9a-fA-F]{64}$ ||
+        ! "${worker_count}" =~ ^(1|2|undefined)$ ||
+        ! "${worker_source}" =~ ^(config_csgc_active_workers|legacy_max_nr_cs_gc_workers)$ ||
+        ! "${legacy_worker_cap}" =~ ^(1|2|undefined)$ ||
         ! "${production_mode}" =~ ^(0|1|undefined)$ ||
         ! "${move_plan_v2}" =~ ^(0|1|undefined)$ ||
         ! "${move_plan_fast_unsafe}" =~ ^(0|1|undefined)$ ]]; then
@@ -297,8 +332,22 @@ REMOTE_SCRIPT
     return 1
   fi
 
+  if [[ "${worker_source}" == "legacy_max_nr_cs_gc_workers" ]]; then
+    if [[ "${worker_count}" != "undefined" || ! "${nr_cs_cores}" =~ ^[12]$ ||
+          "${nr_cs_cores}" -gt "${legacy_worker_cap}" ]]; then
+      echo "Error: incompatible legacy OpenSSD worker configuration: requested=${nr_cs_cores} cap=${legacy_worker_cap}." >&2
+      return 1
+    fi
+    worker_count="${nr_cs_cores}"
+  elif [[ ! "${worker_count}" =~ ^[12]$ || "${legacy_worker_cap}" != "undefined" ]]; then
+    echo "Error: invalid modern OpenSSD worker configuration." >&2
+    return 1
+  fi
+
   echo "OpenSSD Vitis workspace: host=${openssd_remote_host} path=${reported_workspace}" >&2
   echo "Validated Vitis configs: count=${reported_target_count} sha256=${config_digest} files=${reported_configs}" >&2
+  echo "Validated Vitis shared headers: sha256=${shared_digest} files=${reported_worker_headers}" >&2
+  echo "Validated OpenSSD workers: source=${worker_source} effective=${worker_count} legacy_cap=${legacy_worker_cap}" >&2
   echo "Validated OpenSSD mode: production=${production_mode} move_plan_v2=${move_plan_v2} move_plan_fast_unsafe=${move_plan_fast_unsafe}" >&2
 
   if [[ -n "${CSGC_EXPECTED_OPENSSD_PRODUCTION_PERFORMANCE:-}" \
@@ -409,7 +458,6 @@ pushd "${script_dir}" > /dev/null
 
 host_mem_usage="8G"
 use_cgroup=1
-nr_cs_cores="1"
 csgc_sync=0
 fsck_after_run=0
 ssd_enable_l2p=0    # 0=>no-FTL 1=>conventional, 2=>sFTL, 3=>interval-mapping

@@ -2,7 +2,7 @@
 
 ## 测试目标
 
-在编译阶段彻底关闭 Host 和 OpenSSD 上可选的调试、跟踪、计时及汇总诊断计算，测量 fio 端到端写吞吐。主要测试以下三种配置：
+测量 fio 端到端写吞吐。优化版 Host 和 OpenSSD 在编译阶段关闭可选的调试、跟踪、计时及汇总诊断计算；原版 OpenSSD 保持 `main` 分支原有行为，不为本次实验额外静默化。主要测试以下三种配置：
 
 1. 原始 F2FS（`ori`）配合原始 OpenSSD 固件路径。
 2. 原始 CSGC，使用与 ORI 相同的原始 Host 和 OpenSSD 构建版本。
@@ -34,10 +34,10 @@
 | ORI 和 CSGC 使用的原始 Host | `exp/formal-csgc-original-quiet-20260809` | 由脚本根据当前 Git worktree 自动发现 |
 | 优化版 Host pipeline | `exp/formal-mcsgc8t-pipeline-quiet-20260809` | 由脚本根据当前 Git worktree 自动发现 |
 | 优化版 Host no-pipeline | `exp/formal-mcsgc8t-nopipe-quiet-20260809` | 由脚本根据当前 Git worktree 自动发现 |
-| 原始 OpenSSD | `exp/formal-csgc-original-quiet-20260809` | 31 服务器上的 `/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc` |
+| 原始 OpenSSD | `formal-original-csgc-main-20260809` | 31 服务器上的 `/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc` |
 | 当前 OpenSSD，SSD1t | `exp/formal-mcsgc-quiet-20260809` | 31 服务器上的 `/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc` |
 
-Host 的自定义运行时日志宏和运行时 breakdown 宏均已关闭。关闭后者还会一并移除诊断用时钟读取、原子计数、自增累加、锁操作以及额外的 `get_valid_blocks()` 调用。标准 Kconfig 选项 `CONFIG_F2FS_STAT_FS=y` 在全部 Host 配置中统一保留，避免不同模式使用不同的标准 F2FS 编译配置。OpenSSD 的正式性能模式同样会强制关闭设备时间线、Move Plan breakdown、可选运行时统计，以及仅供 `GET_SSD_LOG` 使用的流量/WAF 计数。
+Host 的自定义运行时日志宏和运行时 breakdown 宏均已关闭。关闭后者还会一并移除诊断用时钟读取、原子计数、自增累加、锁操作以及额外的 `get_valid_blocks()` 调用。标准 Kconfig 选项 `CONFIG_F2FS_STAT_FS=y` 在全部 Host 配置中统一保留，避免不同模式使用不同的标准 F2FS 编译配置。优化版 OpenSSD 的正式性能模式同样会强制关闭设备时间线、Move Plan breakdown、可选运行时统计，以及仅供 `GET_SSD_LOG` 使用的流量/WAF 计数；原版 OpenSSD 不增加这些新版开关。
 
 ## 构建并测试原始 ORI/CSGC
 
@@ -53,12 +53,13 @@ cd /home/xin/artifact-csgc/host/benchmarks/scripts
 
 如果没有安装 `gsw`，可使用 `git switch exp/formal-csgc-original-quiet-20260809`；脚本会从当前 Git worktree 自动找到目标分支，不再依赖 `/tmp` 下的固定目录。
 
-在 31 服务器上切换到 `exp/formal-csgc-original-quiet-20260809`，运行已有的 `scripts/sync_code.sh`，重新构建全部 Vitis application，并使用这套完整镜像重启 OpenSSD。同步后的四个 Vitis 项目的 `config.h` 都必须显示：
+在 31 服务器上切换到 `formal-original-csgc-main-20260809`，运行已有的 `scripts/sync_code.sh`，重新构建全部 Vitis application，并使用这套完整镜像重启 OpenSSD。该分支基于原版 `main`，因此四个 Vitis 项目的 `config.h` 中不会出现后续研发版本增加的 `CONFIG_OPENSSD_PRODUCTION_PERFORMANCE` 和 `CONFIG_CSGC_ACTIVE_WORKERS`。四份 `shared_mem.h` 应保持一致并包含：
 
 ```text
-CONFIG_OPENSSD_PRODUCTION_PERFORMANCE=1
-CONFIG_CSGC_ACTIVE_WORKERS=1
+MAX_NR_CS_GC_WORKERS=2
 ```
+
+这里的 `2` 是旧版固件支持的最大 GC worker 数，不是本轮实际启用数。Host 测试脚本设置 `nr_cs_cores=1`，所以本轮原版 CSGC 的有效设备执行模式仍记为 `ssd1t`。预检脚本会同时核对四份 `config.h` 和 `shared_mem.h` 的 SHA-256，并验证这一旧版口径。
 
 然后在 Host 上执行以下批量脚本。它按 `ORI -> 原始 CSGC` 的顺序运行三轮，共完成 6 次测试；任一测试失败时会立即停止，不会继续运行后续测试：
 
