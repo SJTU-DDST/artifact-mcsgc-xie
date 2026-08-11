@@ -8,7 +8,7 @@ import re
 import statistics
 from collections import defaultdict
 from pathlib import Path
-from typing import DefaultDict, Dict, Iterable, List, Optional, Tuple
+from typing import DefaultDict, Dict, Iterable, List, Optional, Set, Tuple
 
 
 START_MARKER = "MEASURED_FIO_START"
@@ -122,6 +122,21 @@ def add_if_present(
         metrics[output_key or source_key].append(value)
 
 
+def add_sum_if_present(
+    metrics: DefaultDict[str, List[int]],
+    values: Dict[str, str],
+    source_keys: Tuple[str, ...],
+    output_key: str,
+) -> Optional[int]:
+    """Append the sum of a complete set of nonnegative integer fields."""
+    items = [int_value(values, key) for key in source_keys]
+    if any(item is None or item < 0 for item in items):
+        return None
+    total = sum(item for item in items if item is not None)
+    metrics[output_key].append(total)
+    return total
+
+
 def parse_original_record(
     line: str,
     metrics: DefaultDict[str, List[int]],
@@ -185,6 +200,7 @@ def parse_original_record(
         values = parse_kv(line)
         for key in ("section_gc_time_us", "section_sync_us", "collector_us"):
             add_if_present(metrics, values, key, f"original_section_{key}")
+            add_if_present(metrics, values, key, f"comparable_section_{key}")
         return True
 
     if "CSGC_ORIGINAL_SEGMENT " in line:
@@ -206,6 +222,18 @@ def parse_original_record(
             "segment_finish_offset_us",
         ):
             add_if_present(metrics, values, key, f"original_segment_{key}")
+        add_if_present(
+            metrics,
+            values,
+            "approx_segment_total_us",
+            "comparable_segment_total_us",
+        )
+        add_if_present(
+            metrics,
+            values,
+            "post_queue_delay_us",
+            "comparable_post_queue_delay_us",
+        )
         return True
 
     if "CSGC_ORIGINAL_SEGMENT_DETAIL " in line:
@@ -237,6 +265,34 @@ def parse_original_record(
         )
         for key in detail_keys:
             add_if_present(metrics, values, key, f"original_detail_{key}")
+
+        direct_comparable = {
+            "pre_work_total_us": "comparable_pre_work_total_us",
+            "pre_attempts": "comparable_pre_attempts",
+            "pre_success_attempt_us": "comparable_pre_success_attempt_us",
+            "pre_failed_attempts_us": "comparable_pre_failed_attempts_us",
+            "pre_retry_gap_us": "comparable_pre_retry_gap_us",
+            "pre_sum_us": "comparable_pre_sum_us",
+            "pre_node_list_us": "comparable_pre_node_list_us",
+            "pre_inode_lock_us": "comparable_pre_inode_lock_us",
+            "pre_data_lock_us": "comparable_pre_data_lock_us",
+            "pre_cp_rwsem_lock_us": "comparable_pre_cp_rwsem_lock_us",
+            "pre_node_pages_lock_precise_us": "comparable_pre_node_pages_lock_us",
+            "pre_data_revalidate_us": "comparable_pre_data_revalidate_us",
+            "pre_preallocate_us": "comparable_pre_preallocate_us",
+            "ssd_trigger_roundtrip_us": "comparable_ssd_trigger_roundtrip_us",
+            "ssd_inter_submit_gap_us": "comparable_ssd_inter_submit_gap_us",
+            "ssd_completion_wait_us": "comparable_ssd_completion_wait_us",
+            "approx_gc_cs_ssd_us": "comparable_ssd_total_us",
+        }
+        for source_key, output_key in direct_comparable.items():
+            add_if_present(metrics, values, source_key, output_key)
+        add_sum_if_present(
+            metrics,
+            values,
+            ("pre_pack_node_us", "pre_pack_sit_us"),
+            "comparable_pre_request_metadata_us",
+        )
 
         precise_pre_keys = (
             "pre_sum_us",
@@ -288,6 +344,34 @@ def parse_original_record(
         for key in post_keys:
             add_if_present(metrics, values, key, f"original_post_detail_{key}")
 
+        post_comparable = {
+            "post_update_meta_us": "comparable_post_update_meta_us",
+            "post_status_check_us": "comparable_post_result_validation_us",
+            "post_seg_update_us": "comparable_post_segment_metadata_us",
+            "post_dnode_update_us": "comparable_post_dnode_update_us",
+            "post_unlock_op_us": "comparable_post_unlock_op_us",
+            "post_put_data_pages_us": "comparable_post_put_data_pages_us",
+            "post_cleanup_us": "comparable_post_cleanup_us",
+        }
+        for source_key, output_key in post_comparable.items():
+            add_if_present(metrics, values, source_key, output_key)
+
+        update_total = int_value(values, "post_update_meta_us")
+        put_pages = int_value(values, "post_put_data_pages_us")
+        cleanup = int_value(values, "post_cleanup_us")
+        if (
+            update_total is not None
+            and put_pages is not None
+            and update_total >= put_pages
+        ):
+            metrics["comparable_post_metadata_without_page_release_us"].append(
+                update_total - put_pages
+            )
+        if update_total is not None and cleanup is not None:
+            metrics["comparable_post_total_work_us"].append(
+                update_total + cleanup
+            )
+
         update_keys = (
             "post_status_check_us",
             "post_seg_update_us",
@@ -296,7 +380,6 @@ def parse_original_record(
             "post_put_data_pages_us",
         )
         update_values = [int_value(values, key) for key in update_keys]
-        update_total = int_value(values, "post_update_meta_us")
         if update_total is not None and all(
             value is not None for value in update_values
         ):
@@ -318,16 +401,377 @@ def modern_trace_time(values: Dict[str, str]) -> Optional[int]:
     return int_value(values, "t_us")
 
 
+def modern_segment_key(values: Dict[str, str]) -> Optional[Tuple[int, int]]:
+    """Return the stable identity shared by split mCSGC segment records."""
+    segno = int_value(values, "segno")
+    start_ns = int_value(values, "start_ns")
+    if segno is None or start_ns is None:
+        return None
+    return segno, start_ns
+
+
+def record_modern_pre_detail(
+    values: Dict[str, str],
+    metrics: DefaultDict[str, List[int]],
+) -> None:
+    """Record one complete mCSGC PRE breakdown assembled from split lines."""
+    detail_keys = (
+        "pre_work_total_us",
+        "pre_callback_total_us",
+        "pre_attempts",
+        "pre_success_attempt_us",
+        "pre_failed_attempts_us",
+        "pre_retry_gap_us",
+        "pre_build_valid_offsets_us",
+        "pre_sum_us",
+        "pre_node_list_us",
+        "pre_inode_lock_us",
+        "pre_data_lock_us",
+        "pre_dirty_source_scan_us",
+        "pre_cp_rwsem_lock_us",
+        "pre_node_pages_lock_us",
+        "pre_get_valid_blocks_us",
+        "pre_check_data_validness_us",
+        "pre_prepare_move_plan_us",
+        "pre_preallocate_us",
+        "pre_finalize_move_plan_us",
+        "pre_tail_us",
+        "pre_prealloc_lock_wait_us",
+        "pre_prealloc_sync_us",
+        "pre_prealloc_wait_sync_us",
+        "pre_prealloc_alloc_us",
+    )
+    for key in detail_keys:
+        add_if_present(metrics, values, key, f"modern_detail_{key}")
+
+    direct_comparable = {
+        "pre_work_total_us": "comparable_pre_work_total_us",
+        "pre_attempts": "comparable_pre_attempts",
+        "pre_success_attempt_us": "comparable_pre_success_attempt_us",
+        "pre_failed_attempts_us": "comparable_pre_failed_attempts_us",
+        "pre_retry_gap_us": "comparable_pre_retry_gap_us",
+        "pre_node_list_us": "comparable_pre_node_list_us",
+        "pre_inode_lock_us": "comparable_pre_inode_lock_us",
+        "pre_data_lock_us": "comparable_pre_data_lock_us",
+        "pre_cp_rwsem_lock_us": "comparable_pre_cp_rwsem_lock_us",
+        "pre_node_pages_lock_us": "comparable_pre_node_pages_lock_us",
+        "pre_preallocate_us": "comparable_pre_preallocate_us",
+    }
+    for source_key, output_key in direct_comparable.items():
+        add_if_present(metrics, values, source_key, output_key)
+    add_sum_if_present(
+        metrics,
+        values,
+        ("pre_build_valid_offsets_us", "pre_sum_us"),
+        "comparable_pre_sum_us",
+    )
+    add_sum_if_present(
+        metrics,
+        values,
+        ("pre_get_valid_blocks_us", "pre_check_data_validness_us"),
+        "comparable_pre_data_revalidate_us",
+    )
+    add_sum_if_present(
+        metrics,
+        values,
+        ("pre_prepare_move_plan_us", "pre_finalize_move_plan_us"),
+        "comparable_pre_request_metadata_us",
+    )
+
+    pre_stage_keys = (
+        "pre_build_valid_offsets_us",
+        "pre_sum_us",
+        "pre_node_list_us",
+        "pre_inode_lock_us",
+        "pre_data_lock_us",
+        "pre_dirty_source_scan_us",
+        "pre_cp_rwsem_lock_us",
+        "pre_node_pages_lock_us",
+        "pre_get_valid_blocks_us",
+        "pre_check_data_validness_us",
+        "pre_prepare_move_plan_us",
+        "pre_preallocate_us",
+        "pre_finalize_move_plan_us",
+        "pre_tail_us",
+    )
+    accounted = add_sum_if_present(
+        metrics,
+        values,
+        pre_stage_keys,
+        "modern_detail_pre_success_accounted_us",
+    )
+    pre_success = int_value(values, "pre_success_attempt_us")
+    if accounted is not None and pre_success is not None:
+        metrics["modern_detail_pre_success_accounting_delta_us"].append(
+            pre_success - accounted
+        )
+
+
+def record_modern_ssd_detail(
+    values: Dict[str, str],
+    metrics: DefaultDict[str, List[int]],
+) -> None:
+    """Record the Host-visible SSD request lifecycle for one mCSGC segment."""
+    for key in (
+        "ssd_trigger_roundtrip_us",
+        "ssd_inter_submit_gap_us",
+        "ssd_completion_wait_us",
+        "approx_gc_cs_ssd_us",
+    ):
+        add_if_present(metrics, values, key, f"modern_detail_{key}")
+
+    direct_comparable = {
+        "ssd_trigger_roundtrip_us": "comparable_ssd_trigger_roundtrip_us",
+        "ssd_inter_submit_gap_us": "comparable_ssd_inter_submit_gap_us",
+        "ssd_completion_wait_us": "comparable_ssd_completion_wait_us",
+        "approx_gc_cs_ssd_us": "comparable_ssd_total_us",
+    }
+    for source_key, output_key in direct_comparable.items():
+        add_if_present(metrics, values, source_key, output_key)
+
+    accounted = add_sum_if_present(
+        metrics,
+        values,
+        (
+            "ssd_trigger_roundtrip_us",
+            "ssd_inter_submit_gap_us",
+            "ssd_completion_wait_us",
+        ),
+        "modern_detail_ssd_accounted_us",
+    )
+    total = int_value(values, "approx_gc_cs_ssd_us")
+    if accounted is not None and total is not None:
+        metrics["modern_detail_ssd_accounting_delta_us"].append(
+            total - accounted
+        )
+
+
 def parse_modern_records(
     lines: Iterable[str],
     metrics: DefaultDict[str, List[int]],
 ) -> Dict[str, int]:
-    """Pair modern GC and CSGC phase events and collect durations."""
+    """Parse mCSGC structured records and legacy phase traces."""
     gc_starts: Dict[Tuple[int, int], int] = {}
     phase_starts: DefaultDict[Tuple[str, int, int, int], List[int]] = defaultdict(list)
+    post_detail_by_segment: Dict[Tuple[int, int], Tuple[int, int]] = {}
+    pre_detail_by_segment: Dict[Tuple[int, int], Dict[str, str]] = {}
+    pre_detail_parts: DefaultDict[Tuple[int, int], Set[str]] = defaultdict(set)
     unmatched_ends = 0
+    structured_records = 0
 
     for line in lines:
+        if "MCSGC_SECTION " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            for key in ("section_gc_time_us", "section_sync_us", "collector_us"):
+                add_if_present(metrics, values, key, f"modern_section_{key}")
+                add_if_present(metrics, values, key, f"comparable_section_{key}")
+            continue
+
+        if "MCSGC_SEGMENT_DETAIL " in line:
+            # Compatibility with the short-lived combined diagnostic format.
+            values = parse_kv(line)
+            structured_records += 1
+            key = modern_segment_key(values)
+            if key is None:
+                unmatched_ends += 1
+            else:
+                pre_detail_by_segment.setdefault(key, {}).update(values)
+                pre_detail_parts[key].update(("pre", "move"))
+            record_modern_ssd_detail(values, metrics)
+            continue
+
+        if "MCSGC_SEGMENT_PRE_DETAIL " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            key = modern_segment_key(values)
+            if key is None:
+                unmatched_ends += 1
+            else:
+                pre_detail_by_segment.setdefault(key, {}).update(values)
+                pre_detail_parts[key].add("pre")
+            continue
+
+        if "MCSGC_SEGMENT_MOVE_DETAIL " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            key = modern_segment_key(values)
+            if key is None:
+                unmatched_ends += 1
+            else:
+                pre_detail_by_segment.setdefault(key, {}).update(values)
+                pre_detail_parts[key].add("move")
+            continue
+
+        if "MCSGC_SEGMENT_SSD_DETAIL " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            if modern_segment_key(values) is None:
+                unmatched_ends += 1
+            record_modern_ssd_detail(values, metrics)
+            continue
+
+        if "MCSGC_SEGMENT_POST_DETAIL " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            post_ret = int_value(values, "ret")
+            if post_ret is not None:
+                metrics["modern_post_ret"].append(post_ret)
+            if post_ret != 0:
+                metrics["modern_post_failures"].append(1)
+                add_if_present(
+                    metrics,
+                    values,
+                    "post_rollback_us",
+                    "modern_post_failure_rollback_us",
+                )
+                continue
+            post_keys = (
+                "post_update_meta_us",
+                "post_result_status_us",
+                "post_device_result_validate_us",
+                "post_local_commit_validate_us",
+                "post_cache_invalidate_us",
+                "post_summary_commit_us",
+                "post_dnode_commit_us",
+                "post_account_us",
+                "post_rollback_us",
+                "post_unlock_op_us",
+                "post_cleanup_us",
+            )
+            for key in post_keys:
+                add_if_present(metrics, values, key, f"modern_post_detail_{key}")
+            add_if_present(
+                metrics,
+                values,
+                "post_update_meta_us",
+                "comparable_post_metadata_without_page_release_us",
+            )
+            add_sum_if_present(
+                metrics,
+                values,
+                (
+                    "post_result_status_us",
+                    "post_device_result_validate_us",
+                    "post_local_commit_validate_us",
+                ),
+                "comparable_post_result_validation_us",
+            )
+            add_sum_if_present(
+                metrics,
+                values,
+                (
+                    "post_cache_invalidate_us",
+                    "post_summary_commit_us",
+                    "post_account_us",
+                ),
+                "comparable_post_segment_metadata_us",
+            )
+            add_if_present(
+                metrics,
+                values,
+                "post_dnode_commit_us",
+                "comparable_post_dnode_update_us",
+            )
+            add_if_present(
+                metrics,
+                values,
+                "post_unlock_op_us",
+                "comparable_post_unlock_op_us",
+            )
+
+            update_accounted = add_sum_if_present(
+                metrics,
+                values,
+                (
+                    "post_result_status_us",
+                    "post_device_result_validate_us",
+                    "post_local_commit_validate_us",
+                    "post_cache_invalidate_us",
+                    "post_summary_commit_us",
+                    "post_dnode_commit_us",
+                    "post_account_us",
+                    "post_rollback_us",
+                    "post_unlock_op_us",
+                ),
+                "modern_post_detail_update_accounted_us",
+            )
+            update_total = int_value(values, "post_update_meta_us")
+            if update_accounted is not None and update_total is not None:
+                metrics["modern_post_detail_update_accounting_delta_us"].append(
+                    update_total - update_accounted
+                )
+
+            segno = int_value(values, "segno")
+            start_ns = int_value(values, "start_ns")
+            cleanup_us = int_value(values, "post_cleanup_us")
+            update_us = int_value(values, "post_update_meta_us")
+            if (
+                segno is not None
+                and start_ns is not None
+                and cleanup_us is not None
+                and update_us is not None
+                and cleanup_us >= 0
+                and update_us >= 0
+            ):
+                post_detail_by_segment[(segno, start_ns)] = (
+                    update_us,
+                    cleanup_us,
+                )
+            continue
+
+        if "MCSGC_SEGMENT_RELEASE_DETAIL " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            if int_value(values, "success") != 1:
+                continue
+            for key in (
+                "post_put_data_pages_us",
+                "post_release_cleanup_us",
+                "post_release_total_us",
+            ):
+                add_if_present(metrics, values, key, f"modern_release_{key}")
+            add_if_present(
+                metrics,
+                values,
+                "post_put_data_pages_us",
+                "comparable_post_put_data_pages_us",
+            )
+            segno = int_value(values, "segno")
+            start_ns = int_value(values, "start_ns")
+            put_pages = int_value(values, "post_put_data_pages_us")
+            release_cleanup = int_value(values, "post_release_cleanup_us")
+            release_total = int_value(values, "post_release_total_us")
+            if (
+                segno is None
+                or start_ns is None
+                or put_pages is None
+                or release_cleanup is None
+                or release_total is None
+            ):
+                unmatched_ends += 1
+                continue
+            metrics["modern_release_accounting_delta_us"].append(
+                release_total - put_pages - release_cleanup
+            )
+            post_detail = post_detail_by_segment.pop((segno, start_ns), None)
+            if post_detail is None:
+                unmatched_ends += 1
+            else:
+                update_us, cleanup_us = post_detail
+                comparable_update = update_us + put_pages
+                comparable_cleanup = cleanup_us + release_cleanup
+                metrics["comparable_post_update_meta_us"].append(
+                    comparable_update
+                )
+                metrics["comparable_post_cleanup_us"].append(
+                    comparable_cleanup
+                )
+                metrics["comparable_post_total_work_us"].append(
+                    comparable_update + comparable_cleanup
+                )
+            continue
+
         if "F2FS_GC_HEAVY_TRACE " in line:
             values = parse_kv(line)
             event = values.get("event")
@@ -417,13 +861,34 @@ def parse_modern_records(
                 "segment_finish_offset_us",
             ):
                 add_if_present(metrics, values, field, f"modern_segment_{field}")
+            add_if_present(
+                metrics,
+                values,
+                "approx_segment_total_us",
+                "comparable_segment_total_us",
+            )
+            add_if_present(
+                metrics,
+                values,
+                "post_queue_delay_us",
+                "comparable_post_queue_delay_us",
+            )
+
+    incomplete_pre_details = 0
+    for key, values in pre_detail_by_segment.items():
+        if pre_detail_parts[key] != {"pre", "move"}:
+            incomplete_pre_details += 1
+            continue
+        record_modern_pre_detail(values, metrics)
 
     unmatched_starts = len(gc_starts) + sum(
         len(starts) for starts in phase_starts.values()
-    )
+    ) + len(post_detail_by_segment) + incomplete_pre_details
     return {
         "unmatched_starts": unmatched_starts,
         "unmatched_ends": unmatched_ends,
+        "incomplete_pre_details": incomplete_pre_details,
+        "structured_records": structured_records,
     }
 
 
@@ -460,7 +925,7 @@ def main() -> int:
         crop_path.write_text("\n".join(window_lines) + "\n", encoding="utf-8")
 
     metrics: DefaultDict[str, List[int]] = defaultdict(list)
-    original_records = sum(
+    base_structured_records = sum(
         1 for line in window_lines if parse_original_record(line, metrics)
     )
     diagnostics = parse_modern_records(window_lines, metrics)
@@ -472,20 +937,26 @@ def main() -> int:
         f"measured_end_us={end_us}",
         f"measured_duration_us={max(0, end_us - start_us)}",
         f"window_lines={len(window_lines)}",
-        f"original_structured_records={original_records}",
+        f"base_structured_records={base_structured_records}",
+        f"mcsgc_structured_records={diagnostics['structured_records']}",
         f"unmatched_starts={diagnostics['unmatched_starts']}",
         f"unmatched_ends={diagnostics['unmatched_ends']}",
+        f"incomplete_mcsgc_pre_details={diagnostics['incomplete_pre_details']}",
         "",
     ]
 
     emit_group(output, "complete f2fs_gc calls", metrics, ("gc_call_", "gc_with_", "gc_no_"))
     emit_group(output, "collector paths", metrics, ("collector_", "gc_end_", "gc_path_"))
-    emit_group(output, "section wall-clock", metrics, ("original_section_", "phase_section_"))
+    emit_group(output, "cross-version comparable breakdown", metrics, ("comparable_",))
+    emit_group(output, "section wall-clock", metrics, ("original_section_", "modern_section_", "phase_section_"))
     emit_group(output, "coarse PRE/SSD/POST intervals", metrics, ("phase_pre_", "phase_ssd_", "phase_post_"))
     emit_group(output, "original CSGC segment breakdown", metrics, ("original_segment_",))
     emit_group(output, "original CSGC detailed PRE/SSD breakdown", metrics, ("original_detail_",))
     emit_group(output, "original CSGC detailed POST breakdown", metrics, ("original_post_detail_",))
     emit_group(output, "mCSGC8t segment breakdown", metrics, ("modern_segment_",))
+    emit_group(output, "mCSGC8t detailed PRE/SSD breakdown", metrics, ("modern_detail_",))
+    emit_group(output, "mCSGC8t detailed POST breakdown", metrics, ("modern_post_detail_",))
+    emit_group(output, "mCSGC8t resource release breakdown", metrics, ("modern_release_",))
 
     Path(args.output).write_text("\n".join(output), encoding="utf-8")
     print(f"Wrote {args.output}")

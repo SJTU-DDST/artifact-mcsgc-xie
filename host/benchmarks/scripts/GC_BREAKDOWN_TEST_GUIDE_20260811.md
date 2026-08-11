@@ -53,6 +53,41 @@ ssd_completion_wait_us
 
 POST 除了兼容记录中的 queue delay、metadata update 和最终 cleanup，还通过 `CSGC_ORIGINAL_SEGMENT_POST_DETAIL` 将 metadata update 拆成结果状态检查、SIT/summary 更新、dnode 更新、释放操作锁和释放 data pages。这里同样只拆主要阶段，不在每个 block 的更新循环内继续计时。
 
+### 1.3 mCSGC8t 的对应口径
+
+mCSGC8t 诊断分支输出与原版相同的 `F2FS_GC_DIAG` 和 `F2FS_GC_COLLECTOR_DIAG`，因此完整 `f2fs_gc()`、victim 选择、顶层 checkpoint、collector、no-collector 调用和 ORIGC fallback 可以直接按同名字段比较。
+
+每个 mCSGC section 输出 `MCSGC_SECTION`，字段 `section_gc_time_us`、`section_sync_us` 和 `collector_us` 与 `CSGC_ORIGINAL_SECTION` 对应。当前 Move Plan 路径不执行 section 前 checkpoint，因此正常情况下 `section_sync_us=0`。
+
+每个成功 segment 继续输出旧兼容记录 `mCSGC8t_STAT without wait`，并新增：
+
+```text
+MCSGC_SEGMENT_PRE_DETAIL
+MCSGC_SEGMENT_MOVE_DETAIL
+MCSGC_SEGMENT_SSD_DETAIL
+MCSGC_SEGMENT_POST_DETAIL
+MCSGC_SEGMENT_RELEASE_DETAIL
+```
+
+`MCSGC_SEGMENT_PRE_DETAIL` 和 `MCSGC_SEGMENT_MOVE_DETAIL` 通过 `segno + start_ns` 配对，将 PRE 拆为 valid-offset 构建、summary、node list、inode/data page 锁、dirty-source 扫描、`cp_rwsem`、node page、有效块重读、数据有效性检查、Move Plan 构建、目标块预分配和 Move Plan finalize。PRE retry 仍按“全部 PRE wall-clock、最终成功尝试、失败尝试和 retry gap”分别统计。
+
+`MCSGC_SEGMENT_SSD_DETAIL` 使用与原版相同的 trigger、inter-submit 和 completion-wait 三段记录 Host 可见的 SSD 请求生命周期。拆成三条日志是为了避免单条 printk 过长被内核截断；解析器会自动重新组合，并通过 `incomplete_mcsgc_pre_details` 报告缺失配对。
+
+`MCSGC_SEGMENT_POST_DETAIL` 拆分设备结果状态、设备结果校验、本地提交校验、cache invalidation、summary 提交、dnode 提交、成功记账、错误回滚和操作锁释放。`MCSGC_SEGMENT_RELEASE_DETAIL` 单独记录 mCSGC 在 segment 完成记录之后执行的 data-page 释放和本地缓存清理。
+
+分析结果中的 `comparable_*` 是跨版本公共口径：
+
+- 原版 PRE 起始到 summary 完成，对应 mCSGC valid-offset 构建加 summary 读取，统一为 `comparable_pre_sum_us`；
+- 原版 node/SIT pack 对应 mCSGC Move Plan prepare/finalize，统一为 `comparable_pre_request_metadata_us`；
+- 原版数据重验证对应 mCSGC 的 valid-block 重读加有效性检查，统一为 `comparable_pre_data_revalidate_us`；
+- 两边的目标块预分配和 Host 看到的 SSD 三阶段直接同名对应；
+- POST 使用结果校验、segment metadata、dnode、unlock、data-page 释放和 cleanup 的公共语义；mCSGC 延后执行的 data-page release 会由解析器按 segment 加回 `comparable_post_update_meta_us`，其余 release cleanup 加回 `comparable_post_cleanup_us`，二者之和为 `comparable_post_total_work_us`；
+- mCSGC 独有阶段仍保留在 `modern_detail_*`、`modern_post_detail_*` 和 `modern_release_*` 中，不会因公共字段合并而丢失。
+
+只有 `ret=0` 的 mCSGC POST 会进入成功路径的阶段分布。失败 POST 使用 `modern_post_failures` 和 `modern_post_failure_rollback_us` 单独报告，避免错误恢复时间污染正常 GC 的均值。
+
+由于 mCSGC 的 8 个 segment 会并发执行，逐 segment 时间是各请求自身的 wall-clock，不能相加后当作 section wall-clock。section 级加速必须比较 `comparable_section_section_gc_time_us`；segment 细分用于解释 section 时间为何变化。
+
 ## 2. 诊断分支
 
 ```text
@@ -98,6 +133,13 @@ sudo ./run_gc_breakdown_diagnostic.sh original-csgc smallfile
 
 两个负载共用同一 Host 模块和设备固件，中间不需要重新编译。
 
+如需顺便测量原版 ORI 的顶层 `f2fs_gc()`、victim、checkpoint 和 ordinary collector breakdown，可在同一模块与固件下执行：
+
+```bash
+sudo ./run_gc_breakdown_diagnostic.sh original-ori bigfile
+sudo ./run_gc_breakdown_diagnostic.sh original-ori smallfile
+```
+
 ### 3.2 当前最佳 mCSGC8t no-pipeline：大文件与小文件
 
 将 OpenSSD 切换到正式 mCSGC 固件分支并重新编译、启动：
@@ -126,7 +168,7 @@ sudo ./run_gc_breakdown_diagnostic.sh mcsgc8t-nopipeline bigfile
 sudo ./run_gc_breakdown_diagnostic.sh mcsgc8t-nopipeline smallfile
 ```
 
-这四组首先测 Host breakdown，不要求设备固件启用高频 breakdown。`approx_gc_cs_ssd_us` 和 `SSD_START -> SSD_END` 给出 Host 从提交请求到收到结果的时间；它包含设备排队、设备执行和返回延迟，不能单独解释为盘内搬运时间。
+这四组首先测 Host breakdown，不要求设备固件启用高频 breakdown。`approx_gc_cs_ssd_us` 给出 Host 从提交请求到收到结果的时间；它包含设备排队、设备执行和返回延迟，不能单独解释为盘内搬运时间。
 
 ## 4. 输出文件
 
@@ -136,14 +178,6 @@ sudo ./run_gc_breakdown_diagnostic.sh mcsgc8t-nopipeline smallfile
 external-dmesg.log
 measured-fio-dmesg.log
 gc-breakdown-diagnostic-result.txt
-```
-
-mCSGC8t 还会由现有分析链生成：
-
-```text
-result.txt
-f2fs_gc_heavy_trace_result.txt
-csgc_heavy_trace_result.txt
 ```
 
 优先阅读 `gc-breakdown-diagnostic-result.txt`。其中每个指标都报告：
@@ -159,6 +193,8 @@ sum
 ```
 
 `measured-fio-dmesg.log` 只保留最后一个完整的 `MEASURED_FIO_START` 到 `MEASURED_FIO_END` 窗口，预填充、预热和卸载日志不会进入分析。
+
+mCSGC 诊断构建只启用结构化 breakdown，不额外启用逐事件 GC-heavy trace。这样原版与 mCSGC 的 printk 数量更接近，避免为了生成高频 timeline 而额外改变并发时序。正式 fio 带宽仍必须使用 quiet 分支的结果，不能使用本诊断轮次替代。
 
 ## 5. 可选的设备内部 Breakdown
 

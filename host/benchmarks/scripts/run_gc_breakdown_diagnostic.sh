@@ -74,7 +74,7 @@ case "${configuration}" in
         expected_production=1
         expected_move_plan=1
         expected_fast_unsafe=1
-        run_breakdown_parser=1
+        run_breakdown_parser=0
         ;;
     *)
         usage
