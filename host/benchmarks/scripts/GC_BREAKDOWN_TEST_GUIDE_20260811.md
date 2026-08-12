@@ -237,6 +237,17 @@ sudo ./run_gc_breakdown_diagnostic.sh mcsgc8t-pipeline bigfile
 sudo ./run_gc_breakdown_diagnostic.sh mcsgc8t-pipeline smallfile
 ```
 
+也可以用一个批处理命令自动依次执行两组测试，并分别采集内核日志：
+
+```bash
+sudo ./run_gc_breakdown_mcsgc8t_pipeline_matrix.sh
+```
+
+批次目录位于 `outputs-gc-breakdown-mcsgc8t-pipeline-matrix/<timestamp>/`。其中
+`01-mcsgc8t-pipeline-bigfile-kernel.log` 和
+`02-mcsgc8t-pipeline-smallfile-kernel.log` 分别对应两组测试，`results.txt` 记录每组原始
+结果目录、内核日志和 breakdown 汇总文件的完整路径。任一组失败后，脚本不会启动下一组。
+
 除 no-pipeline 已有的顶层 `f2fs_gc()`、section、segment PRE/SSD/POST 口径外，
 pipeline 分支额外输出 `MCSGC_PIPELINE`，统计：
 
