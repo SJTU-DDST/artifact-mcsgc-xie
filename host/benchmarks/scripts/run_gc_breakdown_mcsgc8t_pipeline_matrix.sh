@@ -2,7 +2,17 @@
 
 set -euo pipefail
 
-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# Execute an in-memory snapshot so repository updates cannot alter a live run.
+if [ -z "${GC_BREAKDOWN_PIPELINE_MATRIX_SNAPSHOT:-}" ]; then
+    matrix_script_path=$(readlink -f -- "${BASH_SOURCE[0]}")
+    matrix_script_body=$(<"${matrix_script_path}")
+    export GC_BREAKDOWN_PIPELINE_MATRIX_SNAPSHOT=1
+    export GC_BREAKDOWN_PIPELINE_MATRIX_SCRIPT_PATH="${matrix_script_path}"
+    exec /bin/bash -c "${matrix_script_body}" "${matrix_script_path}" "$@"
+fi
+
+matrix_script_path=${GC_BREAKDOWN_PIPELINE_MATRIX_SCRIPT_PATH}
+script_dir=$(cd -- "$(dirname -- "${matrix_script_path}")" && pwd)
 runner="${script_dir}/run_gc_breakdown_diagnostic.sh"
 batch_id=$(date +"%Y%m%d_%H%M%S")
 batch_dir="${script_dir}/outputs-gc-breakdown-mcsgc8t-pipeline-matrix/${batch_id}"

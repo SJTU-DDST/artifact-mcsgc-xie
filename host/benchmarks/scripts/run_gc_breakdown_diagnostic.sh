@@ -2,7 +2,17 @@
 
 set -euo pipefail
 
-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# Execute an in-memory snapshot so repository updates cannot alter a live run.
+if [ -z "${GC_BREAKDOWN_DIAGNOSTIC_SNAPSHOT:-}" ]; then
+    diagnostic_script_path=$(readlink -f -- "${BASH_SOURCE[0]}")
+    diagnostic_script_body=$(<"${diagnostic_script_path}")
+    export GC_BREAKDOWN_DIAGNOSTIC_SNAPSHOT=1
+    export GC_BREAKDOWN_DIAGNOSTIC_SCRIPT_PATH="${diagnostic_script_path}"
+    exec /bin/bash -c "${diagnostic_script_body}" "${diagnostic_script_path}" "$@"
+fi
+
+diagnostic_script_path=${GC_BREAKDOWN_DIAGNOSTIC_SCRIPT_PATH}
+script_dir=$(cd -- "$(dirname -- "${diagnostic_script_path}")" && pwd)
 host_repo=/home/xin/work-xie/mcsgc-real/linux-cs
 source "${script_dir}/formal_host_worktree.sh"
 

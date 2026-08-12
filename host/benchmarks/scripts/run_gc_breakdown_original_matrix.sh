@@ -2,7 +2,17 @@
 
 set -euo pipefail
 
-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# Execute an in-memory snapshot so repository updates cannot alter a live run.
+if [ -z "${GC_BREAKDOWN_ORIGINAL_MATRIX_SNAPSHOT:-}" ]; then
+    matrix_script_path=$(readlink -f -- "${BASH_SOURCE[0]}")
+    matrix_script_body=$(<"${matrix_script_path}")
+    export GC_BREAKDOWN_ORIGINAL_MATRIX_SNAPSHOT=1
+    export GC_BREAKDOWN_ORIGINAL_MATRIX_SCRIPT_PATH="${matrix_script_path}"
+    exec /bin/bash -c "${matrix_script_body}" "${matrix_script_path}" "$@"
+fi
+
+matrix_script_path=${GC_BREAKDOWN_ORIGINAL_MATRIX_SCRIPT_PATH}
+script_dir=$(cd -- "$(dirname -- "${matrix_script_path}")" && pwd)
 runner="${script_dir}/run_gc_breakdown_diagnostic.sh"
 batch_id=$(date +"%Y%m%d_%H%M%S")
 batch_dir="${script_dir}/outputs-gc-breakdown-original-matrix/${batch_id}"
@@ -10,13 +20,28 @@ manifest="${batch_dir}/results.txt"
 
 # Print the command syntax without starting a destructive benchmark.
 usage() {
-    echo "Usage: sudo $0" >&2
+    cat >&2 <<EOF
+Usage: sudo $0 [--csgc-only|--ori-only]
+
+With no option, run all four original CSGC/ORI diagnostics.
+EOF
 }
 
-if [ "$#" -ne 0 ]; then
-    usage
-    exit 1
-fi
+selection=all
+case "$#:$*" in
+    0:)
+        ;;
+    1:--csgc-only)
+        selection=csgc
+        ;;
+    1:--ori-only)
+        selection=ori
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac
 
 if [ "${EUID}" -ne 0 ]; then
     echo "ERROR: run this diagnostic batch through sudo." >&2
@@ -33,17 +58,37 @@ mkdir -p "${batch_dir}"
 printf 'batch_id=%s\nstarted_at=%s\n' \
     "${batch_id}" "$(date --iso-8601=seconds)" > "${manifest}"
 
-configurations=(
-    "original-csgc bigfile 01-original-csgc-bigfile"
-    "original-csgc smallfile 02-original-csgc-smallfile"
-    "original-ori bigfile 03-original-ori-bigfile"
-    "original-ori smallfile 04-original-ori-smallfile"
-)
+case "${selection}" in
+    all)
+        configurations=(
+            "original-csgc bigfile 01-original-csgc-bigfile"
+            "original-csgc smallfile 02-original-csgc-smallfile"
+            "original-ori bigfile 03-original-ori-bigfile"
+            "original-ori smallfile 04-original-ori-smallfile"
+        )
+        execution_order="CSGC bigfile, CSGC smallfile, ORI bigfile, ORI smallfile"
+        ;;
+    csgc)
+        configurations=(
+            "original-csgc bigfile 01-original-csgc-bigfile"
+            "original-csgc smallfile 02-original-csgc-smallfile"
+        )
+        execution_order="CSGC bigfile, CSGC smallfile"
+        ;;
+    ori)
+        configurations=(
+            "original-ori bigfile 01-original-ori-bigfile"
+            "original-ori smallfile 02-original-ori-smallfile"
+        )
+        execution_order="ORI bigfile, ORI smallfile"
+        ;;
+esac
 
 echo "============================================================"
 echo "Original CSGC/ORI GC breakdown matrix"
 echo "Batch directory: ${batch_dir}"
-echo "Execution order: CSGC bigfile, CSGC smallfile, ORI bigfile, ORI smallfile"
+echo "Selection: ${selection}"
+echo "Execution order: ${execution_order}"
 echo "============================================================"
 
 for entry in "${configurations[@]}"; do
@@ -103,6 +148,6 @@ printf '\ncompleted_at=%s\nstatus=success\n' \
     "$(date --iso-8601=seconds)" >> "${manifest}"
 
 echo
-echo "All four GC breakdown diagnostics completed successfully."
+echo "Selected original GC breakdown diagnostics completed successfully."
 echo "Batch directory: ${batch_dir}"
 echo "Result manifest: ${manifest}"
