@@ -15,6 +15,7 @@ Configurations:
   original-ori
   original-csgc
   mcsgc8t-nopipeline
+  mcsgc8t-pipeline
 
 Workloads:
   bigfile     4-job single-big-file workload (default)
@@ -71,6 +72,15 @@ case "${configuration}" in
         expected_branch=exp/diagnostic-mcsgc8t-nopipe-breakdown-20260811
         prepare_configuration=mcsgc8t-nopipeline
         test_mode=diagnostic-mcsgc8t-nopipeline-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-pipeline)
+        expected_branch=exp/diagnostic-mcsgc8t-pipeline-breakdown-20260812
+        prepare_configuration=mcsgc8t-pipeline
+        test_mode=diagnostic-mcsgc8t-pipeline-csgc
         expected_production=1
         expected_move_plan=1
         expected_fast_unsafe=1
@@ -192,6 +202,15 @@ summary_path="${run_dir}/gc-breakdown-diagnostic-result.txt"
 crop_path="${run_dir}/measured-fio-dmesg.log"
 python3 "${script_dir}/draw-xie/analyze-gc-breakdown-diagnostic.py" \
     "${saved_external_log}" "${summary_path}" --crop-output "${crop_path}"
+
+if [ -n "${GC_BREAKDOWN_RESULT_PATH_FILE:-}" ]; then
+    result_path_parent=$(dirname -- "${GC_BREAKDOWN_RESULT_PATH_FILE}")
+    if [ ! -d "${result_path_parent}" ]; then
+        echo "ERROR: result path directory is unavailable: ${result_path_parent}" >&2
+        exit 1
+    fi
+    printf '%s\n' "${run_dir}" > "${GC_BREAKDOWN_RESULT_PATH_FILE}"
+fi
 
 if [ "${run_breakdown_parser}" -eq 1 ]; then
     python3 "${script_dir}/draw-xie/breakdown.py" "${crop_path}"

@@ -96,13 +96,19 @@ MCSGC_SEGMENT_RELEASE_DETAIL
 
 mCSGC8t no-pipeline:
   exp/diagnostic-mcsgc8t-nopipe-breakdown-20260811
+
+mCSGC8t pipeline:
+  exp/diagnostic-mcsgc8t-pipeline-breakdown-20260812
 ```
 
 两个分支分别从对应正式 quiet 分支建立，不修改正式性能分支。
 
-## 3. 本轮四组测试
+## 3. 本轮六组测试
 
-本轮固定比较原始 CSGC 和当前最佳 mCSGC8t no-pipeline + SSD1t，分别使用正式性能实验中的大文件和小文件负载。每组运行一次即可；单次运行已经包含数千个 GC 样本，重复三次主要影响 fio 性能置信区间，对阶段耗时分布的新增价值较低。
+本轮固定比较原始 CSGC、mCSGC8t no-pipeline + SSD1t 和 mCSGC8t
+pipeline + SSD1t，分别使用正式性能实验中的大文件和小文件负载。每组运行一次即可；
+单次运行已经包含数千个 GC 样本，重复三次主要影响 fio 性能置信区间，对阶段耗时分布的
+新增价值较低。
 
 | 组别 | Host | OpenSSD | 负载 |
 |---|---|---|---|
@@ -110,23 +116,39 @@ mCSGC8t no-pipeline:
 | 2 | 原始 CSGC 诊断分支 | 原始 CSGC 固件 | smallfile |
 | 3 | mCSGC8t no-pipeline 诊断分支 | Move Plan unsafe fast path，SSD1t | bigfile |
 | 4 | mCSGC8t no-pipeline 诊断分支 | Move Plan unsafe fast path，SSD1t | smallfile |
+| 5 | mCSGC8t pipeline 诊断分支 | Move Plan unsafe fast path，SSD1t | bigfile |
+| 6 | mCSGC8t pipeline 诊断分支 | Move Plan unsafe fast path，SSD1t | smallfile |
 
 ### 3.1 原始 CSGC：大文件与小文件
 
-先确认 OpenSSD 使用正式原始 CSGC 实验的固件。31 服务器对应分支为：
+当前核查状态（2026-08-12）：
+
+- 31 服务器的 OpenSSD 源码位于 `formal-original-csgc-main-20260809`，当前提交为
+  `463e8b0b13ad345ed99c2176b1f81ad34d3c986a`；
+- 四个 Vitis application 的配置和共享头文件一致；
+- 设备使用 legacy 原始 CSGC 协议，实际 worker 模式为 `ssd1t`；
+- 因此，只要 OpenSSD 当前运行的仍是最近由这份源码编译、启动的固件，本轮无需修改或重新编译设备端代码；
+- Host 诊断分支已经位于
+  `/tmp/linux-cs-diagnostic-original-breakdown-v2`，无需在主工作树中手工执行 `git switch` 或 `gsw`。
+
+正式原始 CSGC 实验使用的设备分支为：
 
 ```text
 formal-original-csgc-main-20260809
 ```
 
-然后在 Host 上切换诊断分支、编译模块并依次运行两个负载：
+先在 Host 上编译并安装一次诊断模块。外层不要加 `sudo`，脚本只会在调用
+`build_f2fs.sh` 时自行使用 `sudo`：
 
 ```bash
-cd /home/xin/work-xie/mcsgc-real/linux-cs
-gsw exp/diagnostic-original-gc-breakdown-20260811
-
 cd /home/xin/artifact-csgc/host/benchmarks/scripts
 ./prepare_gc_breakdown_host_module.sh original
+```
+
+编译成功后，依次运行原始 CSGC 的大文件和小文件测试：
+
+```bash
+cd /home/xin/artifact-csgc/host/benchmarks/scripts
 sudo ./run_gc_breakdown_diagnostic.sh original-csgc bigfile
 sudo ./run_gc_breakdown_diagnostic.sh original-csgc smallfile
 ```
@@ -139,6 +161,31 @@ sudo ./run_gc_breakdown_diagnostic.sh original-csgc smallfile
 sudo ./run_gc_breakdown_diagnostic.sh original-ori bigfile
 sudo ./run_gc_breakdown_diagnostic.sh original-ori smallfile
 ```
+
+每条测试命令都会重新格式化并覆盖 `/dev/nvme0n1`，必须串行执行。运行脚本会自行：
+
+1. 校验 Host 分支、提交和已加载模块；
+2. 只读校验 31 服务器 Vitis 工作区的协议和 worker 配置；
+3. 采集完整外部 dmesg；
+4. 执行对应正式负载；
+5. 裁剪正式 fio 测量窗口；
+6. 调用 Python 分析器生成 `gc-breakdown-diagnostic-result.txt`。
+
+不需要另外运行 `old-mydmesg.sh` 或手工调用 Python 脚本。诊断构建带有结构化计时和
+printk，只用于分析阶段构成；端到端带宽仍以 quiet 正式实验结果为准。
+
+也可以使用一条命令严格按照“CSGC 大文件、CSGC 小文件、ORI 大文件、ORI 小文件”的
+顺序执行全部四组：
+
+```bash
+sudo ./run_gc_breakdown_original_matrix.sh
+```
+
+批处理脚本遇到任意一组失败后会立即停止。每一组仍在自己的结果目录中保存完整的
+`external-dmesg.log`；此外，批次目录
+`outputs-gc-breakdown-original-matrix/<timestamp>/` 会提供四个名称明确的
+`*-kernel.log` 硬链接以及汇总路径文件 `results.txt`。因此不需要另行启动内核日志
+采集脚本。
 
 ### 3.2 当前最佳 mCSGC8t no-pipeline：大文件与小文件
 
@@ -168,7 +215,45 @@ sudo ./run_gc_breakdown_diagnostic.sh mcsgc8t-nopipeline bigfile
 sudo ./run_gc_breakdown_diagnostic.sh mcsgc8t-nopipeline smallfile
 ```
 
-这四组首先测 Host breakdown，不要求设备固件启用高频 breakdown。`approx_gc_cs_ssd_us` 给出 Host 从提交请求到收到结果的时间；它包含设备排队、设备执行和返回延迟，不能单独解释为盘内搬运时间。
+这些测试首先测 Host breakdown，不要求设备固件启用高频 breakdown。
+`approx_gc_cs_ssd_us` 给出 Host 从提交请求到收到结果的时间；它包含设备排队、设备执行
+和返回延迟，不能单独解释为盘内搬运时间。
+
+### 3.3 mCSGC8t pipeline：大文件与小文件
+
+pipeline 诊断使用与 no-pipeline 相同的 Move Plan unsafe fast path 和 SSD1t
+设备固件，只改变 Host 外层跨 section 调度策略。设备端仍使用：
+
+```text
+exp/formal-mcsgc-quiet-20260809
+```
+
+Host 诊断分支已经位于独立 worktree，准备脚本会自动定位，无需手工切换主工作树：
+
+```bash
+cd /home/xin/artifact-csgc/host/benchmarks/scripts
+./prepare_gc_breakdown_host_module.sh mcsgc8t-pipeline
+sudo ./run_gc_breakdown_diagnostic.sh mcsgc8t-pipeline bigfile
+sudo ./run_gc_breakdown_diagnostic.sh mcsgc8t-pipeline smallfile
+```
+
+除 no-pipeline 已有的顶层 `f2fs_gc()`、section、segment PRE/SSD/POST 口径外，
+pipeline 分支额外输出 `MCSGC_PIPELINE`，统计：
+
+- 每个外层批次实际启动 1 个还是 2 个 section；
+- pipeline wall-clock 与两个 section 生命周期之和；
+- section 生命周期的严格并集、完整跨度、重叠时间、两段之间的空档和启动间隔；
+- pipeline 外层调度前后控制开销；
+- 第二个 victim 的选择时间和返回结果；
+- section 并行度及计时完整性。
+
+分析结果在 `gc-breakdown-diagnostic-result.txt` 的
+`cross-section pipeline` 分组中。`pipeline_effective_parallelism_milli` 和
+`pipeline_section_parallelism_milli` 以千分之一为单位，例如 `1500` 表示
+`1.5x`；`pipeline_overlap_fraction_permille=500` 表示 section 生命周期并集的
+50% 同时有两个 section 活跃。`pipeline_dual_batch_fraction_permille` 表示成功启动两个
+section 的外层批次比例，`pipeline_net_saved_us` 为两个 section 串行耗时之和减去实际
+pipeline wall-clock，正值才表示本批 pipeline 获得了净 wall-clock 收益。
 
 ## 4. 输出文件
 

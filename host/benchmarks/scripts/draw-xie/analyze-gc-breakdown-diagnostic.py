@@ -188,12 +188,19 @@ def parse_original_record(
         values = parse_kv(line)
         kind = values.get("kind", "unknown")
         seg_type = values.get("seg_type", "unknown")
+        duration = int_value(values, "duration_us")
+        sections = int_value(values, "sections") or 1
         add_if_present(
             metrics,
             values,
             "duration_us",
             f"collector_{kind}_{seg_type}_duration_us",
         )
+        metrics[f"collector_{kind}_{seg_type}_sections"].append(sections)
+        if duration is not None and duration >= 0 and sections > 0:
+            metrics[f"collector_{kind}_{seg_type}_duration_per_section_us"].append(
+                duration // sections
+            )
         return True
 
     if "CSGC_ORIGINAL_SECTION " in line:
@@ -558,8 +565,147 @@ def parse_modern_records(
     pre_detail_parts: DefaultDict[Tuple[int, int], Set[str]] = defaultdict(set)
     unmatched_ends = 0
     structured_records = 0
+    pipeline_records = 0
+    pipeline_dual_records = 0
+    pipeline_single_records = 0
+    pipeline_second_victim_attempts = 0
+    pipeline_second_victim_failures = 0
+    pipeline_second_victim_non_data = 0
+    pipeline_incomplete_timings = 0
+    pipeline_errors = 0
 
     for line in lines:
+        if "MCSGC_PIPELINE " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            pipeline_records += 1
+            sections = int_value(values, "sections")
+            timing_complete = int_value(values, "timing_complete")
+            ret = int_value(values, "ret")
+            second_victim_attempted = int_value(values, "second_victim_attempted")
+            second_victim_ret = int_value(values, "second_victim_ret")
+            if second_victim_attempted == 1:
+                pipeline_second_victim_attempts += 1
+
+            for key in (
+                "sections",
+                "wall_us",
+                "section0_us",
+                "section1_us",
+                "section_sum_us",
+                "section_union_us",
+                "section_span_us",
+                "overlap_us",
+                "inter_section_idle_us",
+                "launch_gap_us",
+                "outer_pre_us",
+                "outer_post_us",
+                "second_victim_attempted",
+                "second_victim_select_us",
+                "valid_blocks",
+                "seg_freed",
+                "full_sections",
+            ):
+                add_if_present(metrics, values, key, f"pipeline_{key}")
+
+            wall_us = int_value(values, "wall_us")
+            section_sum_us = int_value(values, "section_sum_us")
+            section_union_us = int_value(values, "section_union_us")
+            section_span_us = int_value(values, "section_span_us")
+            overlap_us = int_value(values, "overlap_us")
+            effective_parallelism: Optional[int] = None
+            section_parallelism: Optional[int] = None
+            overlap_fraction: Optional[int] = None
+            if sections is not None and sections > 0:
+                if wall_us is not None:
+                    metrics["pipeline_wall_per_section_us"].append(
+                        wall_us // sections
+                    )
+                if section_sum_us is not None:
+                    metrics["pipeline_section_sum_per_section_us"].append(
+                        section_sum_us // sections
+                    )
+            if wall_us is not None and wall_us > 0 and section_sum_us is not None:
+                effective_parallelism = section_sum_us * 1000 // wall_us
+                metrics["pipeline_effective_parallelism_milli"].append(
+                    effective_parallelism
+                )
+                metrics["pipeline_net_saved_us"].append(
+                    section_sum_us - wall_us
+                )
+            if (
+                section_union_us is not None
+                and section_union_us > 0
+                and section_sum_us is not None
+            ):
+                section_parallelism = section_sum_us * 1000 // section_union_us
+                metrics["pipeline_section_parallelism_milli"].append(
+                    section_parallelism
+                )
+            if (
+                section_union_us is not None
+                and section_union_us > 0
+                and overlap_us is not None
+            ):
+                overlap_fraction = overlap_us * 1000 // section_union_us
+                metrics["pipeline_overlap_fraction_permille"].append(
+                    overlap_fraction
+                )
+
+            if sections == 2:
+                pipeline_dual_records += 1
+                for key in (
+                    "wall_us",
+                    "section_sum_us",
+                    "section_union_us",
+                    "section_span_us",
+                    "overlap_us",
+                    "inter_section_idle_us",
+                    "launch_gap_us",
+                ):
+                    add_if_present(metrics, values, key, f"pipeline_dual_{key}")
+                if effective_parallelism is not None:
+                    metrics["pipeline_dual_effective_parallelism_milli"].append(
+                        effective_parallelism
+                    )
+                if wall_us is not None and section_sum_us is not None:
+                    metrics["pipeline_dual_net_saved_us"].append(
+                        section_sum_us - wall_us
+                    )
+                if wall_us is not None:
+                    metrics["pipeline_dual_wall_per_section_us"].append(
+                        wall_us // sections
+                    )
+                if section_parallelism is not None:
+                    metrics["pipeline_dual_section_parallelism_milli"].append(
+                        section_parallelism
+                    )
+                if overlap_fraction is not None:
+                    metrics["pipeline_dual_overlap_fraction_permille"].append(
+                        overlap_fraction
+                    )
+                if (
+                    section_span_us is not None
+                    and section_span_us > 0
+                    and section_sum_us is not None
+                ):
+                    metrics["pipeline_dual_span_parallelism_milli"].append(
+                        section_sum_us * 1000 // section_span_us
+                    )
+            elif sections == 1:
+                pipeline_single_records += 1
+                add_if_present(metrics, values, "wall_us", "pipeline_single_wall_us")
+                if second_victim_attempted == 1:
+                    if second_victim_ret is not None and second_victim_ret != 0:
+                        pipeline_second_victim_failures += 1
+                    elif second_victim_ret == 0:
+                        pipeline_second_victim_non_data += 1
+            if timing_complete != 1:
+                pipeline_incomplete_timings += 1
+            if ret is not None and ret != 0:
+                pipeline_errors += 1
+            continue
+
         if "MCSGC_SECTION " in line:
             values = parse_kv(line)
             structured_records += 1
@@ -884,11 +1030,33 @@ def parse_modern_records(
     unmatched_starts = len(gc_starts) + sum(
         len(starts) for starts in phase_starts.values()
     ) + len(post_detail_by_segment) + incomplete_pre_details
+    if pipeline_records:
+        metrics["pipeline_dual_batch_fraction_permille"].append(
+            pipeline_dual_records * 1000 // pipeline_records
+        )
+        metrics["pipeline_single_batch_fraction_permille"].append(
+            pipeline_single_records * 1000 // pipeline_records
+        )
+    if pipeline_second_victim_attempts:
+        metrics["pipeline_second_victim_failure_fraction_permille"].append(
+            pipeline_second_victim_failures * 1000 // pipeline_second_victim_attempts
+        )
+        metrics["pipeline_second_victim_non_data_fraction_permille"].append(
+            pipeline_second_victim_non_data * 1000 // pipeline_second_victim_attempts
+        )
     return {
         "unmatched_starts": unmatched_starts,
         "unmatched_ends": unmatched_ends,
         "incomplete_pre_details": incomplete_pre_details,
         "structured_records": structured_records,
+        "pipeline_records": pipeline_records,
+        "pipeline_dual_records": pipeline_dual_records,
+        "pipeline_single_records": pipeline_single_records,
+        "pipeline_second_victim_attempts": pipeline_second_victim_attempts,
+        "pipeline_second_victim_failures": pipeline_second_victim_failures,
+        "pipeline_second_victim_non_data": pipeline_second_victim_non_data,
+        "pipeline_incomplete_timings": pipeline_incomplete_timings,
+        "pipeline_errors": pipeline_errors,
     }
 
 
@@ -942,6 +1110,14 @@ def main() -> int:
         f"unmatched_starts={diagnostics['unmatched_starts']}",
         f"unmatched_ends={diagnostics['unmatched_ends']}",
         f"incomplete_mcsgc_pre_details={diagnostics['incomplete_pre_details']}",
+        f"pipeline_records={diagnostics['pipeline_records']}",
+        f"pipeline_dual_records={diagnostics['pipeline_dual_records']}",
+        f"pipeline_single_records={diagnostics['pipeline_single_records']}",
+        f"pipeline_second_victim_attempts={diagnostics['pipeline_second_victim_attempts']}",
+        f"pipeline_second_victim_failures={diagnostics['pipeline_second_victim_failures']}",
+        f"pipeline_second_victim_non_data={diagnostics['pipeline_second_victim_non_data']}",
+        f"pipeline_incomplete_timings={diagnostics['pipeline_incomplete_timings']}",
+        f"pipeline_errors={diagnostics['pipeline_errors']}",
         "",
     ]
 
@@ -949,6 +1125,7 @@ def main() -> int:
     emit_group(output, "collector paths", metrics, ("collector_", "gc_end_", "gc_path_"))
     emit_group(output, "cross-version comparable breakdown", metrics, ("comparable_",))
     emit_group(output, "section wall-clock", metrics, ("original_section_", "modern_section_", "phase_section_"))
+    emit_group(output, "cross-section pipeline", metrics, ("pipeline_",))
     emit_group(output, "coarse PRE/SSD/POST intervals", metrics, ("phase_pre_", "phase_ssd_", "phase_post_"))
     emit_group(output, "original CSGC segment breakdown", metrics, ("original_segment_",))
     emit_group(output, "original CSGC detailed PRE/SSD breakdown", metrics, ("original_detail_",))

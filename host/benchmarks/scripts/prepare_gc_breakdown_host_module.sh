@@ -14,6 +14,7 @@ Usage: ./prepare_gc_breakdown_host_module.sh <configuration>
 Configurations:
   original             Diagnostic module for ORI and original CSGC
   mcsgc8t-nopipeline   Diagnostic module for optimized mCSGC8t no-pipeline
+  mcsgc8t-pipeline     Diagnostic module for optimized mCSGC8t pipeline
 EOF
 }
 
@@ -28,6 +29,9 @@ case "$1" in
         ;;
     mcsgc8t-nopipeline)
         expected_branch=exp/diagnostic-mcsgc8t-nopipe-breakdown-20260811
+        ;;
+    mcsgc8t-pipeline)
+        expected_branch=exp/diagnostic-mcsgc8t-pipeline-breakdown-20260812
         ;;
     *)
         usage
