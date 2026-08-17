@@ -27,6 +27,8 @@ Configurations:
   mcsgc8t-nopipeline
   mcsgc8t-pipeline
   mcsgc8t-batch-dnode
+  mcsgc8t-summary-control
+  mcsgc8t-batch-summary
 
 Workloads:
   bigfile     4-job single-big-file workload (default)
@@ -101,6 +103,24 @@ case "${configuration}" in
         expected_branch=exp/diagnostic-mcsgc8t-batched-dnode-breakdown-20260817
         prepare_configuration=mcsgc8t-batch-dnode
         test_mode=diagnostic-mcsgc8t-batch-dnode-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-summary-control)
+        expected_branch=exp/diagnostic-mcsgc8t-summary-control-20260817
+        prepare_configuration=mcsgc8t-summary-control
+        test_mode=diagnostic-mcsgc8t-summary-control-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-batch-summary)
+        expected_branch=exp/diagnostic-mcsgc8t-batched-summary-breakdown-20260817
+        prepare_configuration=mcsgc8t-batch-summary
+        test_mode=diagnostic-mcsgc8t-batch-summary-csgc
         expected_production=1
         expected_move_plan=1
         expected_fast_unsafe=1

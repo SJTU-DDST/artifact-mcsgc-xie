@@ -563,6 +563,9 @@ def parse_modern_records(
     post_detail_by_segment: Dict[Tuple[int, int], Tuple[int, int]] = {}
     pre_detail_by_segment: Dict[Tuple[int, int], Dict[str, str]] = {}
     pre_detail_parts: DefaultDict[Tuple[int, int], Set[str]] = defaultdict(set)
+    summary_batches: Dict[Tuple[int, int], Dict[str, int]] = {}
+    summary_batch_mismatches = 0
+    summary_segments = 0
     unmatched_ends = 0
     structured_records = 0
     pipeline_records = 0
@@ -779,6 +782,18 @@ def parse_modern_records(
                 "post_local_commit_validate_us",
                 "post_cache_invalidate_us",
                 "post_summary_commit_us",
+                "post_summary_queue_wait_us",
+                "post_summary_curseg_lock_wait_us",
+                "post_summary_curseg_mutex_wait_us",
+                "post_summary_page_get_us",
+                "post_summary_resolve_us",
+                "post_summary_entry_update_us",
+                "post_summary_dirty_put_us",
+                "post_summary_service_us",
+                "post_summary_batch_id",
+                "post_summary_batch_size",
+                "post_summary_moves",
+                "post_summary_pages",
                 "post_dnode_commit_us",
                 "post_dnode_blocks",
                 "post_dnode_batches",
@@ -796,6 +811,39 @@ def parse_modern_records(
             )
             for key in post_keys:
                 add_if_present(metrics, values, key, f"modern_post_detail_{key}")
+
+            summary_batch_id = int_value(values, "post_summary_batch_id")
+            summary_batch_size = int_value(values, "post_summary_batch_size")
+            summary_start_ns = int_value(values, "start_ns")
+            if (
+                summary_batch_id is not None
+                and summary_batch_size is not None
+                and summary_batch_size > 0
+                and summary_start_ns is not None
+            ):
+                summary_segments += 1
+                batch_key = (summary_start_ns, summary_batch_id)
+                batch_fields = {
+                    key: value
+                    for key in (
+                        "post_summary_batch_size",
+                        "post_summary_moves",
+                        "post_summary_pages",
+                        "post_summary_curseg_lock_wait_us",
+                        "post_summary_curseg_mutex_wait_us",
+                        "post_summary_page_get_us",
+                        "post_summary_resolve_us",
+                        "post_summary_entry_update_us",
+                        "post_summary_dirty_put_us",
+                        "post_summary_service_us",
+                    )
+                    if (value := int_value(values, key)) is not None and value >= 0
+                }
+                previous = summary_batches.get(batch_key)
+                if previous is None:
+                    summary_batches[batch_key] = batch_fields
+                elif previous != batch_fields:
+                    summary_batch_mismatches += 1
             add_if_present(
                 metrics,
                 values,
@@ -1071,6 +1119,12 @@ def parse_modern_records(
         metrics["pipeline_second_victim_non_data_fraction_permille"].append(
             pipeline_second_victim_non_data * 1000 // pipeline_second_victim_attempts
         )
+
+    for batch in summary_batches.values():
+        for source_key, value in batch.items():
+            output_key = source_key.removeprefix("post_summary_")
+            metrics[f"summary_batch_{output_key}"].append(value)
+
     return {
         "unmatched_starts": unmatched_starts,
         "unmatched_ends": unmatched_ends,
@@ -1084,6 +1138,9 @@ def parse_modern_records(
         "pipeline_second_victim_non_data": pipeline_second_victim_non_data,
         "pipeline_incomplete_timings": pipeline_incomplete_timings,
         "pipeline_errors": pipeline_errors,
+        "summary_segments": summary_segments,
+        "summary_batches": len(summary_batches),
+        "summary_batch_mismatches": summary_batch_mismatches,
     }
 
 
@@ -1130,6 +1187,44 @@ def emit_dnode_batch_aggregate(
     output.append("")
 
 
+def emit_summary_batch_aggregate(
+    output: List[str],
+    metrics: DefaultDict[str, List[int]],
+    diagnostics: Dict[str, int],
+) -> None:
+    """Emit de-duplicated summary batch distributions and invariants."""
+    segments = diagnostics["summary_segments"]
+    batches = diagnostics["summary_batches"]
+    batch_sizes = metrics.get("summary_batch_batch_size", [])
+    moves = metrics.get("summary_batch_moves", [])
+    pages = metrics.get("summary_batch_pages", [])
+    batch_size_sum = sum(batch_sizes)
+
+    output.append("=== mCSGC8t summary batch aggregate ===")
+    if not segments or not batches:
+        output.append("no records")
+    else:
+        reduction = (1.0 - batches / segments) * 100.0
+        output.extend(
+            (
+                f"post_summary_segments={segments}",
+                f"post_summary_batches={batches}",
+                f"post_summary_batch_size_sum={batch_size_sum}",
+                f"post_summary_batch_size_matches_segments={int(batch_size_sum == segments)}",
+                f"post_summary_batch_record_mismatches={diagnostics['summary_batch_mismatches']}",
+                f"post_summary_commit_call_reduction_pct={reduction:.6f}",
+                f"post_summary_moves_per_batch={sum(moves) / batches:.6f}",
+                f"post_summary_pages_per_batch={sum(pages) / batches:.6f}",
+            )
+        )
+        output.extend(
+            metric_line(name, metrics[name])
+            for name in sorted(metrics)
+            if name.startswith("summary_batch_")
+        )
+    output.append("")
+
+
 def main() -> int:
     """Crop the measured window, parse records, and write the summary."""
     args = parse_args()
@@ -1172,6 +1267,9 @@ def main() -> int:
         f"pipeline_second_victim_non_data={diagnostics['pipeline_second_victim_non_data']}",
         f"pipeline_incomplete_timings={diagnostics['pipeline_incomplete_timings']}",
         f"pipeline_errors={diagnostics['pipeline_errors']}",
+        f"summary_segments={diagnostics['summary_segments']}",
+        f"summary_batches={diagnostics['summary_batches']}",
+        f"summary_batch_mismatches={diagnostics['summary_batch_mismatches']}",
         "",
     ]
 
@@ -1188,6 +1286,7 @@ def main() -> int:
     emit_group(output, "mCSGC8t detailed PRE/SSD breakdown", metrics, ("modern_detail_",))
     emit_group(output, "mCSGC8t detailed POST breakdown", metrics, ("modern_post_detail_",))
     emit_dnode_batch_aggregate(output, metrics)
+    emit_summary_batch_aggregate(output, metrics, diagnostics)
     emit_group(output, "mCSGC8t resource release breakdown", metrics, ("modern_release_",))
 
     Path(args.output).write_text("\n".join(output), encoding="utf-8")
