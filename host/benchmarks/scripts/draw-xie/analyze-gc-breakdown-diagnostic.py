@@ -558,6 +558,27 @@ def parse_modern_records(
     metrics: DefaultDict[str, List[int]],
 ) -> Dict[str, int]:
     """Parse mCSGC structured records and legacy phase traces."""
+    line_list = list(lines)
+    section_windows: DefaultDict[int, List[Tuple[int, int]]] = defaultdict(list)
+    for line in line_list:
+        if "MCSGC_SECTION " not in line:
+            continue
+        values = parse_kv(line)
+        section = int_value(values, "section")
+        section_start = int_value(values, "start_ns")
+        section_end = int_value(values, "end_ns")
+        segments = int_value(values, "segments")
+        if (
+            section is None
+            or section_start is None
+            or section_end is None
+            or segments is None
+            or segments <= 0
+        ):
+            continue
+        for segno in range(section, section + segments):
+            section_windows[segno].append((section_start, section_end))
+
     gc_starts: Dict[Tuple[int, int], int] = {}
     phase_starts: DefaultDict[Tuple[str, int, int, int], List[int]] = defaultdict(list)
     post_detail_by_segment: Dict[Tuple[int, int], Tuple[int, int]] = {}
@@ -577,7 +598,7 @@ def parse_modern_records(
     pipeline_incomplete_timings = 0
     pipeline_errors = 0
 
-    for line in lines:
+    for line in line_list:
         if "MCSGC_PIPELINE " in line:
             values = parse_kv(line)
             structured_records += 1
@@ -814,7 +835,20 @@ def parse_modern_records(
 
             summary_batch_id = int_value(values, "post_summary_batch_id")
             summary_batch_size = int_value(values, "post_summary_batch_size")
-            summary_start_ns = int_value(values, "start_ns")
+            summary_start_ns = int_value(values, "section_start_ns")
+            if summary_start_ns is None:
+                segment_start_ns = int_value(values, "start_ns")
+                summary_segno = int_value(values, "segno")
+                if segment_start_ns is not None and summary_segno is not None:
+                    matches = [
+                        section_start
+                        for section_start, section_end in section_windows.get(
+                            summary_segno, []
+                        )
+                        if section_start <= segment_start_ns <= section_end
+                    ]
+                    if len(matches) == 1:
+                        summary_start_ns = matches[0]
             if (
                 summary_batch_id is not None
                 and summary_batch_size is not None
