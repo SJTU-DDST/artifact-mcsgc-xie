@@ -19,6 +19,7 @@ openssd_repo=/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc
 expected_openssd_branch=exp/formal-mcsgc-quiet-20260809
 prepare_script="${script_dir}/prepare_gc_breakdown_host_module.sh"
 runner="${script_dir}/run_gc_breakdown_diagnostic.sh"
+comparator="${script_dir}/draw-xie/compare-gc-summary-batch-results.py"
 batch_id=$(date +"%Y%m%d_%H%M%S")
 batch_dir="${script_dir}/outputs-gc-breakdown-summary-batch-ab/${batch_id}"
 manifest="${batch_dir}/results.txt"
@@ -194,6 +195,14 @@ prepare_configuration mcsgc8t-batch-summary \
 run_one mcsgc8t-batch-summary bigfile 3
 run_one mcsgc8t-batch-summary smallfile 4
 
+comparison="${batch_dir}/comparison.txt"
+python3 "${comparator}" \
+    --control-big "$(<"${batch_dir}/01-mcsgc8t-summary-control-bigfile.result-path")" \
+    --control-small "$(<"${batch_dir}/02-mcsgc8t-summary-control-smallfile.result-path")" \
+    --treatment-big "$(<"${batch_dir}/03-mcsgc8t-batch-summary-bigfile.result-path")" \
+    --treatment-small "$(<"${batch_dir}/04-mcsgc8t-batch-summary-smallfile.result-path")" \
+    --output "${comparison}"
+
 printf '\ncompleted_at=%s\nstatus=success\n' \
     "$(date --iso-8601=seconds)" >> "${manifest}"
 
@@ -201,3 +210,4 @@ echo
 echo "Summary batch A/B diagnostics completed successfully."
 echo "Batch directory: ${batch_dir}"
 echo "Manifest: ${manifest}"
+echo "Comparison: ${comparison}"
