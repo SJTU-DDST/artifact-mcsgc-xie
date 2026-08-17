@@ -65,6 +65,8 @@ fi
 cd "${host_tree}"
 ./scripts/config --enable F2FS_STAT_FS
 make -s olddefconfig LOCALVERSION=-csgcmt
+# A newly checked out worktree does not contain generated architecture headers.
+make -s prepare modules_prepare LOCALVERSION=-csgcmt
 
 echo "Building GC breakdown module from ${actual_branch}"
 sudo ./build_f2fs.sh
