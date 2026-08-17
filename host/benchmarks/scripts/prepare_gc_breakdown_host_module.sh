@@ -15,6 +15,7 @@ Configurations:
   original             Diagnostic module for ORI and original CSGC
   mcsgc8t-nopipeline   Diagnostic module for optimized mCSGC8t no-pipeline
   mcsgc8t-pipeline     Diagnostic module for optimized mCSGC8t pipeline
+  mcsgc8t-batch-dnode  Diagnostic module with batched dnode commit
 EOF
 }
 
@@ -32,6 +33,9 @@ case "$1" in
         ;;
     mcsgc8t-pipeline)
         expected_branch=exp/diagnostic-mcsgc8t-pipeline-breakdown-20260812
+        ;;
+    mcsgc8t-batch-dnode)
+        expected_branch=exp/diagnostic-mcsgc8t-batched-dnode-breakdown-20260817
         ;;
     *)
         usage

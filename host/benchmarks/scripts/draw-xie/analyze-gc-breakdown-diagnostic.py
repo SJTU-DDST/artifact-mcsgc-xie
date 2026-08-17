@@ -780,6 +780,15 @@ def parse_modern_records(
                 "post_cache_invalidate_us",
                 "post_summary_commit_us",
                 "post_dnode_commit_us",
+                "post_dnode_blocks",
+                "post_dnode_batches",
+                "post_dnode_extents",
+                "post_dnode_batch_build_us",
+                "post_dnode_lock_wait_us",
+                "post_dnode_writeback_wait_us",
+                "post_dnode_page_update_us",
+                "post_dnode_extent_cache_us",
+                "post_dnode_ref_release_us",
                 "post_account_us",
                 "post_rollback_us",
                 "post_unlock_op_us",
@@ -819,6 +828,24 @@ def parse_modern_records(
                 "post_dnode_commit_us",
                 "comparable_post_dnode_update_us",
             )
+            dnode_accounted = add_sum_if_present(
+                metrics,
+                values,
+                (
+                    "post_dnode_batch_build_us",
+                    "post_dnode_lock_wait_us",
+                    "post_dnode_writeback_wait_us",
+                    "post_dnode_page_update_us",
+                    "post_dnode_extent_cache_us",
+                    "post_dnode_ref_release_us",
+                ),
+                "modern_post_detail_post_dnode_accounted_us",
+            )
+            dnode_total = int_value(values, "post_dnode_commit_us")
+            if dnode_accounted is not None and dnode_total is not None:
+                metrics[
+                    "modern_post_detail_post_dnode_accounting_delta_us"
+                ].append(dnode_total - dnode_accounted)
             add_if_present(
                 metrics,
                 values,
@@ -1076,6 +1103,33 @@ def emit_group(
     output.append("")
 
 
+def emit_dnode_batch_aggregate(
+    output: List[str],
+    metrics: DefaultDict[str, List[int]],
+) -> None:
+    """Emit weighted aggregate ratios for the batched dnode commit path."""
+    blocks = sum(metrics.get("modern_post_detail_post_dnode_blocks", []))
+    batches = sum(metrics.get("modern_post_detail_post_dnode_batches", []))
+    extents = sum(metrics.get("modern_post_detail_post_dnode_extents", []))
+
+    output.append("=== mCSGC8t batched dnode aggregate ===")
+    if not blocks or not batches:
+        output.append("no records")
+    else:
+        reduction = (1.0 - batches / blocks) * 100.0
+        output.extend(
+            (
+                f"post_dnode_total_blocks={blocks}",
+                f"post_dnode_total_batches={batches}",
+                f"post_dnode_total_extents={extents}",
+                f"post_dnode_blocks_per_batch={blocks / batches:.6f}",
+                f"post_dnode_extents_per_batch={extents / batches:.6f}",
+                f"post_dnode_commit_call_reduction_pct={reduction:.6f}",
+            )
+        )
+    output.append("")
+
+
 def main() -> int:
     """Crop the measured window, parse records, and write the summary."""
     args = parse_args()
@@ -1133,6 +1187,7 @@ def main() -> int:
     emit_group(output, "mCSGC8t segment breakdown", metrics, ("modern_segment_",))
     emit_group(output, "mCSGC8t detailed PRE/SSD breakdown", metrics, ("modern_detail_",))
     emit_group(output, "mCSGC8t detailed POST breakdown", metrics, ("modern_post_detail_",))
+    emit_dnode_batch_aggregate(output, metrics)
     emit_group(output, "mCSGC8t resource release breakdown", metrics, ("modern_release_",))
 
     Path(args.output).write_text("\n".join(output), encoding="utf-8")

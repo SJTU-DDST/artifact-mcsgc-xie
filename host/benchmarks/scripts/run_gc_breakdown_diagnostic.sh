@@ -26,6 +26,7 @@ Configurations:
   original-csgc
   mcsgc8t-nopipeline
   mcsgc8t-pipeline
+  mcsgc8t-batch-dnode
 
 Workloads:
   bigfile     4-job single-big-file workload (default)
@@ -91,6 +92,15 @@ case "${configuration}" in
         expected_branch=exp/diagnostic-mcsgc8t-pipeline-breakdown-20260812
         prepare_configuration=mcsgc8t-pipeline
         test_mode=diagnostic-mcsgc8t-pipeline-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-batch-dnode)
+        expected_branch=exp/diagnostic-mcsgc8t-batched-dnode-breakdown-20260817
+        prepare_configuration=mcsgc8t-batch-dnode
+        test_mode=diagnostic-mcsgc8t-batch-dnode-csgc
         expected_production=1
         expected_move_plan=1
         expected_fast_unsafe=1
@@ -176,6 +186,15 @@ export CSGC_EXPECTED_MOVE_PLAN_FAST_UNSAFE="${expected_fast_unsafe}"
 export FORMAL_HOST_BRANCH="${actual_branch}"
 export FORMAL_HOST_COMMIT="${host_commit}"
 export FORMAL_MODULE_SHA256="${module_sha256}"
+
+if [ "${GC_BREAKDOWN_SMOKE:-0}" -eq 1 ]; then
+    if [ "${workload}" != "bigfile" ]; then
+        echo "ERROR: the shortened diagnostic smoke test supports only bigfile." >&2
+        exit 1
+    fi
+    export FIO_IO_SIZE_PER_THREAD_OVERRIDE=1G
+    echo "Diagnostic smoke mode: io_size_per_thread=1G"
+fi
 
 set +e
 (

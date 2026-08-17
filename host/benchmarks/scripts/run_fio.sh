@@ -559,10 +559,13 @@ if [ $light_evaluation -eq 1 ]; then
 else
     io_size_per_thread="20G"
     runtime=300
-    echo "NOTICE: runtime=${runtime}, io_size_per_thread=${io_size_per_thread}"
     sleep 5
     echo "============================="
 fi
+
+io_size_per_thread=${FIO_IO_SIZE_PER_THREAD_OVERRIDE:-${io_size_per_thread}}
+runtime=${FIO_RUNTIME_OVERRIDE:-${runtime}}
+echo "NOTICE: runtime=${runtime}, io_size_per_thread=${io_size_per_thread}"
 
 if [ -z "${should_prefill+x}" ]; then
     should_prefill=0
