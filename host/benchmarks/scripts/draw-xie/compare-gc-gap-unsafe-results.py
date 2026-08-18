@@ -19,6 +19,9 @@ FIO_BW_RE = re.compile(r"WRITE: bw=([0-9.]+)([KMG]iB/s)")
 FIO_WRITE_BW_BYTES_RE = re.compile(
     r'"write"\s*:\s*\{.*?"bw_bytes"\s*:\s*([0-9.]+)', re.DOTALL
 )
+FIO_WRITE_IO_BYTES_RE = re.compile(
+    r'"write"\s*:\s*\{.*?"io_bytes"\s*:\s*([0-9.]+)', re.DOTALL
+)
 DEVICE_PATTERNS = {
     "logical_waf_cs": re.compile(r"logical WAF\(CS\):\s*(\d+)"),
     "physical_waf": re.compile(r"physical WAF:\s*(\d+)"),
@@ -26,6 +29,15 @@ DEVICE_PATTERNS = {
     "csgc_requests": re.compile(r"csgc_mp:\s+req=(\d+)"),
     "csgc_completed_moves": re.compile(r"csgc_mp:.*?done=(\d+)"),
     "csgc_completed_bytes": re.compile(r"csgc_mp:.*?bytes=(\d+)"),
+}
+OPENSSD_PERF_RE = re.compile(
+    r"openssd_perf:\s+enabled=(\d+)\s+basic_stats=(\d+)\s+optional_stats=(\d+)"
+)
+BASIC_DEVICE_STATS = {"logical_waf_cs", "physical_waf", "host_write_bytes"}
+OPTIONAL_DEVICE_STATS = {
+    "csgc_requests",
+    "csgc_completed_moves",
+    "csgc_completed_bytes",
 }
 
 
@@ -58,14 +70,33 @@ def parse_fio_bandwidth(run_dir: Path) -> float:
     return value
 
 
+def parse_fio_write_bytes(run_dir: Path) -> float:
+    """Return the application-visible bytes written by the measured fio run."""
+    text = (run_dir / "fio.log").read_text(errors="replace")
+    matches = FIO_WRITE_IO_BYTES_RE.findall(text)
+    if not matches:
+        raise ValueError(f"no fio write byte count in {run_dir / 'fio.log'}")
+    return float(matches[-1])
+
+
 def parse_device_stats(run_dir: Path) -> Dict[str, float]:
     """Parse measured-window OpenSSD counters when available."""
     path = run_dir / "ssd-workload-stat.log"
     if not path.is_file():
         return {}
     text = path.read_bytes().replace(b"\0", b"").decode(errors="replace")
+    perf_match = OPENSSD_PERF_RE.search(text)
+    basic_stats_enabled = True
+    optional_stats_enabled = True
+    if perf_match:
+        basic_stats_enabled = perf_match.group(2) == "1"
+        optional_stats_enabled = perf_match.group(3) == "1"
     values: Dict[str, float] = {}
     for name, pattern in DEVICE_PATTERNS.items():
+        if name in BASIC_DEVICE_STATS and not basic_stats_enabled:
+            continue
+        if name in OPTIONAL_DEVICE_STATS and not optional_stats_enabled:
+            continue
         match = pattern.search(text)
         if match:
             values[name] = float(match.group(1))
@@ -97,6 +128,7 @@ def parse_run(run_dir: Path) -> Dict[str, object]:
     return {
         "run_dir": run_dir,
         "fio_bw_mib_s": parse_fio_bandwidth(run_dir),
+        "fio_write_bytes": parse_fio_write_bytes(run_dir),
         "scalars": scalars,
         "stats": stats,
         "device": parse_device_stats(run_dir),
@@ -139,8 +171,12 @@ def metric_values(run: Dict[str, object]) -> Dict[str, float]:
     location4_calls = stat(run, "gc_call_checkpoint_location4_calls", "sum")
     location1_us = stat(run, "gc_call_checkpoint_location1_us", "sum")
     location4_us = stat(run, "gc_call_checkpoint_location4_us", "sum")
+    migrated_blocks = stat(run, "modern_section_critical_total_moves", "sum")
+    fio_write_bytes = float(run["fio_write_bytes"])
+    migrated_bytes = migrated_blocks * 4096.0
     return {
         "fio_bw_mib_s": float(run["fio_bw_mib_s"]),
+        "fio_write_gib": fio_write_bytes / (1024.0**3),
         "measured_duration_s": scalar(run, "measured_duration_us") / 1_000_000.0,
         "supply_coverage_pct": stat(
             run, "host_supply_coverage_permille", "mean"
@@ -187,7 +223,11 @@ def metric_values(run: Dict[str, object]) -> Dict[str, float]:
         ),
         "refill_sections": stat(run, "gc_call_refill_sections", "sum"),
         "timeline_sections": scalar(run, "timeline_sections"),
-        "migrated_blocks": stat(run, "modern_section_critical_total_moves", "sum"),
+        "migrated_blocks": migrated_blocks,
+        "migrated_gib": migrated_bytes / (1024.0**3),
+        "csgc_migrated_bytes_per_fio_byte": (
+            migrated_bytes / fio_write_bytes if fio_write_bytes else 0.0
+        ),
         "ori_collectors": stat(run, "gc_call_origc_collectors", "sum"),
     }
 

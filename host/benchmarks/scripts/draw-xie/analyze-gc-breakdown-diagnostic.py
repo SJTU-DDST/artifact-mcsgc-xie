@@ -174,6 +174,8 @@ def parse_original_record(
             "unsafe_reclaim_sections",
             "unsafe_reclaim_skipped",
             "unsafe_reclaim_us",
+            "csgc_collectors",
+            "origc_collectors",
         ):
             add_if_present(metrics, values, key, f"gc_call_{key}")
         stop_reason = values.get("stop_reason")
