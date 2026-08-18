@@ -233,6 +233,13 @@ if findmnt -rn -S /dev/nvme0n1 >/dev/null; then
     echo "ERROR: /dev/nvme0n1 is mounted; refusing to replace f2fs." >&2
     exit 1
 fi
+if [ -r /sys/module/f2fs/refcnt ] \
+    && [ "$(< /sys/module/f2fs/refcnt)" -ne 0 ]; then
+    echo "ERROR: f2fs still has active references; refusing to build the matrix." >&2
+    findmnt -rn -t f2fs -o TARGET,SOURCE,FSTYPE,OPTIONS >&2 || true
+    echo "A hidden or stuck unmount may require a Host reboot." >&2
+    exit 1
+fi
 
 mkdir -p "${batch_dir}"
 trap stop_sudo_keepalive EXIT
