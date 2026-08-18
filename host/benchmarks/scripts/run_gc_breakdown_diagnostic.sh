@@ -33,6 +33,9 @@ Configurations:
   mcsgc8t-prealloc-dirty-batch
   mcsgc8t-section-control
   mcsgc8t-section-dirty-batch
+  mcsgc8t-gc-gap-control
+  mcsgc8t-unsafe-prefree-reclaim
+  mcsgc8t-unsafe-prefree-refill
 
 Workloads:
   bigfile     4-job single-big-file workload (default)
@@ -166,6 +169,33 @@ case "${configuration}" in
         expected_fast_unsafe=1
         run_breakdown_parser=0
         ;;
+    mcsgc8t-gc-gap-control)
+        expected_branch=exp/diagnostic-mcsgc8t-gc-gap-control-20260818
+        prepare_configuration=mcsgc8t-gc-gap-control
+        test_mode=diagnostic-mcsgc8t-gc-gap-control-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-unsafe-prefree-reclaim)
+        expected_branch=exp/diagnostic-mcsgc8t-unsafe-prefree-reclaim-20260818
+        prepare_configuration=mcsgc8t-unsafe-prefree-reclaim
+        test_mode=diagnostic-mcsgc8t-unsafe-prefree-reclaim-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-unsafe-prefree-refill)
+        expected_branch=exp/diagnostic-mcsgc8t-unsafe-prefree-refill-20260818
+        prepare_configuration=mcsgc8t-unsafe-prefree-refill
+        test_mode=diagnostic-mcsgc8t-unsafe-prefree-refill-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
     *)
         usage
         exit 1
@@ -243,6 +273,7 @@ export CSGC_EXPECTED_SSD_THREAD_MODE=ssd1t
 export CSGC_EXPECTED_OPENSSD_PRODUCTION_PERFORMANCE="${expected_production}"
 export CSGC_EXPECTED_MOVE_PLAN_V2="${expected_move_plan}"
 export CSGC_EXPECTED_MOVE_PLAN_FAST_UNSAFE="${expected_fast_unsafe}"
+export collect_diagnostic_workload_stats=1
 export FORMAL_HOST_BRANCH="${actual_branch}"
 export FORMAL_HOST_COMMIT="${host_commit}"
 export FORMAL_MODULE_SHA256="${module_sha256}"

@@ -154,8 +154,31 @@ def parse_original_record(
             "victim_select_attempts",
             "victims_found",
             "checkpoint_calls",
+            "checkpoint_location1_calls",
+            "checkpoint_location1_us",
+            "checkpoint_location2_calls",
+            "checkpoint_location2_us",
+            "checkpoint_location3_calls",
+            "checkpoint_location3_us",
+            "checkpoint_location4_calls",
+            "checkpoint_location4_us",
+            "initial_pressure",
+            "loop_rounds",
+            "refill_active",
+            "refill_sections",
+            "refill_target",
+            "free_sections_start",
+            "free_sections_end",
+            "unsafe_reclaim_calls",
+            "unsafe_reclaim_segments",
+            "unsafe_reclaim_sections",
+            "unsafe_reclaim_skipped",
+            "unsafe_reclaim_us",
         ):
             add_if_present(metrics, values, key, f"gc_call_{key}")
+        stop_reason = values.get("stop_reason")
+        if stop_reason:
+            metrics[f"gc_stop_reason_{stop_reason}"].append(1)
         csgc_count = int_value(values, "csgc_collectors") or 0
         origc_count = int_value(values, "origc_collectors") or 0
         collector_invoked = int_value(values, "collector_invoked")
@@ -182,6 +205,33 @@ def parse_original_record(
             accounted = sum(value for value in phase_values if value is not None)
             metrics["gc_call_accounted_us"].append(accounted)
             metrics["gc_call_accounting_delta_us"].append(duration - accounted)
+        return True
+
+    if "F2FS_GC_CHECKPOINT_DIAG " in line:
+        values = parse_kv(line)
+        location = int_value(values, "location")
+        if location is not None:
+            add_if_present(
+                metrics,
+                values,
+                "duration_us",
+                f"gc_checkpoint_location{location}_duration_us",
+            )
+        add_if_present(metrics, values, "duration_us", "gc_checkpoint_duration_us")
+        return True
+
+    if "F2FS_GC_UNSAFE_RECLAIM_DIAG " in line:
+        values = parse_kv(line)
+        for key in ("duration_us", "segments", "sections", "skipped"):
+            add_if_present(metrics, values, key, f"gc_unsafe_reclaim_{key}")
+        location = int_value(values, "location")
+        if location is not None:
+            add_if_present(
+                metrics,
+                values,
+                "duration_us",
+                f"gc_unsafe_reclaim_location{location}_duration_us",
+            )
         return True
 
     if "F2FS_GC_COLLECTOR_DIAG " in line:
@@ -794,9 +844,154 @@ def aggregate_section_critical_paths(
     }
 
 
+def interval_overlap_ns(
+    start_ns: int,
+    end_ns: int,
+    intervals: List[Tuple[int, int]],
+) -> int:
+    """Return the union overlap between one range and sorted intervals."""
+    overlap_ns = 0
+    for interval_start, interval_end in intervals:
+        if interval_end <= start_ns:
+            continue
+        if interval_start >= end_ns:
+            break
+        overlap_ns += max(
+            0,
+            min(end_ns, interval_end) - max(start_ns, interval_start),
+        )
+    return overlap_ns
+
+
+def aggregate_global_supply_gaps(
+    timelines: DefaultDict[Tuple[int, int], List[Dict[str, int]]],
+    gc_intervals: List[Tuple[int, int]],
+    checkpoint_intervals: List[Tuple[int, int]],
+    window_start_ns: int,
+    window_end_ns: int,
+    metrics: DefaultDict[str, List[int]],
+) -> Dict[str, int]:
+    """Attribute Host-visible CSGC supply gaps across the fio window."""
+    request_intervals = sorted(
+        (
+            max(window_start_ns, record["trigger_done_ns"]),
+            min(window_end_ns, record["ssd_completion_ns"]),
+        )
+        for records in timelines.values()
+        for record in records
+        if record["valid"] == 1
+        and record["ret"] == 0
+        and record["ssd_completion_ns"] >= window_start_ns
+        and record["trigger_done_ns"] <= window_end_ns
+    )
+
+    merged: List[Tuple[int, int]] = []
+    for interval_start, interval_end in request_intervals:
+        if interval_end < interval_start:
+            continue
+        if not merged or interval_start > merged[-1][1]:
+            merged.append((interval_start, interval_end))
+        elif interval_end > merged[-1][1]:
+            merged[-1] = (merged[-1][0], interval_end)
+
+    duration_ns = max(0, window_end_ns - window_start_ns)
+    busy_ns = sum(end_ns - start_ns for start_ns, end_ns in merged)
+    metrics["host_supply_window_us"].append(duration_ns // 1000)
+    metrics["host_supply_busy_us"].append(busy_ns // 1000)
+    metrics["host_supply_idle_us"].append(max(0, duration_ns - busy_ns) // 1000)
+    if duration_ns:
+        metrics["host_supply_coverage_permille"].append(
+            busy_ns * 1000 // duration_ns
+        )
+
+    if not merged:
+        metrics["host_supply_initial_gap_us"].append(duration_ns // 1000)
+        return {
+            "global_supply_intervals": 0,
+            "global_supply_internal_gaps": 0,
+            "global_supply_checkpoint_gaps": 0,
+            "global_supply_same_gc_gaps": 0,
+            "global_supply_between_gc_gaps": 0,
+        }
+
+    metrics["host_supply_initial_gap_us"].append(
+        max(0, merged[0][0] - window_start_ns) // 1000
+    )
+    metrics["host_supply_final_gap_us"].append(
+        max(0, window_end_ns - merged[-1][1]) // 1000
+    )
+
+    sorted_checkpoints = sorted(checkpoint_intervals)
+    sorted_gc_intervals = sorted(gc_intervals)
+    checkpoint_index = 0
+    gc_index = 0
+    checkpoint_gaps = 0
+    same_gc_gaps = 0
+    between_gc_gaps = 0
+    for index in range(1, len(merged)):
+        gap_start = merged[index - 1][1]
+        gap_end = merged[index][0]
+        if gap_end <= gap_start:
+            continue
+        gap_ns = gap_end - gap_start
+        while (
+            checkpoint_index < len(sorted_checkpoints)
+            and sorted_checkpoints[checkpoint_index][1] <= gap_start
+        ):
+            checkpoint_index += 1
+        checkpoint_overlap = 0
+        candidate_index = checkpoint_index
+        while (
+            candidate_index < len(sorted_checkpoints)
+            and sorted_checkpoints[candidate_index][0] < gap_end
+        ):
+            checkpoint_overlap += max(
+                0,
+                min(gap_end, sorted_checkpoints[candidate_index][1])
+                - max(gap_start, sorted_checkpoints[candidate_index][0]),
+            )
+            candidate_index += 1
+        metrics["host_supply_internal_gap_us"].append(gap_ns // 1000)
+        metrics["host_supply_checkpoint_overlap_us"].append(
+            checkpoint_overlap // 1000
+        )
+
+        if checkpoint_overlap:
+            checkpoint_gaps += 1
+            metrics["host_supply_checkpoint_gap_us"].append(gap_ns // 1000)
+            continue
+
+        while (
+            gc_index < len(sorted_gc_intervals)
+            and sorted_gc_intervals[gc_index][1] <= gap_start
+        ):
+            gc_index += 1
+        in_same_gc = (
+            gc_index < len(sorted_gc_intervals)
+            and sorted_gc_intervals[gc_index][0] <= gap_start
+            and sorted_gc_intervals[gc_index][1] >= gap_end
+        )
+        if in_same_gc:
+            same_gc_gaps += 1
+            metrics["host_supply_same_gc_gap_us"].append(gap_ns // 1000)
+        else:
+            between_gc_gaps += 1
+            metrics["host_supply_between_gc_gap_us"].append(gap_ns // 1000)
+
+    return {
+        "global_supply_intervals": len(merged),
+        "global_supply_internal_gaps": max(0, len(merged) - 1),
+        "global_supply_checkpoint_gaps": checkpoint_gaps,
+        "global_supply_same_gc_gaps": same_gc_gaps,
+        "global_supply_between_gc_gaps": between_gc_gaps,
+    }
+
+
 def parse_modern_records(
     lines: Iterable[str],
     metrics: DefaultDict[str, List[int]],
+    window_start_ns: int,
+    window_end_ns: int,
 ) -> Dict[str, int]:
     """Parse mCSGC structured records and legacy phase traces."""
     line_list = list(lines)
@@ -841,6 +1036,8 @@ def parse_modern_records(
     summary_segments = 0
     prealloc_records = 0
     prealloc_record_mismatches = 0
+    gc_intervals: List[Tuple[int, int]] = []
+    checkpoint_intervals: List[Tuple[int, int]] = []
     unmatched_ends = 0
     structured_records = 0
     pipeline_records = 0
@@ -853,6 +1050,22 @@ def parse_modern_records(
     pipeline_errors = 0
 
     for line in line_list:
+        if "F2FS_GC_CHECKPOINT_DIAG " in line:
+            values = parse_kv(line)
+            start_ns = int_value(values, "start_ns")
+            end_ns = int_value(values, "end_ns")
+            if start_ns is not None and end_ns is not None and end_ns >= start_ns:
+                checkpoint_intervals.append((start_ns, end_ns))
+            continue
+
+        if "F2FS_GC_DIAG " in line:
+            values = parse_kv(line)
+            start_ns = int_value(values, "start_ns")
+            end_ns = int_value(values, "end_ns")
+            if start_ns is not None and end_ns is not None and end_ns >= start_ns:
+                gc_intervals.append((start_ns, end_ns))
+            continue
+
         if "MCSGC_SEGMENT_TIMELINE " in line:
             values = parse_kv(line)
             structured_records += 1
@@ -1461,6 +1674,14 @@ def parse_modern_records(
         timelines,
         metrics,
     )
+    supply_diagnostics = aggregate_global_supply_gaps(
+        timelines,
+        gc_intervals,
+        checkpoint_intervals,
+        window_start_ns,
+        window_end_ns,
+        metrics,
+    )
 
     diagnostics = {
         "unmatched_starts": unmatched_starts,
@@ -1482,6 +1703,7 @@ def parse_modern_records(
         "prealloc_record_mismatches": prealloc_record_mismatches,
     }
     diagnostics.update(timeline_diagnostics)
+    diagnostics.update(supply_diagnostics)
     return diagnostics
 
 
@@ -1616,7 +1838,12 @@ def main() -> int:
     base_structured_records = sum(
         1 for line in window_lines if parse_original_record(line, metrics)
     )
-    diagnostics = parse_modern_records(window_lines, metrics)
+    diagnostics = parse_modern_records(
+        window_lines,
+        metrics,
+        start_us * 1000,
+        end_us * 1000,
+    )
 
     output = [
         "GC breakdown diagnostic summary",
@@ -1647,10 +1874,22 @@ def main() -> int:
         f"timeline_unmatched_records={diagnostics['timeline_unmatched_records']}",
         f"timeline_incomplete_sections={diagnostics['timeline_incomplete_sections']}",
         f"timeline_zero_submission_sections={diagnostics['timeline_zero_submission_sections']}",
+        f"global_supply_intervals={diagnostics['global_supply_intervals']}",
+        f"global_supply_internal_gaps={diagnostics['global_supply_internal_gaps']}",
+        f"global_supply_checkpoint_gaps={diagnostics['global_supply_checkpoint_gaps']}",
+        f"global_supply_same_gc_gaps={diagnostics['global_supply_same_gc_gaps']}",
+        f"global_supply_between_gc_gaps={diagnostics['global_supply_between_gc_gaps']}",
         "",
     ]
 
     emit_group(output, "complete f2fs_gc calls", metrics, ("gc_call_", "gc_with_", "gc_no_"))
+    emit_group(
+        output,
+        "GC checkpoint and unsafe reclaim",
+        metrics,
+        ("gc_checkpoint_", "gc_unsafe_reclaim_", "gc_stop_reason_"),
+    )
+    emit_group(output, "Host CSGC supply gaps", metrics, ("host_supply_",))
     emit_group(output, "collector paths", metrics, ("collector_", "gc_end_", "gc_path_"))
     emit_group(output, "cross-version comparable breakdown", metrics, ("comparable_",))
     emit_group(

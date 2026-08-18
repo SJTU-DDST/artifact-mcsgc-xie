@@ -28,6 +28,12 @@ Configurations:
                         Section critical-path control module
   mcsgc8t-section-dirty-batch
                         Section critical-path module with batched dirty tracking
+  mcsgc8t-gc-gap-control
+                        Cross-section supply-gap diagnostic control module
+  mcsgc8t-unsafe-prefree-reclaim
+                        Crash-unsafe in-memory prefree reclaim module
+  mcsgc8t-unsafe-prefree-refill
+                        Crash-unsafe reclaim with bounded sequential refill
 EOF
 }
 
@@ -66,6 +72,15 @@ case "$1" in
         ;;
     mcsgc8t-section-dirty-batch)
         expected_branch=exp/diagnostic-mcsgc8t-section-critical-dirty-batch-20260818
+        ;;
+    mcsgc8t-gc-gap-control)
+        expected_branch=exp/diagnostic-mcsgc8t-gc-gap-control-20260818
+        ;;
+    mcsgc8t-unsafe-prefree-reclaim)
+        expected_branch=exp/diagnostic-mcsgc8t-unsafe-prefree-reclaim-20260818
+        ;;
+    mcsgc8t-unsafe-prefree-refill)
+        expected_branch=exp/diagnostic-mcsgc8t-unsafe-prefree-refill-20260818
         ;;
     *)
         usage

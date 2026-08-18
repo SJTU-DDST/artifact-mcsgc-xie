@@ -15,6 +15,7 @@ mntpoint=${MNTPOINT}
 : "${expected_gc_heavy_mode:=}"
 : "${fio_nofile_limit:=65536}"
 : "${formal_performance_only:=0}"
+: "${collect_diagnostic_workload_stats:=0}"
 
 if [[ ! "${fio_gc_precondition}" =~ ^[01]$ ]]; then
     echo "ERROR: fio_gc_precondition must be 0 or 1" >&2
@@ -35,6 +36,16 @@ fi
 if [[ ! "${formal_performance_only}" =~ ^[01]$ ]]; then
     echo "ERROR: formal_performance_only must be 0 or 1" >&2
     exit 1
+fi
+if [[ ! "${collect_diagnostic_workload_stats}" =~ ^[01]$ ]]; then
+    echo "ERROR: collect_diagnostic_workload_stats must be 0 or 1" >&2
+    exit 1
+fi
+
+measurement_epoch_enabled=0
+if [ "${formal_performance_only}" -eq 0 ] \
+    || [ "${collect_diagnostic_workload_stats}" -eq 1 ]; then
+    measurement_epoch_enabled=1
 fi
 
 # Run fio with the configured cgroup and preserve fio's exit status through tee.
@@ -600,7 +611,7 @@ gc_csgc_counter_path="${f2fs_sysfs_dir}/fg_csgc_victim_starts"
 gc_origc_counter_path="${f2fs_sysfs_dir}/fg_origc_victim_starts"
 gc_measurement_control_path="${f2fs_sysfs_dir}/gc_measurement_control"
 
-if [ "${formal_performance_only}" -eq 0 ]; then
+if [ "${measurement_epoch_enabled}" -eq 1 ]; then
     for gc_measurement_path in \
         "${gc_counter_path}" \
         "${gc_csgc_counter_path}" \
@@ -890,7 +901,7 @@ fio_log="${output_path}/${workload_type}.log"
 gc_measurement_summary=""
 workload_epoch_closed=0
 
-if [ "${formal_performance_only}" -eq 0 ]; then
+if [ "${measurement_epoch_enabled}" -eq 1 ]; then
     if ! set_gc_measurement_epoch "${gc_measurement_control_path}" start; then
         sudo umount "${devpath}" >/dev/null 2>&1 || true
         exit 1
@@ -918,7 +929,7 @@ run_fio_logged "${fio_log}" "${fio_flags[@]}" "${runtime_flags[@]}" "${workload_
 fio_status=$?
 emit_kernel_marker "MEASURED_FIO_END mode=${gc_mode} workload=${bmname} status=${fio_status}"
 
-if [ "${formal_performance_only}" -eq 0 ]; then
+if [ "${measurement_epoch_enabled}" -eq 1 ]; then
     if ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
         echo "ERROR: failed to close the measured workload epoch" >&2
         fio_status=1
