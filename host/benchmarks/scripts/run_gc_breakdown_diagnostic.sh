@@ -317,6 +317,8 @@ fi
 saved_external_log="${run_dir}/external-dmesg.log"
 mv "${external_log}" "${saved_external_log}"
 external_log="${saved_external_log}"
+# The outer matrix runner executes as the login user and must inspect this log.
+chmod 0644 "${saved_external_log}"
 
 summary_path="${run_dir}/gc-breakdown-diagnostic-result.txt"
 crop_path="${run_dir}/measured-fio-dmesg.log"
