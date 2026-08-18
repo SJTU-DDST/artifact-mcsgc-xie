@@ -625,6 +625,153 @@ def record_modern_prealloc_detail(
     return mismatch
 
 
+def aggregate_section_critical_paths(
+    section_records: Dict[Tuple[int, int], Dict[str, int]],
+    timelines: DefaultDict[Tuple[int, int], List[Dict[str, int]]],
+    metrics: DefaultDict[str, List[int]],
+) -> Dict[str, int]:
+    """Aggregate absolute segment timestamps into section critical paths."""
+    timeline_records = sum(len(records) for records in timelines.values())
+    invalid_records = 0
+    unmatched_records = 0
+    incomplete_sections = 0
+    aggregated_sections = 0
+
+    for section_key, records in timelines.items():
+        section_record = section_records.get(section_key)
+        if section_record is None:
+            unmatched_records += len(records)
+            continue
+
+        valid_records = [
+            record
+            for record in records
+            if record["valid"] == 1 and record["ret"] == 0
+        ]
+        invalid_records += len(records) - len(valid_records)
+        if not valid_records:
+            continue
+
+        expected_submitted = section_record.get("submitted", len(valid_records))
+        if expected_submitted != len(valid_records):
+            incomplete_sections += 1
+            continue
+
+        start_ns = section_record["start_ns"]
+        end_ns = section_record["end_ns"]
+        if end_ns < start_ns:
+            invalid_records += len(valid_records)
+            continue
+
+        first_pre_start_ns = min(record["pre_start_ns"] for record in valid_records)
+        last_pre_ready = max(valid_records, key=lambda record: record["pre_ready_ns"])
+        first_submit_ns = min(record["pre_ready_ns"] for record in valid_records)
+        last_submit = max(valid_records, key=lambda record: record["pre_ready_ns"])
+        last_completion = max(
+            valid_records,
+            key=lambda record: record["ssd_completion_ns"],
+        )
+        last_post = max(valid_records, key=lambda record: record["post_done_ns"])
+
+        intervals = sorted(
+            (
+                max(start_ns, record["pre_ready_ns"]),
+                min(end_ns, record["ssd_completion_ns"]),
+            )
+            for record in valid_records
+        )
+        merged_busy_ns = 0
+        current_start = 0
+        current_end = 0
+        for interval_start, interval_end in intervals:
+            if interval_end < interval_start:
+                invalid_records += 1
+                continue
+            if current_end == 0 or interval_start > current_end:
+                if current_end:
+                    merged_busy_ns += current_end - current_start
+                current_start = interval_start
+                current_end = interval_end
+            elif interval_end > current_end:
+                current_end = interval_end
+        if current_end:
+            merged_busy_ns += current_end - current_start
+
+        events: List[Tuple[int, int]] = []
+        for record in valid_records:
+            events.append((record["pre_ready_ns"], 1))
+            events.append((record["ssd_completion_ns"], -1))
+        outstanding = 0
+        peak_outstanding = 0
+        for _, delta in sorted(events, key=lambda event: (event[0], event[1])):
+            outstanding += delta
+            peak_outstanding = max(peak_outstanding, outstanding)
+
+        section_ns = end_ns - start_ns
+        total_moves = sum(record["moves"] for record in valid_records)
+        metrics["modern_section_critical_active_segments"].append(
+            len(valid_records)
+        )
+        metrics["modern_section_critical_total_moves"].append(total_moves)
+        metrics["modern_section_critical_pre_span_us"].append(
+            (last_pre_ready["pre_ready_ns"] - first_pre_start_ns) // 1000
+        )
+        metrics["modern_section_critical_pre_tail_us"].append(
+            (last_pre_ready["pre_ready_ns"] - start_ns) // 1000
+        )
+        metrics["modern_section_critical_submit_span_us"].append(
+            (last_submit["pre_ready_ns"] - first_submit_ns) // 1000
+        )
+        metrics["modern_section_critical_ssd_drain_us"].append(
+            (last_completion["ssd_completion_ns"] - first_submit_ns) // 1000
+        )
+        metrics["modern_section_critical_last_completion_from_start_us"].append(
+            (last_completion["ssd_completion_ns"] - start_ns) // 1000
+        )
+        metrics["modern_section_critical_post_drain_us"].append(
+            (end_ns - last_completion["ssd_completion_ns"]) // 1000
+        )
+        metrics["modern_section_critical_last_post_from_start_us"].append(
+            (last_post["post_done_ns"] - start_ns) // 1000
+        )
+        metrics["modern_section_critical_section_us"].append(section_ns // 1000)
+        metrics["modern_section_critical_ssd_busy_union_us"].append(
+            merged_busy_ns // 1000
+        )
+        metrics["modern_section_critical_ssd_idle_us"].append(
+            max(0, section_ns - merged_busy_ns) // 1000
+        )
+        if section_ns > 0:
+            metrics["modern_section_critical_supply_coverage_permille"].append(
+                merged_busy_ns * 1000 // section_ns
+            )
+        metrics["modern_section_critical_peak_outstanding"].append(
+            peak_outstanding
+        )
+        metrics["modern_section_critical_last_pre_req_idx"].append(
+            last_pre_ready["req_idx"]
+        )
+        metrics["modern_section_critical_last_completion_req_idx"].append(
+            last_completion["req_idx"]
+        )
+        metrics["modern_section_critical_last_post_req_idx"].append(
+            last_post["req_idx"]
+        )
+        if total_moves > 0:
+            metrics["modern_section_critical_ns_per_move"].append(
+                section_ns // total_moves
+            )
+        aggregated_sections += 1
+
+    return {
+        "timeline_records": timeline_records,
+        "timeline_invalid_records": invalid_records,
+        "timeline_unmatched_records": unmatched_records,
+        "timeline_incomplete_sections": incomplete_sections,
+        "timeline_sections": aggregated_sections,
+    }
+
+
 def parse_modern_records(
     lines: Iterable[str],
     metrics: DefaultDict[str, List[int]],
@@ -632,6 +779,8 @@ def parse_modern_records(
     """Parse mCSGC structured records and legacy phase traces."""
     line_list = list(lines)
     section_windows: DefaultDict[int, List[Tuple[int, int]]] = defaultdict(list)
+    section_records: Dict[Tuple[int, int], Dict[str, int]] = {}
+    timelines: DefaultDict[Tuple[int, int], List[Dict[str, int]]] = defaultdict(list)
     for line in line_list:
         if "MCSGC_SECTION " not in line:
             continue
@@ -650,6 +799,15 @@ def parse_modern_records(
             continue
         for segno in range(section, section + segments):
             section_windows[segno].append((section_start, section_end))
+        section_record = {
+            "start_ns": section_start,
+            "end_ns": section_end,
+            "segments": segments,
+        }
+        submitted = int_value(values, "submitted")
+        if submitted is not None:
+            section_record["submitted"] = submitted
+        section_records[(section, section_start)] = section_record
 
     gc_starts: Dict[Tuple[int, int], int] = {}
     phase_starts: DefaultDict[Tuple[str, int, int, int], List[int]] = defaultdict(list)
@@ -673,6 +831,39 @@ def parse_modern_records(
     pipeline_errors = 0
 
     for line in line_list:
+        if "MCSGC_SEGMENT_TIMELINE " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            required_keys = (
+                "section",
+                "segno",
+                "req_idx",
+                "valid",
+                "ret",
+                "moves",
+                "pre_attempts",
+                "section_start_ns",
+                "segment_start_ns",
+                "pre_start_ns",
+                "pre_ready_ns",
+                "trigger_done_ns",
+                "completion_read_submit_ns",
+                "ssd_completion_ns",
+                "post_start_ns",
+                "post_done_ns",
+            )
+            record = {key: int_value(values, key) for key in required_keys}
+            if any(value is None for value in record.values()):
+                unmatched_ends += 1
+                continue
+            parsed_record = {
+                key: value for key, value in record.items() if value is not None
+            }
+            timelines[
+                (parsed_record["section"], parsed_record["section_start_ns"])
+            ].append(parsed_record)
+            continue
+
         if "MCSGC_PIPELINE " in line:
             values = parse_kv(line)
             structured_records += 1
@@ -1243,7 +1434,13 @@ def parse_modern_records(
             output_key = source_key.removeprefix("post_summary_")
             metrics[f"summary_batch_{output_key}"].append(value)
 
-    return {
+    timeline_diagnostics = aggregate_section_critical_paths(
+        section_records,
+        timelines,
+        metrics,
+    )
+
+    diagnostics = {
         "unmatched_starts": unmatched_starts,
         "unmatched_ends": unmatched_ends,
         "incomplete_pre_details": incomplete_pre_details,
@@ -1262,6 +1459,8 @@ def parse_modern_records(
         "prealloc_records": prealloc_records,
         "prealloc_record_mismatches": prealloc_record_mismatches,
     }
+    diagnostics.update(timeline_diagnostics)
+    return diagnostics
 
 
 def emit_group(
@@ -1420,13 +1619,29 @@ def main() -> int:
         f"summary_segments={diagnostics['summary_segments']}",
         f"summary_batches={diagnostics['summary_batches']}",
         f"summary_batch_mismatches={diagnostics['summary_batch_mismatches']}",
+        f"timeline_records={diagnostics['timeline_records']}",
+        f"timeline_sections={diagnostics['timeline_sections']}",
+        f"timeline_invalid_records={diagnostics['timeline_invalid_records']}",
+        f"timeline_unmatched_records={diagnostics['timeline_unmatched_records']}",
+        f"timeline_incomplete_sections={diagnostics['timeline_incomplete_sections']}",
         "",
     ]
 
     emit_group(output, "complete f2fs_gc calls", metrics, ("gc_call_", "gc_with_", "gc_no_"))
     emit_group(output, "collector paths", metrics, ("collector_", "gc_end_", "gc_path_"))
     emit_group(output, "cross-version comparable breakdown", metrics, ("comparable_",))
-    emit_group(output, "section wall-clock", metrics, ("original_section_", "modern_section_", "phase_section_"))
+    emit_group(
+        output,
+        "section wall-clock",
+        metrics,
+        ("original_section_", "modern_section_section_", "modern_section_collector_", "phase_section_"),
+    )
+    emit_group(
+        output,
+        "mCSGC8t section critical path",
+        metrics,
+        ("modern_section_critical_",),
+    )
     emit_group(output, "cross-section pipeline", metrics, ("pipeline_",))
     emit_group(output, "coarse PRE/SSD/POST intervals", metrics, ("phase_pre_", "phase_ssd_", "phase_post_"))
     emit_group(output, "original CSGC segment breakdown", metrics, ("original_segment_",))

@@ -24,6 +24,10 @@ Configurations:
                         PRE allocation diagnostic control module
   mcsgc8t-prealloc-dirty-batch
                         Diagnostic module with batched dirty tracking
+  mcsgc8t-section-control
+                        Section critical-path control module
+  mcsgc8t-section-dirty-batch
+                        Section critical-path module with batched dirty tracking
 EOF
 }
 
@@ -56,6 +60,12 @@ case "$1" in
         ;;
     mcsgc8t-prealloc-dirty-batch)
         expected_branch=exp/diagnostic-mcsgc8t-prealloc-dirty-batch-20260818
+        ;;
+    mcsgc8t-section-control)
+        expected_branch=exp/diagnostic-mcsgc8t-section-critical-control-20260818
+        ;;
+    mcsgc8t-section-dirty-batch)
+        expected_branch=exp/diagnostic-mcsgc8t-section-critical-dirty-batch-20260818
         ;;
     *)
         usage

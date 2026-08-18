@@ -31,6 +31,8 @@ Configurations:
   mcsgc8t-batch-summary
   mcsgc8t-prealloc-control
   mcsgc8t-prealloc-dirty-batch
+  mcsgc8t-section-control
+  mcsgc8t-section-dirty-batch
 
 Workloads:
   bigfile     4-job single-big-file workload (default)
@@ -141,6 +143,24 @@ case "${configuration}" in
         expected_branch=exp/diagnostic-mcsgc8t-prealloc-dirty-batch-20260818
         prepare_configuration=mcsgc8t-prealloc-dirty-batch
         test_mode=diagnostic-mcsgc8t-prealloc-dirty-batch-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-section-control)
+        expected_branch=exp/diagnostic-mcsgc8t-section-critical-control-20260818
+        prepare_configuration=mcsgc8t-section-control
+        test_mode=diagnostic-mcsgc8t-section-control-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-section-dirty-batch)
+        expected_branch=exp/diagnostic-mcsgc8t-section-critical-dirty-batch-20260818
+        prepare_configuration=mcsgc8t-section-dirty-batch
+        test_mode=diagnostic-mcsgc8t-section-dirty-batch-csgc
         expected_production=1
         expected_move_plan=1
         expected_fast_unsafe=1
