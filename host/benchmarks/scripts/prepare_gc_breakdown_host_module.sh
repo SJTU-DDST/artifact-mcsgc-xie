@@ -20,6 +20,10 @@ Configurations:
                         Summary commit diagnostic control module
   mcsgc8t-batch-summary
                         Diagnostic module with batched summary commit
+  mcsgc8t-prealloc-control
+                        PRE allocation diagnostic control module
+  mcsgc8t-prealloc-dirty-batch
+                        Diagnostic module with batched dirty tracking
 EOF
 }
 
@@ -46,6 +50,12 @@ case "$1" in
         ;;
     mcsgc8t-batch-summary)
         expected_branch=exp/diagnostic-mcsgc8t-batched-summary-breakdown-20260817
+        ;;
+    mcsgc8t-prealloc-control)
+        expected_branch=exp/diagnostic-mcsgc8t-prealloc-control-20260818
+        ;;
+    mcsgc8t-prealloc-dirty-batch)
+        expected_branch=exp/diagnostic-mcsgc8t-prealloc-dirty-batch-20260818
         ;;
     *)
         usage

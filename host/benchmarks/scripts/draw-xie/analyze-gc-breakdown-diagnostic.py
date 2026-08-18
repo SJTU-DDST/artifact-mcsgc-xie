@@ -553,6 +553,78 @@ def record_modern_ssd_detail(
         )
 
 
+def record_modern_prealloc_detail(
+    values: Dict[str, str],
+    metrics: DefaultDict[str, List[int]],
+) -> bool:
+    """Record sampled PRE allocation stages and validate record invariants."""
+    scalar_keys = (
+        "sample_stride",
+        "blocks",
+        "sampled_blocks",
+        "ranges",
+        "rollovers",
+        "lock_hold_us",
+        "rollover_us",
+        "dirty_batch_us",
+        "dirty_candidate_calls",
+        "dirty_actual_calls",
+        "dirty_unique_segments",
+    )
+    for key in scalar_keys:
+        add_if_present(metrics, values, key, f"modern_prealloc_{key}")
+
+    blocks = int_value(values, "blocks")
+    samples = int_value(values, "sampled_blocks")
+    stride = int_value(values, "sample_stride")
+    ranges = int_value(values, "ranges")
+    candidates = int_value(values, "dirty_candidate_calls")
+    actual = int_value(values, "dirty_actual_calls")
+    unique = int_value(values, "dirty_unique_segments")
+    mismatch = False
+
+    if blocks is None or samples is None or stride is None or stride <= 0:
+        mismatch = True
+    else:
+        expected_samples = (blocks + stride - 1) // stride
+        if samples != expected_samples:
+            mismatch = True
+        metrics["modern_prealloc_sample_coverage_permille"].append(
+            samples * 1000 // blocks if blocks else 0
+        )
+
+    if blocks is not None and candidates is not None and candidates != blocks * 2:
+        mismatch = True
+    if candidates is not None and actual is not None and actual > candidates:
+        mismatch = True
+    if ranges is not None and unique is not None and unique > ranges + 1:
+        mismatch = True
+
+    sample_fields = (
+        "discard_sample_ns",
+        "curseg_advance_sample_ns",
+        "block_stat_sample_ns",
+        "mtime_sample_ns",
+        "sit_sample_ns",
+        "dirty_locate_sample_ns",
+    )
+    for key in sample_fields:
+        raw = int_value(values, key)
+        add_if_present(metrics, values, key, f"modern_prealloc_{key}")
+        if raw is None or raw < 0 or samples is None or samples <= 0:
+            continue
+        stage = key.removesuffix("_sample_ns")
+        metrics[f"modern_prealloc_{stage}_ns_per_sample"].append(
+            raw // samples
+        )
+        if blocks is not None:
+            metrics[f"modern_prealloc_{stage}_estimated_us"].append(
+                raw * blocks // samples // 1000
+            )
+
+    return mismatch
+
+
 def parse_modern_records(
     lines: Iterable[str],
     metrics: DefaultDict[str, List[int]],
@@ -587,6 +659,8 @@ def parse_modern_records(
     summary_batches: Dict[Tuple[int, int], Dict[str, int]] = {}
     summary_batch_mismatches = 0
     summary_segments = 0
+    prealloc_records = 0
+    prealloc_record_mismatches = 0
     unmatched_ends = 0
     structured_records = 0
     pipeline_records = 0
@@ -771,6 +845,16 @@ def parse_modern_records(
             else:
                 pre_detail_by_segment.setdefault(key, {}).update(values)
                 pre_detail_parts[key].add("move")
+            continue
+
+        if "MCSGC_SEGMENT_PREALLOC_DETAIL " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            prealloc_records += 1
+            if modern_segment_key(values) is None:
+                unmatched_ends += 1
+            if record_modern_prealloc_detail(values, metrics):
+                prealloc_record_mismatches += 1
             continue
 
         if "MCSGC_SEGMENT_SSD_DETAIL " in line:
@@ -1175,6 +1259,8 @@ def parse_modern_records(
         "summary_segments": summary_segments,
         "summary_batches": len(summary_batches),
         "summary_batch_mismatches": summary_batch_mismatches,
+        "prealloc_records": prealloc_records,
+        "prealloc_record_mismatches": prealloc_record_mismatches,
     }
 
 
@@ -1259,6 +1345,36 @@ def emit_summary_batch_aggregate(
     output.append("")
 
 
+def emit_prealloc_aggregate(
+    output: List[str],
+    metrics: DefaultDict[str, List[int]],
+    diagnostics: Dict[str, int],
+) -> None:
+    """Emit weighted PRE allocation counts and dirty-call reduction."""
+    blocks = sum(metrics.get("modern_prealloc_blocks", []))
+    samples = sum(metrics.get("modern_prealloc_sampled_blocks", []))
+    candidates = sum(metrics.get("modern_prealloc_dirty_candidate_calls", []))
+    actual = sum(metrics.get("modern_prealloc_dirty_actual_calls", []))
+
+    output.append("=== mCSGC8t PRE allocation aggregate ===")
+    if not diagnostics["prealloc_records"]:
+        output.append("no records")
+    else:
+        reduction = (1.0 - actual / candidates) * 100.0 if candidates else 0.0
+        output.extend(
+            (
+                f"prealloc_records={diagnostics['prealloc_records']}",
+                f"prealloc_record_mismatches={diagnostics['prealloc_record_mismatches']}",
+                f"prealloc_total_blocks={blocks}",
+                f"prealloc_total_sampled_blocks={samples}",
+                f"prealloc_dirty_candidate_calls={candidates}",
+                f"prealloc_dirty_actual_calls={actual}",
+                f"prealloc_dirty_call_reduction_pct={reduction:.6f}",
+            )
+        )
+    output.append("")
+
+
 def main() -> int:
     """Crop the measured window, parse records, and write the summary."""
     args = parse_args()
@@ -1318,6 +1434,8 @@ def main() -> int:
     emit_group(output, "original CSGC detailed POST breakdown", metrics, ("original_post_detail_",))
     emit_group(output, "mCSGC8t segment breakdown", metrics, ("modern_segment_",))
     emit_group(output, "mCSGC8t detailed PRE/SSD breakdown", metrics, ("modern_detail_",))
+    emit_group(output, "mCSGC8t PRE allocation detail", metrics, ("modern_prealloc_",))
+    emit_prealloc_aggregate(output, metrics, diagnostics)
     emit_group(output, "mCSGC8t detailed POST breakdown", metrics, ("modern_post_detail_",))
     emit_dnode_batch_aggregate(output, metrics)
     emit_summary_batch_aggregate(output, metrics, diagnostics)
