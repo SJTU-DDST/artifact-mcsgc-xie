@@ -43,9 +43,14 @@ if [[ ! "${collect_diagnostic_workload_stats}" =~ ^[01]$ ]]; then
 fi
 
 measurement_epoch_enabled=0
-if [ "${formal_performance_only}" -eq 0 ] \
-    || [ "${collect_diagnostic_workload_stats}" -eq 1 ]; then
+if [ "${formal_performance_only}" -eq 0 ]; then
     measurement_epoch_enabled=1
+fi
+
+workload_ssd_stats_enabled=0
+if [ "${measurement_epoch_enabled}" -eq 1 ] \
+    || [ "${collect_diagnostic_workload_stats}" -eq 1 ]; then
+    workload_ssd_stats_enabled=1
 fi
 
 # Run fio with the configured cgroup and preserve fio's exit status through tee.
@@ -912,11 +917,15 @@ if [ "${measurement_epoch_enabled}" -eq 1 ]; then
         sudo umount "${devpath}" >/dev/null 2>&1 || true
         exit 1
     fi
+fi
 
-    # Reset device statistics only after the Host confirms that CSGC work is idle.
+# Fixed-precondition diagnostic runs use marker-bounded Host traces and collect
+# device counters without enabling the high-volume GC-heavy measurement epoch.
+if [ "${workload_ssd_stats_enabled}" -eq 1 ]; then
     if ! reset_ssd_stat "${devpath}"; then
         echo "ERROR: failed to reset SSD statistics before measured fio" >&2
-        if ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
+        if [ "${measurement_epoch_enabled}" -eq 1 ] \
+            && ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
             echo "WARNING: failed to close the workload epoch after SSD reset failure" >&2
         fi
         sudo umount "${devpath}" >/dev/null 2>&1 || true
@@ -954,6 +963,9 @@ if [ "${measurement_epoch_enabled}" -eq 1 ]; then
         fi
     fi
 
+fi
+
+if [ "${workload_ssd_stats_enabled}" -eq 1 ]; then
     ssd_workload_stat="${output_path}/ssd-workload-stat.log"
     : > "${ssd_workload_stat}"
     if ! get_ssd_stat "${devpath}" "${ssd_workload_stat}"; then
