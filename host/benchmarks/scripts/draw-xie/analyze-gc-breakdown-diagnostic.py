@@ -635,12 +635,15 @@ def aggregate_section_critical_paths(
     invalid_records = 0
     unmatched_records = 0
     incomplete_sections = 0
+    zero_submission_sections = 0
     aggregated_sections = 0
 
-    for section_key, records in timelines.items():
-        section_record = section_records.get(section_key)
-        if section_record is None:
-            unmatched_records += len(records)
+    for section_key, section_record in section_records.items():
+        records = timelines.get(section_key, [])
+        expected_submitted = section_record.get("submitted", len(records))
+        if expected_submitted == 0:
+            zero_submission_sections += 1
+            invalid_records += len(records)
             continue
 
         valid_records = [
@@ -649,10 +652,6 @@ def aggregate_section_critical_paths(
             if record["valid"] == 1 and record["ret"] == 0
         ]
         invalid_records += len(records) - len(valid_records)
-        if not valid_records:
-            continue
-
-        expected_submitted = section_record.get("submitted", len(valid_records))
         if expected_submitted != len(valid_records):
             incomplete_sections += 1
             continue
@@ -665,8 +664,8 @@ def aggregate_section_critical_paths(
 
         first_pre_start_ns = min(record["pre_start_ns"] for record in valid_records)
         last_pre_ready = max(valid_records, key=lambda record: record["pre_ready_ns"])
-        first_submit_ns = min(record["pre_ready_ns"] for record in valid_records)
-        last_submit = max(valid_records, key=lambda record: record["pre_ready_ns"])
+        first_submit_ns = min(record["trigger_done_ns"] for record in valid_records)
+        last_submit = max(valid_records, key=lambda record: record["trigger_done_ns"])
         last_completion = max(
             valid_records,
             key=lambda record: record["ssd_completion_ns"],
@@ -675,7 +674,7 @@ def aggregate_section_critical_paths(
 
         intervals = sorted(
             (
-                max(start_ns, record["pre_ready_ns"]),
+                max(start_ns, record["trigger_done_ns"]),
                 min(end_ns, record["ssd_completion_ns"]),
             )
             for record in valid_records
@@ -699,7 +698,7 @@ def aggregate_section_critical_paths(
 
         events: List[Tuple[int, int]] = []
         for record in valid_records:
-            events.append((record["pre_ready_ns"], 1))
+            events.append((record["trigger_done_ns"], 1))
             events.append((record["ssd_completion_ns"], -1))
         outstanding = 0
         peak_outstanding = 0
@@ -720,10 +719,24 @@ def aggregate_section_critical_paths(
             (last_pre_ready["pre_ready_ns"] - start_ns) // 1000
         )
         metrics["modern_section_critical_submit_span_us"].append(
-            (last_submit["pre_ready_ns"] - first_submit_ns) // 1000
+            (last_submit["trigger_done_ns"] - first_submit_ns) // 1000
+        )
+        metrics["modern_section_critical_first_submit_from_start_us"].append(
+            (first_submit_ns - start_ns) // 1000
+        )
+        metrics["modern_section_critical_last_submit_from_start_us"].append(
+            (last_submit["trigger_done_ns"] - start_ns) // 1000
         )
         metrics["modern_section_critical_ssd_drain_us"].append(
             (last_completion["ssd_completion_ns"] - first_submit_ns) // 1000
+        )
+        metrics["modern_section_critical_last_submit_drain_us"].append(
+            (last_completion["ssd_completion_ns"] -
+             last_submit["trigger_done_ns"]) // 1000
+        )
+        metrics["modern_section_critical_completion_after_last_pre_us"].append(
+            (last_completion["ssd_completion_ns"] -
+             last_pre_ready["pre_ready_ns"]) // 1000
         )
         metrics["modern_section_critical_last_completion_from_start_us"].append(
             (last_completion["ssd_completion_ns"] - start_ns) // 1000
@@ -740,6 +753,10 @@ def aggregate_section_critical_paths(
         )
         metrics["modern_section_critical_ssd_idle_us"].append(
             max(0, section_ns - merged_busy_ns) // 1000
+        )
+        metrics["modern_section_critical_internal_supply_gap_us"].append(
+            max(0, last_completion["ssd_completion_ns"] -
+                first_submit_ns - merged_busy_ns) // 1000
         )
         if section_ns > 0:
             metrics["modern_section_critical_supply_coverage_permille"].append(
@@ -763,11 +780,16 @@ def aggregate_section_critical_paths(
             )
         aggregated_sections += 1
 
+    for section_key, records in timelines.items():
+        if section_key not in section_records:
+            unmatched_records += len(records)
+
     return {
         "timeline_records": timeline_records,
         "timeline_invalid_records": invalid_records,
         "timeline_unmatched_records": unmatched_records,
         "timeline_incomplete_sections": incomplete_sections,
+        "timeline_zero_submission_sections": zero_submission_sections,
         "timeline_sections": aggregated_sections,
     }
 
@@ -1624,6 +1646,7 @@ def main() -> int:
         f"timeline_invalid_records={diagnostics['timeline_invalid_records']}",
         f"timeline_unmatched_records={diagnostics['timeline_unmatched_records']}",
         f"timeline_incomplete_sections={diagnostics['timeline_incomplete_sections']}",
+        f"timeline_zero_submission_sections={diagnostics['timeline_zero_submission_sections']}",
         "",
     ]
 

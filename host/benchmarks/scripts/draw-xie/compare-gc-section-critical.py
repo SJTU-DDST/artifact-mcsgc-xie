@@ -18,6 +18,7 @@ FIO_BW_RE = re.compile(r"WRITE: bw=([0-9.]+)([KMG]iB/s)")
 FIO_WRITE_BW_BYTES_RE = re.compile(
     r'"write"\s*:\s*\{.*?"bw_bytes"\s*:\s*([0-9.]+)', re.DOTALL
 )
+BRACKET_TIME_RE = re.compile(r"\[\s*([0-9]+\.[0-9]+)\]")
 PRE_STAGE_KEYS = (
     "pre_build_valid_offsets_us",
     "pre_sum_us",
@@ -37,12 +38,17 @@ PRE_STAGE_KEYS = (
 METRICS = (
     "pre_span_us",
     "pre_tail_us",
+    "first_submit_from_start_us",
+    "last_submit_from_start_us",
     "submit_span_us",
     "ssd_drain_us",
+    "last_submit_drain_us",
+    "completion_after_last_pre_us",
     "last_completion_from_start_us",
     "post_drain_us",
     "section_us",
     "ssd_busy_union_us",
+    "internal_supply_gap_us",
     "ssd_idle_us",
     "supply_coverage_permille",
     "peak_outstanding",
@@ -73,19 +79,32 @@ def int_value(values: Dict[str, str], key: str) -> Optional[int]:
         return None
 
 
-def measured_window(lines: List[str]) -> List[str]:
-    """Return the latest complete measured-fio window."""
-    start: Optional[int] = None
-    complete: Optional[Tuple[int, int]] = None
+def bracket_time_ns(line: str) -> int:
+    """Return the final bracketed monotonic timestamp on one marker line."""
+    matches = BRACKET_TIME_RE.findall(line)
+    if not matches:
+        raise ValueError(f"marker has no bracketed timestamp: {line}")
+    seconds, fraction = matches[-1].split(".", 1)
+    return int(seconds) * 1_000_000_000 + int(fraction[:9].ljust(9, "0"))
+
+
+def measured_window(lines: List[str]) -> Tuple[List[str], int, int]:
+    """Return the latest complete measured-fio window and its timestamps."""
+    start: Optional[Tuple[int, int]] = None
+    complete: Optional[Tuple[int, int, int, int]] = None
     for index, line in enumerate(lines):
         if START_MARKER in line:
-            start = index
+            start = (index, bracket_time_ns(line))
         if END_MARKER in line and start is not None:
-            complete = (start, index)
+            complete = (start[0], index, start[1], bracket_time_ns(line))
             start = None
     if complete is None:
         raise ValueError("no complete measured fio window")
-    return lines[complete[0] : complete[1] + 1]
+    return (
+        lines[complete[0] : complete[1] + 1],
+        complete[2],
+        complete[3],
+    )
 
 
 def parse_fio_bandwidth(run_dir: Path) -> float:
@@ -126,7 +145,7 @@ def peak_outstanding(records: List[Dict[str, int]]) -> int:
     """Calculate peak Host-visible CSGC requests for one section."""
     events: List[Tuple[int, int]] = []
     for record in records:
-        events.append((record["pre_ready_ns"], 1))
+        events.append((record["trigger_done_ns"], 1))
         events.append((record["ssd_completion_ns"], -1))
     current = 0
     peak = 0
@@ -139,7 +158,7 @@ def peak_outstanding(records: List[Dict[str, int]]) -> int:
 def busy_union_ns(records: List[Dict[str, int]], start_ns: int, end_ns: int) -> int:
     """Calculate the union of Host-visible SSD request intervals."""
     intervals = sorted(
-        (max(start_ns, record["pre_ready_ns"]),
+        (max(start_ns, record["trigger_done_ns"]),
          min(end_ns, record["ssd_completion_ns"]))
         for record in records
     )
@@ -161,12 +180,60 @@ def busy_union_ns(records: List[Dict[str, int]], start_ns: int, end_ns: int) -> 
     return total
 
 
+def global_supply_summary(
+    records: List[Dict[str, int]],
+    start_ns: int,
+    end_ns: int,
+) -> Dict[str, object]:
+    """Summarize Host-visible outstanding CSGC coverage for the fio window."""
+    intervals = sorted(
+        (
+            max(start_ns, record["trigger_done_ns"]),
+            min(end_ns, record["ssd_completion_ns"]),
+        )
+        for record in records
+        if record["valid"] == 1 and record["ret"] == 0
+        and record["ssd_completion_ns"] >= start_ns
+        and record["trigger_done_ns"] <= end_ns
+    )
+    merged: List[Tuple[int, int]] = []
+    for interval_start, interval_end in intervals:
+        if interval_end < interval_start:
+            continue
+        if not merged or interval_start > merged[-1][1]:
+            merged.append((interval_start, interval_end))
+        elif interval_end > merged[-1][1]:
+            merged[-1] = (merged[-1][0], interval_end)
+
+    duration_ns = max(0, end_ns - start_ns)
+    busy_ns = sum(interval_end - interval_start for interval_start, interval_end in merged)
+    internal_gaps_ns = [
+        merged[index][0] - merged[index - 1][1]
+        for index in range(1, len(merged))
+    ]
+    initial_gap_ns = merged[0][0] - start_ns if merged else duration_ns
+    final_gap_ns = end_ns - merged[-1][1] if merged else 0
+    gap_values_us = [gap_ns / 1000.0 for gap_ns in internal_gaps_ns]
+
+    return {
+        "window_us": duration_ns / 1000.0,
+        "busy_us": busy_ns / 1000.0,
+        "coverage_pct": busy_ns * 100.0 / duration_ns if duration_ns else math.nan,
+        "initial_gap_us": initial_gap_ns / 1000.0,
+        "final_gap_us": final_gap_ns / 1000.0,
+        "internal_gap_count": len(internal_gaps_ns),
+        "internal_gap_total_us": sum(gap_values_us),
+        "internal_gap_mean_us": statistics.fmean(gap_values_us) if gap_values_us else 0.0,
+        "internal_gap_median_us": statistics.median(gap_values_us) if gap_values_us else 0.0,
+        "internal_gap_p95_us": percentile(gap_values_us, 95.0) if gap_values_us else 0.0,
+        "internal_gap_max_us": max(gap_values_us, default=0.0),
+    }
+
+
 def parse_run(run_dir: Path, bucket_blocks: int) -> Dict[str, object]:
     """Build complete section samples from one diagnostic result."""
-    lines = measured_window(
-        (run_dir / "external-dmesg.log")
-        .read_text(errors="replace")
-        .splitlines()
+    lines, measured_start_ns, measured_end_ns = measured_window(
+        (run_dir / "external-dmesg.log").read_text(errors="replace").splitlines()
     )
     sections: Dict[Tuple[int, int], Dict[str, int]] = {}
     timelines: DefaultDict[Tuple[int, int], List[Dict[str, int]]] = defaultdict(list)
@@ -192,7 +259,8 @@ def parse_run(run_dir: Path, bucket_blocks: int) -> Dict[str, object]:
             keys = (
                 "section", "segno", "req_idx", "valid", "ret", "moves",
                 "section_start_ns", "segment_start_ns", "pre_start_ns",
-                "pre_ready_ns", "ssd_completion_ns", "post_done_ns",
+                "pre_ready_ns", "trigger_done_ns", "ssd_completion_ns",
+                "post_done_ns",
             )
             parsed = {key: int_value(values, key) for key in keys}
             if any(value is None for value in parsed.values()):
@@ -214,9 +282,14 @@ def parse_run(run_dir: Path, bucket_blocks: int) -> Dict[str, object]:
 
     samples: List[Dict[str, object]] = []
     incomplete_sections = 0
+    zero_submission_sections = 0
     invalid_records = 0
     for section_key, section in sections.items():
         records = timelines.get(section_key, [])
+        if section["submitted"] == 0:
+            zero_submission_sections += 1
+            invalid_records += len(records)
+            continue
         valid_records = [
             record
             for record in records
@@ -231,8 +304,8 @@ def parse_run(run_dir: Path, bucket_blocks: int) -> Dict[str, object]:
         end_ns = section["end_ns"]
         first_pre_start = min(record["pre_start_ns"] for record in valid_records)
         last_pre = max(valid_records, key=lambda record: record["pre_ready_ns"])
-        first_submit = min(record["pre_ready_ns"] for record in valid_records)
-        last_submit = max(record["pre_ready_ns"] for record in valid_records)
+        first_submit = min(record["trigger_done_ns"] for record in valid_records)
+        last_submit = max(record["trigger_done_ns"] for record in valid_records)
         last_completion = max(record["ssd_completion_ns"] for record in valid_records)
         last_post = max(record["post_done_ns"] for record in valid_records)
         total_moves = sum(record["moves"] for record in valid_records)
@@ -247,12 +320,21 @@ def parse_run(run_dir: Path, bucket_blocks: int) -> Dict[str, object]:
         metrics = {
             "pre_span_us": (last_pre["pre_ready_ns"] - first_pre_start) / 1000.0,
             "pre_tail_us": (last_pre["pre_ready_ns"] - start_ns) / 1000.0,
+            "first_submit_from_start_us": (first_submit - start_ns) / 1000.0,
+            "last_submit_from_start_us": (last_submit - start_ns) / 1000.0,
             "submit_span_us": (last_submit - first_submit) / 1000.0,
             "ssd_drain_us": (last_completion - first_submit) / 1000.0,
+            "last_submit_drain_us": (last_completion - last_submit) / 1000.0,
+            "completion_after_last_pre_us": (
+                last_completion - last_pre["pre_ready_ns"]
+            ) / 1000.0,
             "last_completion_from_start_us": (last_completion - start_ns) / 1000.0,
             "post_drain_us": (end_ns - last_completion) / 1000.0,
             "section_us": section_ns / 1000.0,
             "ssd_busy_union_us": busy_ns / 1000.0,
+            "internal_supply_gap_us": max(
+                0, last_completion - first_submit - busy_ns
+            ) / 1000.0,
             "ssd_idle_us": max(0, section_ns - busy_ns) / 1000.0,
             "supply_coverage_permille": busy_ns * 1000.0 / section_ns,
             "peak_outstanding": float(peak_outstanding(valid_records)),
@@ -276,6 +358,12 @@ def parse_run(run_dir: Path, bucket_blocks: int) -> Dict[str, object]:
         "timeline_records": sum(len(records) for records in timelines.values()),
         "invalid_records": invalid_records,
         "incomplete_sections": incomplete_sections,
+        "zero_submission_sections": zero_submission_sections,
+        "global_supply": global_supply_summary(
+            [record for records in timelines.values() for record in records],
+            measured_start_ns,
+            measured_end_ns,
+        ),
     }
 
 
@@ -321,11 +409,20 @@ def matched_means(
 def emit_stage_distribution(label: str, run: Dict[str, object]) -> List[str]:
     """Format dominant PRE stages for the last-ready worker."""
     counts = Counter(sample["last_pre_stage"] for sample in run["samples"])
+    durations: DefaultDict[str, List[float]] = defaultdict(list)
+    for sample in run["samples"]:
+        durations[sample["last_pre_stage"]].append(
+            float(sample["last_pre_stage_us"])
+        )
     total = sum(counts.values())
     output = [f"[{label}_last_pre_stage]"]
     for stage, count in counts.most_common():
+        stage_durations = durations[stage]
         output.append(
             f"{stage}\tcount={count}\tfraction_pct={count * 100.0 / total:.3f}"
+            f"\tmean_us={statistics.fmean(stage_durations):.3f}"
+            f"\tmedian_us={statistics.median(stage_durations):.3f}"
+            f"\tp95_us={percentile(stage_durations, 95.0):.3f}"
         )
     return output
 
@@ -354,10 +451,24 @@ def main() -> int:
         f"treatment_invalid_records={treatment['invalid_records']}",
         f"control_incomplete_sections={control['incomplete_sections']}",
         f"treatment_incomplete_sections={treatment['incomplete_sections']}",
+        f"control_zero_submission_sections={control['zero_submission_sections']}",
+        f"treatment_zero_submission_sections={treatment['zero_submission_sections']}",
+        "",
+        "[global_host_supply]",
+        "metric\tcontrol\ttreatment\tdelta_pct",
+    ]
+    for metric in control["global_supply"]:
+        control_value = float(control["global_supply"][metric])
+        treatment_value = float(treatment["global_supply"][metric])
+        output.append(
+            f"{metric}\t{control_value:.3f}\t{treatment_value:.3f}\t"
+            f"{percent_delta(control_value, treatment_value):.3f}"
+        )
+    output.extend([
         "",
         "metric\tcontrol_mean\ttreatment_mean\tdelta_pct\tcontrol_median\t"
         "treatment_median\tcontrol_p95\ttreatment_p95",
-    ]
+    ])
     for metric in METRICS:
         control_values = values_for(control, metric)
         treatment_values = values_for(treatment, metric)
