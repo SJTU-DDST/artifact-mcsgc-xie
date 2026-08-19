@@ -309,9 +309,9 @@ export FORMAL_HOST_COMMIT="${host_commit}"
 export FORMAL_MODULE_SHA256="${module_sha256}"
 
 if [ "${GC_BREAKDOWN_SMOKE:-0}" -eq 1 ]; then
-    export FIO_IO_SIZE_PER_THREAD_OVERRIDE=1G
+    export FIO_IO_SIZE_PER_THREAD_OVERRIDE=${GC_BREAKDOWN_SMOKE_IO_SIZE_PER_THREAD:-1G}
     export FIO_RUNTIME_OVERRIDE=${GC_BREAKDOWN_SMOKE_RUNTIME:-30}
-    echo "Diagnostic smoke mode: io_size_per_thread=1G runtime=${FIO_RUNTIME_OVERRIDE}s"
+    echo "Diagnostic smoke mode: io_size_per_thread=${FIO_IO_SIZE_PER_THREAD_OVERRIDE} runtime=${FIO_RUNTIME_OVERRIDE}s"
 fi
 
 set +e
