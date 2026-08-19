@@ -167,6 +167,8 @@ def parse_original_record(
             "refill_active",
             "refill_sections",
             "refill_target",
+            "rolling_active",
+            "rolling_sections",
             "free_sections_start",
             "free_sections_end",
             "unsafe_reclaim_calls",
@@ -1056,6 +1058,7 @@ def parse_modern_records(
     conflict_supply_records = 0
     conflict_supply_deferred_records = 0
     conflict_supply_overlap_records = 0
+    rolling_supply_records = 0
 
     for line in line_list:
         if "F2FS_GC_CHECKPOINT_DIAG " in line:
@@ -1153,6 +1156,39 @@ def parse_modern_records(
                 )
                 if total_conflicts:
                     continuous_supply_conflict_records += 1
+            continue
+
+        if "CSGC_ROLLING_SUPPLY_STAT " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            rolling_supply_records += 1
+            for key in (
+                "sections_started",
+                "sections_completed",
+                "active_peak",
+                "deferred",
+                "overlap",
+                "successor_submitted",
+                "target",
+                "free_start",
+                "free_end",
+                "reclaim_calls",
+                "reclaim_segments",
+                "reclaim_sections",
+                "reclaim_skipped",
+                "reclaim_us",
+                "wall_us",
+            ):
+                add_if_present(metrics, values, key, f"rolling_supply_{key}")
+            stop_reason = values.get("stop_reason")
+            if stop_reason:
+                metrics[f"rolling_supply_stop_reason_{stop_reason}"].append(1)
+            started = int_value(values, "sections_started")
+            completed = int_value(values, "sections_completed")
+            if started and completed is not None:
+                metrics["rolling_supply_completion_fraction_permille"].append(
+                    completed * 1000 // started
+                )
             continue
 
         if "CSGC_CONFLICT_AWARE_STAT " in line:
@@ -1799,6 +1835,7 @@ def parse_modern_records(
         "conflict_supply_records": conflict_supply_records,
         "conflict_supply_deferred_records": conflict_supply_deferred_records,
         "conflict_supply_overlap_records": conflict_supply_overlap_records,
+        "rolling_supply_records": rolling_supply_records,
         "summary_segments": summary_segments,
         "summary_batches": len(summary_batches),
         "summary_batch_mismatches": summary_batch_mismatches,
@@ -1974,6 +2011,7 @@ def main() -> int:
         f"conflict_supply_records={diagnostics['conflict_supply_records']}",
         f"conflict_supply_deferred_records={diagnostics['conflict_supply_deferred_records']}",
         f"conflict_supply_overlap_records={diagnostics['conflict_supply_overlap_records']}",
+        f"rolling_supply_records={diagnostics['rolling_supply_records']}",
         f"summary_segments={diagnostics['summary_segments']}",
         f"summary_batches={diagnostics['summary_batches']}",
         f"summary_batch_mismatches={diagnostics['summary_batch_mismatches']}",
@@ -2025,6 +2063,12 @@ def main() -> int:
         "conflict-aware cross-section supply",
         metrics,
         ("conflict_supply_",),
+    )
+    emit_group(
+        output,
+        "rolling conflict-aware supply",
+        metrics,
+        ("rolling_supply_",),
     )
     emit_group(output, "coarse PRE/SSD/POST intervals", metrics, ("phase_pre_", "phase_ssd_", "phase_post_"))
     emit_group(output, "original CSGC segment breakdown", metrics, ("original_segment_",))

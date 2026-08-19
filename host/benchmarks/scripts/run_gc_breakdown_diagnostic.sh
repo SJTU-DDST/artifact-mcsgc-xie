@@ -38,6 +38,7 @@ Configurations:
   mcsgc8t-unsafe-prefree-refill
   mcsgc8t-continuous-supply
   mcsgc8t-conflict-aware-supply
+  mcsgc8t-rolling-supply
 
 Workloads:
   bigfile     4-job single-big-file workload (default)
@@ -216,6 +217,15 @@ case "${configuration}" in
         expected_fast_unsafe=1
         run_breakdown_parser=0
         ;;
+    mcsgc8t-rolling-supply)
+        expected_branch=exp/diagnostic-mcsgc8t-rolling-supply-20260819
+        prepare_configuration=mcsgc8t-rolling-supply
+        test_mode=diagnostic-mcsgc8t-rolling-supply-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
     *)
         usage
         exit 1
@@ -300,7 +310,8 @@ export FORMAL_MODULE_SHA256="${module_sha256}"
 
 if [ "${GC_BREAKDOWN_SMOKE:-0}" -eq 1 ]; then
     export FIO_IO_SIZE_PER_THREAD_OVERRIDE=1G
-    echo "Diagnostic smoke mode: io_size_per_thread=1G"
+    export FIO_RUNTIME_OVERRIDE=${GC_BREAKDOWN_SMOKE_RUNTIME:-30}
+    echo "Diagnostic smoke mode: io_size_per_thread=1G runtime=${FIO_RUNTIME_OVERRIDE}s"
 fi
 
 set +e

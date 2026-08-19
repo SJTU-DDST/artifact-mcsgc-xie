@@ -38,6 +38,8 @@ Configurations:
                         Crash-unsafe reclaim with staggered section supply
   mcsgc8t-conflict-aware-supply
                         Conflict-aware staggered section supply
+  mcsgc8t-rolling-supply
+                        Depth-two rolling conflict-aware section supply
 EOF
 }
 
@@ -91,6 +93,9 @@ case "$1" in
         ;;
     mcsgc8t-conflict-aware-supply)
         expected_branch=exp/diagnostic-mcsgc8t-conflict-aware-supply-20260819
+        ;;
+    mcsgc8t-rolling-supply)
+        expected_branch=exp/diagnostic-mcsgc8t-rolling-supply-20260819
         ;;
     *)
         usage
