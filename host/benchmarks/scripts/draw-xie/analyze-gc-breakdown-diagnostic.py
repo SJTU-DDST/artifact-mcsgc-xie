@@ -1050,6 +1050,9 @@ def parse_modern_records(
     pipeline_second_victim_non_data = 0
     pipeline_incomplete_timings = 0
     pipeline_errors = 0
+    continuous_supply_records = 0
+    continuous_supply_successor_useful_records = 0
+    continuous_supply_conflict_records = 0
 
     for line in line_list:
         if "F2FS_GC_CHECKPOINT_DIAG " in line:
@@ -1099,6 +1102,54 @@ def parse_modern_records(
             timelines[
                 (parsed_record["section"], parsed_record["section_start_ns"])
             ].append(parsed_record)
+            continue
+
+        if "CSGC_CONTINUOUS_SUPPLY_STAT " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            continuous_supply_records += 1
+            for key in (
+                "watermark",
+                "pair_wall_us",
+                "first_ready_us",
+                "second_ready_us",
+                "successor_launch_gap_us",
+                "first_done_at_successor_launch",
+                "gate_hit_watermark",
+                "ready_submitted",
+                "ready_pre_finished",
+                "first_submitted",
+                "second_submitted",
+                "first_pre_finished",
+                "second_pre_finished",
+                "first_inode_conflicts",
+                "second_inode_conflicts",
+            ):
+                add_if_present(metrics, values, key, f"continuous_supply_{key}")
+
+            first_submitted = int_value(values, "first_submitted")
+            second_submitted = int_value(values, "second_submitted")
+            first_pre_finished = int_value(values, "first_pre_finished")
+            second_pre_finished = int_value(values, "second_pre_finished")
+            first_conflicts = int_value(values, "first_inode_conflicts")
+            second_conflicts = int_value(values, "second_inode_conflicts")
+            if second_submitted is not None and second_submitted > 0:
+                continuous_supply_successor_useful_records += 1
+            if first_submitted is not None and second_submitted is not None:
+                metrics["continuous_supply_total_submitted"].append(
+                    first_submitted + second_submitted
+                )
+            if first_pre_finished is not None and second_pre_finished is not None:
+                metrics["continuous_supply_total_pre_finished"].append(
+                    first_pre_finished + second_pre_finished
+                )
+            if first_conflicts is not None and second_conflicts is not None:
+                total_conflicts = first_conflicts + second_conflicts
+                metrics["continuous_supply_total_inode_conflicts"].append(
+                    total_conflicts
+                )
+                if total_conflicts:
+                    continuous_supply_conflict_records += 1
             continue
 
         if "MCSGC_PIPELINE " in line:
@@ -1665,6 +1716,15 @@ def parse_modern_records(
         metrics["pipeline_second_victim_non_data_fraction_permille"].append(
             pipeline_second_victim_non_data * 1000 // pipeline_second_victim_attempts
         )
+    if continuous_supply_records:
+        metrics["continuous_supply_successor_useful_fraction_permille"].append(
+            continuous_supply_successor_useful_records * 1000
+            // continuous_supply_records
+        )
+        metrics["continuous_supply_conflict_pair_fraction_permille"].append(
+            continuous_supply_conflict_records * 1000
+            // continuous_supply_records
+        )
 
     for batch in summary_batches.values():
         for source_key, value in batch.items():
@@ -1698,6 +1758,11 @@ def parse_modern_records(
         "pipeline_second_victim_non_data": pipeline_second_victim_non_data,
         "pipeline_incomplete_timings": pipeline_incomplete_timings,
         "pipeline_errors": pipeline_errors,
+        "continuous_supply_records": continuous_supply_records,
+        "continuous_supply_successor_useful_records": (
+            continuous_supply_successor_useful_records
+        ),
+        "continuous_supply_conflict_records": continuous_supply_conflict_records,
         "summary_segments": summary_segments,
         "summary_batches": len(summary_batches),
         "summary_batch_mismatches": summary_batch_mismatches,
@@ -1867,6 +1932,9 @@ def main() -> int:
         f"pipeline_second_victim_non_data={diagnostics['pipeline_second_victim_non_data']}",
         f"pipeline_incomplete_timings={diagnostics['pipeline_incomplete_timings']}",
         f"pipeline_errors={diagnostics['pipeline_errors']}",
+        f"continuous_supply_records={diagnostics['continuous_supply_records']}",
+        f"continuous_supply_successor_useful_records={diagnostics['continuous_supply_successor_useful_records']}",
+        f"continuous_supply_conflict_records={diagnostics['continuous_supply_conflict_records']}",
         f"summary_segments={diagnostics['summary_segments']}",
         f"summary_batches={diagnostics['summary_batches']}",
         f"summary_batch_mismatches={diagnostics['summary_batch_mismatches']}",
@@ -1907,6 +1975,12 @@ def main() -> int:
         ("modern_section_critical_",),
     )
     emit_group(output, "cross-section pipeline", metrics, ("pipeline_",))
+    emit_group(
+        output,
+        "continuous cross-section supply",
+        metrics,
+        ("continuous_supply_",),
+    )
     emit_group(output, "coarse PRE/SSD/POST intervals", metrics, ("phase_pre_", "phase_ssd_", "phase_post_"))
     emit_group(output, "original CSGC segment breakdown", metrics, ("original_segment_",))
     emit_group(output, "original CSGC detailed PRE/SSD breakdown", metrics, ("original_detail_",))

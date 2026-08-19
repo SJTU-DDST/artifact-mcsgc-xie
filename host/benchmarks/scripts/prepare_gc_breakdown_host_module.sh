@@ -34,6 +34,8 @@ Configurations:
                         Crash-unsafe in-memory prefree reclaim module
   mcsgc8t-unsafe-prefree-refill
                         Crash-unsafe reclaim with bounded sequential refill
+  mcsgc8t-continuous-supply
+                        Crash-unsafe reclaim with staggered section supply
 EOF
 }
 
@@ -81,6 +83,9 @@ case "$1" in
         ;;
     mcsgc8t-unsafe-prefree-refill)
         expected_branch=exp/diagnostic-mcsgc8t-unsafe-prefree-refill-20260818
+        ;;
+    mcsgc8t-continuous-supply)
+        expected_branch=exp/diagnostic-mcsgc8t-continuous-supply-20260819
         ;;
     *)
         usage

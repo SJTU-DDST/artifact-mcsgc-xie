@@ -36,6 +36,7 @@ Configurations:
   mcsgc8t-gc-gap-control
   mcsgc8t-unsafe-prefree-reclaim
   mcsgc8t-unsafe-prefree-refill
+  mcsgc8t-continuous-supply
 
 Workloads:
   bigfile     4-job single-big-file workload (default)
@@ -191,6 +192,15 @@ case "${configuration}" in
         expected_branch=exp/diagnostic-mcsgc8t-unsafe-prefree-refill-20260818
         prepare_configuration=mcsgc8t-unsafe-prefree-refill
         test_mode=diagnostic-mcsgc8t-unsafe-prefree-refill-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-continuous-supply)
+        expected_branch=exp/diagnostic-mcsgc8t-continuous-supply-20260819
+        prepare_configuration=mcsgc8t-continuous-supply
+        test_mode=diagnostic-mcsgc8t-continuous-supply-csgc
         expected_production=1
         expected_move_plan=1
         expected_fast_unsafe=1
