@@ -1053,6 +1053,9 @@ def parse_modern_records(
     continuous_supply_records = 0
     continuous_supply_successor_useful_records = 0
     continuous_supply_conflict_records = 0
+    conflict_supply_records = 0
+    conflict_supply_deferred_records = 0
+    conflict_supply_overlap_records = 0
 
     for line in line_list:
         if "F2FS_GC_CHECKPOINT_DIAG " in line:
@@ -1150,6 +1153,29 @@ def parse_modern_records(
                 )
                 if total_conflicts:
                     continuous_supply_conflict_records += 1
+            continue
+
+        if "CSGC_CONFLICT_AWARE_STAT " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            conflict_supply_records += 1
+            for key in (
+                "first_manifest",
+                "second_manifest",
+                "conflict_inodes",
+                "first_discovery_failed",
+                "second_discovery_failed",
+                "deferred_wait_us",
+                "successor_released",
+                "first_discovery_us",
+                "second_discovery_us",
+                "decision_after_second_launch_us",
+            ):
+                add_if_present(metrics, values, key, f"conflict_supply_{key}")
+            if values.get("decision") == "deferred":
+                conflict_supply_deferred_records += 1
+            elif values.get("decision") == "overlap":
+                conflict_supply_overlap_records += 1
             continue
 
         if "MCSGC_PIPELINE " in line:
@@ -1725,6 +1751,13 @@ def parse_modern_records(
             continuous_supply_conflict_records * 1000
             // continuous_supply_records
         )
+    if conflict_supply_records:
+        metrics["conflict_supply_deferred_fraction_permille"].append(
+            conflict_supply_deferred_records * 1000 // conflict_supply_records
+        )
+        metrics["conflict_supply_overlap_fraction_permille"].append(
+            conflict_supply_overlap_records * 1000 // conflict_supply_records
+        )
 
     for batch in summary_batches.values():
         for source_key, value in batch.items():
@@ -1763,6 +1796,9 @@ def parse_modern_records(
             continuous_supply_successor_useful_records
         ),
         "continuous_supply_conflict_records": continuous_supply_conflict_records,
+        "conflict_supply_records": conflict_supply_records,
+        "conflict_supply_deferred_records": conflict_supply_deferred_records,
+        "conflict_supply_overlap_records": conflict_supply_overlap_records,
         "summary_segments": summary_segments,
         "summary_batches": len(summary_batches),
         "summary_batch_mismatches": summary_batch_mismatches,
@@ -1935,6 +1971,9 @@ def main() -> int:
         f"continuous_supply_records={diagnostics['continuous_supply_records']}",
         f"continuous_supply_successor_useful_records={diagnostics['continuous_supply_successor_useful_records']}",
         f"continuous_supply_conflict_records={diagnostics['continuous_supply_conflict_records']}",
+        f"conflict_supply_records={diagnostics['conflict_supply_records']}",
+        f"conflict_supply_deferred_records={diagnostics['conflict_supply_deferred_records']}",
+        f"conflict_supply_overlap_records={diagnostics['conflict_supply_overlap_records']}",
         f"summary_segments={diagnostics['summary_segments']}",
         f"summary_batches={diagnostics['summary_batches']}",
         f"summary_batch_mismatches={diagnostics['summary_batch_mismatches']}",
@@ -1980,6 +2019,12 @@ def main() -> int:
         "continuous cross-section supply",
         metrics,
         ("continuous_supply_",),
+    )
+    emit_group(
+        output,
+        "conflict-aware cross-section supply",
+        metrics,
+        ("conflict_supply_",),
     )
     emit_group(output, "coarse PRE/SSD/POST intervals", metrics, ("phase_pre_", "phase_ssd_", "phase_post_"))
     emit_group(output, "original CSGC segment breakdown", metrics, ("original_segment_",))

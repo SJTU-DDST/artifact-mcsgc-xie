@@ -36,6 +36,8 @@ Configurations:
                         Crash-unsafe reclaim with bounded sequential refill
   mcsgc8t-continuous-supply
                         Crash-unsafe reclaim with staggered section supply
+  mcsgc8t-conflict-aware-supply
+                        Conflict-aware staggered section supply
 EOF
 }
 
@@ -86,6 +88,9 @@ case "$1" in
         ;;
     mcsgc8t-continuous-supply)
         expected_branch=exp/diagnostic-mcsgc8t-continuous-supply-20260819
+        ;;
+    mcsgc8t-conflict-aware-supply)
+        expected_branch=exp/diagnostic-mcsgc8t-conflict-aware-supply-20260819
         ;;
     *)
         usage

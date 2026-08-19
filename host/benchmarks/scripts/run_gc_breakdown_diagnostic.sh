@@ -37,6 +37,7 @@ Configurations:
   mcsgc8t-unsafe-prefree-reclaim
   mcsgc8t-unsafe-prefree-refill
   mcsgc8t-continuous-supply
+  mcsgc8t-conflict-aware-supply
 
 Workloads:
   bigfile     4-job single-big-file workload (default)
@@ -206,6 +207,15 @@ case "${configuration}" in
         expected_fast_unsafe=1
         run_breakdown_parser=0
         ;;
+    mcsgc8t-conflict-aware-supply)
+        expected_branch=exp/diagnostic-mcsgc8t-conflict-aware-supply-20260819
+        prepare_configuration=mcsgc8t-conflict-aware-supply
+        test_mode=diagnostic-mcsgc8t-conflict-aware-supply-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
     *)
         usage
         exit 1
@@ -289,10 +299,6 @@ export FORMAL_HOST_COMMIT="${host_commit}"
 export FORMAL_MODULE_SHA256="${module_sha256}"
 
 if [ "${GC_BREAKDOWN_SMOKE:-0}" -eq 1 ]; then
-    if [ "${workload}" != "bigfile" ]; then
-        echo "ERROR: the shortened diagnostic smoke test supports only bigfile." >&2
-        exit 1
-    fi
     export FIO_IO_SIZE_PER_THREAD_OVERRIDE=1G
     echo "Diagnostic smoke mode: io_size_per_thread=1G"
 fi
