@@ -501,6 +501,7 @@ echo "Running evaluation for $gc_mode..."
         ssd_enable_l2p ssd_enable_nand_lat ssd_enable_dsm fsck_after_run light_evaluation \
         fio_gc_precondition fio_gc_precondition_size_per_job fio_gc_precondition_max_rounds \
         formal_performance_only collect_diagnostic_workload_stats \
+        csgc_proactive_profile \
         FORMAL_HOST_BRANCH FORMAL_HOST_COMMIT FORMAL_MODULE_SHA256
         
         case "${workload_type}" in 

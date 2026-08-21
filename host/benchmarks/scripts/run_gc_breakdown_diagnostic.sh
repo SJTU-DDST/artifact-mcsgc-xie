@@ -43,6 +43,7 @@ Configurations:
   mcsgc8t-parallel-gc-inode-share
   mcsgc8t-parallel-gc-dnode-safe
   mcsgc8t-parallel-gc-unsafe-fast
+  mcsgc8t-proactive-supply
 
 Workloads:
   bigfile     4-job single-big-file workload (default)
@@ -266,6 +267,24 @@ case "${configuration}" in
         expected_fast_unsafe=1
         run_breakdown_parser=0
         ;;
+    mcsgc8t-proactive-supply)
+        proactive_profile=${CSGC_PROACTIVE_PROFILE:-}
+        case "${proactive_profile}" in
+            off|moderate|aggressive)
+                ;;
+            *)
+                echo "ERROR: CSGC_PROACTIVE_PROFILE must be off, moderate, or aggressive." >&2
+                exit 1
+                ;;
+        esac
+        expected_branch=exp/diagnostic-mcsgc8t-proactive-supply-20260822
+        prepare_configuration=mcsgc8t-proactive-supply
+        test_mode=diagnostic-mcsgc8t-proactive-${proactive_profile}-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
     *)
         usage
         exit 1
@@ -344,6 +363,7 @@ export CSGC_EXPECTED_OPENSSD_PRODUCTION_PERFORMANCE="${expected_production}"
 export CSGC_EXPECTED_MOVE_PLAN_V2="${expected_move_plan}"
 export CSGC_EXPECTED_MOVE_PLAN_FAST_UNSAFE="${expected_fast_unsafe}"
 export collect_diagnostic_workload_stats=1
+export csgc_proactive_profile=${proactive_profile:-none}
 export FORMAL_HOST_BRANCH="${actual_branch}"
 export FORMAL_HOST_COMMIT="${host_commit}"
 export FORMAL_MODULE_SHA256="${module_sha256}"

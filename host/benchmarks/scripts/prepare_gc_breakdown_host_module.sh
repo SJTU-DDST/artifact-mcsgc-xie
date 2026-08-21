@@ -48,6 +48,8 @@ Configurations:
                         Two-way CSGC that defers shared dnode pages
   mcsgc8t-parallel-gc-unsafe-fast
                         Unsafe two-way CSGC without pair-level diagnostics
+  mcsgc8t-proactive-supply
+                        Runtime-selectable proactive CSGC producer
 EOF
 }
 
@@ -116,6 +118,9 @@ case "$1" in
         ;;
     mcsgc8t-parallel-gc-unsafe-fast)
         expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-unsafe-fast-20260821
+        ;;
+    mcsgc8t-proactive-supply)
+        expected_branch=exp/diagnostic-mcsgc8t-proactive-supply-20260822
         ;;
     *)
         usage

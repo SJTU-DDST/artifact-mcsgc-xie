@@ -178,8 +178,16 @@ def parse_original_record(
             "unsafe_reclaim_us",
             "csgc_collectors",
             "origc_collectors",
+            "proactive",
         ):
             add_if_present(metrics, values, key, f"gc_call_{key}")
+        trigger_source = values.get("trigger_source")
+        if trigger_source:
+            metrics[f"gc_trigger_source_{trigger_source}"].append(1)
+        proactive = int_value(values, "proactive")
+        if proactive == 1:
+            for key in ("csgc_collectors", "origc_collectors", "duration_us"):
+                add_if_present(metrics, values, key, f"proactive_gc_call_{key}")
         stop_reason = values.get("stop_reason")
         if stop_reason:
             metrics[f"gc_stop_reason_{stop_reason}"].append(1)
@@ -452,6 +460,67 @@ def parse_original_record(
         return True
 
     return False
+
+
+def parse_proactive_summary(
+    lines: Iterable[str], metrics: DefaultDict[str, List[int]]
+) -> Dict[str, int]:
+    """Parse the latest completed workload-epoch producer summary."""
+    summaries: List[Dict[str, str]] = []
+    stop_records: List[Dict[str, str]] = []
+    for line in lines:
+        if "F2FS_CSGC_PROACTIVE_STAT " in line:
+            values = parse_kv(line)
+            if values.get("scope") == "workload":
+                summaries.append(values)
+        elif "F2FS_CSGC_PROACTIVE_STOP_STAT " in line:
+            values = parse_kv(line)
+            if values.get("scope") == "workload":
+                stop_records.append(values)
+
+    if not summaries:
+        return {"proactive_summary_records": 0, "proactive_stop_records": 0}
+
+    summary = summaries[-1]
+    epoch = summary.get("epoch")
+    for key in (
+        "enabled",
+        "running",
+        "start_margin",
+        "stop_margin",
+        "wakeups",
+        "triggers",
+        "gc_calls",
+        "no_victim",
+        "errors",
+        "lock_busy",
+        "sections",
+        "migrated_blocks",
+        "active_us",
+        "idle_us",
+        "free_valid",
+        "free_first",
+        "free_last",
+        "free_min",
+        "free_max",
+    ):
+        add_if_present(metrics, summary, key, f"proactive_{key}")
+
+    matching_stops = 0
+    for values in stop_records:
+        if values.get("epoch") != epoch:
+            continue
+        reason = values.get("reason")
+        count = int_value(values, "count")
+        if reason is None or count is None or count < 0:
+            continue
+        metrics[f"proactive_stop_reason_{reason}"].append(count)
+        matching_stops += 1
+
+    return {
+        "proactive_summary_records": 1,
+        "proactive_stop_records": matching_stops,
+    }
 
 
 def modern_trace_time(values: Dict[str, str]) -> Optional[int]:
@@ -2127,6 +2196,8 @@ def main() -> int:
         start_us * 1000,
         end_us * 1000,
     )
+    proactive_diagnostics = parse_proactive_summary(lines, metrics)
+    diagnostics.update(proactive_diagnostics)
 
     output = [
         "GC breakdown diagnostic summary",
@@ -2174,6 +2245,8 @@ def main() -> int:
         f"global_supply_checkpoint_gaps={diagnostics['global_supply_checkpoint_gaps']}",
         f"global_supply_same_gc_gaps={diagnostics['global_supply_same_gc_gaps']}",
         f"global_supply_between_gc_gaps={diagnostics['global_supply_between_gc_gaps']}",
+        f"proactive_summary_records={diagnostics['proactive_summary_records']}",
+        f"proactive_stop_records={diagnostics['proactive_stop_records']}",
         "",
     ]
 
@@ -2185,6 +2258,12 @@ def main() -> int:
         ("gc_checkpoint_", "gc_unsafe_reclaim_", "gc_stop_reason_"),
     )
     emit_group(output, "Host CSGC supply gaps", metrics, ("host_supply_",))
+    emit_group(
+        output,
+        "proactive CSGC producer",
+        metrics,
+        ("proactive_", "gc_trigger_source_"),
+    )
     emit_group(output, "collector paths", metrics, ("collector_", "gc_end_", "gc_path_"))
     emit_group(output, "cross-version comparable breakdown", metrics, ("comparable_",))
     emit_group(

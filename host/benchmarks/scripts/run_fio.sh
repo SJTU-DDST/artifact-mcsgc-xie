@@ -16,6 +16,22 @@ mntpoint=${MNTPOINT}
 : "${fio_nofile_limit:=65536}"
 : "${formal_performance_only:=0}"
 : "${collect_diagnostic_workload_stats:=0}"
+: "${csgc_proactive_profile:=none}"
+csgc_proactive_started=0
+
+# Best-effort shutdown when an interrupted runner leaves the producer enabled.
+cleanup_csgc_proactive() {
+    if [ "${csgc_proactive_started:-0}" -ne 1 ] \
+        || [ -z "${csgc_proactive_control_path:-}" ] \
+        || [ ! -e "${csgc_proactive_control_path}" ]; then
+        return
+    fi
+    printf 'stop\n' | sudo tee "${csgc_proactive_control_path}" >/dev/null 2>&1 \
+        || true
+    csgc_proactive_started=0
+}
+
+trap cleanup_csgc_proactive EXIT
 
 if [[ ! "${fio_gc_precondition}" =~ ^[01]$ ]]; then
     echo "ERROR: fio_gc_precondition must be 0 or 1" >&2
@@ -41,9 +57,18 @@ if [[ ! "${collect_diagnostic_workload_stats}" =~ ^[01]$ ]]; then
     echo "ERROR: collect_diagnostic_workload_stats must be 0 or 1" >&2
     exit 1
 fi
+case "${csgc_proactive_profile}" in
+    none|off|moderate|aggressive)
+        ;;
+    *)
+        echo "ERROR: unsupported CSGC proactive profile: ${csgc_proactive_profile}" >&2
+        exit 1
+        ;;
+esac
 
 measurement_epoch_enabled=0
-if [ "${formal_performance_only}" -eq 0 ]; then
+if [ "${formal_performance_only}" -eq 0 ] \
+    || [ "${csgc_proactive_profile}" != "none" ]; then
     measurement_epoch_enabled=1
 fi
 
@@ -172,6 +197,59 @@ set_gc_measurement_epoch() {
     return 1
 }
 
+# Update one proactive producer watermark while the producer is idle.
+set_csgc_proactive_margin() {
+    local margin_path=$1
+    local margin=$2
+    local output
+
+    if [ ! -e "${margin_path}" ]; then
+        echo "ERROR: proactive CSGC margin is unavailable: ${margin_path}" >&2
+        return 1
+    fi
+    if ! output=$(printf '%s\n' "${margin}" | sudo tee "${margin_path}" 2>&1); then
+        echo "ERROR: failed to set ${margin_path} to ${margin}: ${output}" >&2
+        return 1
+    fi
+}
+
+# Start or stop the producer, retrying transient sysfs locking failures.
+set_csgc_proactive_control() {
+    local control_path=$1
+    local command=$2
+    local attempt
+    local output
+
+    for ((attempt = 1; attempt <= 100; attempt++)); do
+        if output=$(printf '%s\n' "${command}" | sudo tee "${control_path}" 2>&1); then
+            echo "CSGC proactive producer command succeeded: ${command}"
+            return 0
+        fi
+        sleep 0.05
+    done
+    echo "ERROR: CSGC proactive producer command failed: ${command}" >&2
+    echo "${output}" >&2
+    return 1
+}
+
+# Wait until stop has prevented new work and the current f2fs_gc call drains.
+wait_csgc_proactive_idle() {
+    local control_path=$1
+    local attempt
+    local state
+
+    for ((attempt = 1; attempt <= 3000; attempt++)); do
+        state=$(<"${control_path}") || return 1
+        if [[ "${state}" =~ enabled=0[[:space:]]+running=0[[:space:]]+idle=1 ]]; then
+            echo "CSGC proactive producer is idle: ${state}"
+            return 0
+        fi
+        sleep 0.01
+    done
+    echo "ERROR: CSGC proactive producer did not drain: ${state}" >&2
+    return 1
+}
+
 # Read and validate the currently active GC measurement epoch from sysfs.
 read_gc_measurement_epoch() {
     local control_path=$1
@@ -225,6 +303,12 @@ capture_gc_measurement_summary() {
             index($0, "kind=summary") {
             supply = $0
         }
+        index($0, "F2FS_CSGC_PROACTIVE_STAT " target) {
+            proactive = $0
+        }
+        index($0, "F2FS_CSGC_PROACTIVE_STOP_STAT " target) {
+            proactive_stops = proactive_stops $0 "\n"
+        }
         END {
             if (victim == "" || heavy == "") {
                 print "ERROR: completed GC measurement summary is missing for epoch=" \
@@ -235,6 +319,10 @@ capture_gc_measurement_summary() {
             print heavy
             if (supply != "")
                 print supply
+            if (proactive != "")
+                print proactive
+            if (proactive_stops != "")
+                printf "%s", proactive_stops
         }
     ' > "${output_file}"
 }
@@ -615,6 +703,9 @@ gc_counter_path="${f2fs_sysfs_dir}/fg_victim_starts"
 gc_csgc_counter_path="${f2fs_sysfs_dir}/fg_csgc_victim_starts"
 gc_origc_counter_path="${f2fs_sysfs_dir}/fg_origc_victim_starts"
 gc_measurement_control_path="${f2fs_sysfs_dir}/gc_measurement_control"
+csgc_proactive_control_path="${f2fs_sysfs_dir}/csgc_proactive_control"
+csgc_proactive_start_margin_path="${f2fs_sysfs_dir}/csgc_proactive_start_margin"
+csgc_proactive_stop_margin_path="${f2fs_sysfs_dir}/csgc_proactive_stop_margin"
 
 if [ "${measurement_epoch_enabled}" -eq 1 ]; then
     for gc_measurement_path in \
@@ -624,6 +715,18 @@ if [ "${measurement_epoch_enabled}" -eq 1 ]; then
         "${gc_measurement_control_path}"; do
         if [ ! -e "${gc_measurement_path}" ]; then
             echo "ERROR: required GC measurement sysfs entry is unavailable: ${gc_measurement_path}" >&2
+            sudo umount "${devpath}" >/dev/null 2>&1 || true
+            exit 1
+        fi
+    done
+fi
+if [ "${csgc_proactive_profile}" != "none" ]; then
+    for proactive_path in \
+        "${csgc_proactive_control_path}" \
+        "${csgc_proactive_start_margin_path}" \
+        "${csgc_proactive_stop_margin_path}"; do
+        if [ ! -e "${proactive_path}" ]; then
+            echo "ERROR: required proactive CSGC sysfs entry is unavailable: ${proactive_path}" >&2
             sudo umount "${devpath}" >/dev/null 2>&1 || true
             exit 1
         fi
@@ -885,6 +988,7 @@ echo "================ FIO WORKLOAD SUMMARY ================"
 echo "bmname:               ${bmname}"
 echo "workload_path:        ${workload_path}"
 echo "gc_precondition:      ${fio_gc_precondition}"
+echo "proactive_profile:    ${csgc_proactive_profile}"
 echo "gc_precondition_size: ${fio_gc_precondition_size_per_job} per job"
 printf 'runtime_flags:        '
 if [ "${#runtime_flags[@]}" -eq 0 ]; then
@@ -919,6 +1023,30 @@ if [ "${measurement_epoch_enabled}" -eq 1 ]; then
     fi
 fi
 
+if [ "${csgc_proactive_profile}" != "none" ]; then
+    case "${csgc_proactive_profile}" in
+        off|moderate)
+            proactive_start_margin=8
+            proactive_stop_margin=16
+            ;;
+        aggressive)
+            proactive_start_margin=16
+            proactive_stop_margin=32
+            ;;
+    esac
+    # Set the upper watermark first so changing 8/16 to 16/32 never creates
+    # an invalid transient ordering.
+    if ! set_csgc_proactive_margin "${csgc_proactive_stop_margin_path}" \
+            "${proactive_stop_margin}" \
+        || ! set_csgc_proactive_margin "${csgc_proactive_start_margin_path}" \
+            "${proactive_start_margin}"; then
+        set_gc_measurement_epoch "${gc_measurement_control_path}" stop || true
+        sudo umount "${devpath}" >/dev/null 2>&1 || true
+        exit 1
+    fi
+    echo "CSGC proactive state before fio: $(<"${csgc_proactive_control_path}")"
+fi
+
 # Fixed-precondition diagnostic runs use marker-bounded Host traces and collect
 # device counters without enabling the high-volume GC-heavy measurement epoch.
 if [ "${workload_ssd_stats_enabled}" -eq 1 ]; then
@@ -933,10 +1061,34 @@ if [ "${workload_ssd_stats_enabled}" -eq 1 ]; then
     fi
 fi
 
-emit_kernel_marker "MEASURED_FIO_START mode=${gc_mode} workload=${bmname}"
+emit_kernel_marker "MEASURED_FIO_START mode=${gc_mode} workload=${bmname} proactive_profile=${csgc_proactive_profile}"
+if [ "${csgc_proactive_profile}" = "moderate" ] \
+    || [ "${csgc_proactive_profile}" = "aggressive" ]; then
+    if ! set_csgc_proactive_control "${csgc_proactive_control_path}" start; then
+        emit_kernel_marker "MEASURED_FIO_END mode=${gc_mode} workload=${bmname} status=1 proactive_profile=${csgc_proactive_profile}"
+        set_gc_measurement_epoch "${gc_measurement_control_path}" stop || true
+        sudo umount "${devpath}" >/dev/null 2>&1 || true
+        exit 1
+    fi
+    csgc_proactive_started=1
+fi
 run_fio_logged "${fio_log}" "${fio_flags[@]}" "${runtime_flags[@]}" "${workload_path}"
 fio_status=$?
-emit_kernel_marker "MEASURED_FIO_END mode=${gc_mode} workload=${bmname} status=${fio_status}"
+if [ "${csgc_proactive_profile}" = "moderate" ] \
+    || [ "${csgc_proactive_profile}" = "aggressive" ]; then
+    if ! set_csgc_proactive_control "${csgc_proactive_control_path}" stop; then
+        fio_status=1
+    else
+        csgc_proactive_started=0
+    fi
+fi
+emit_kernel_marker "MEASURED_FIO_END mode=${gc_mode} workload=${bmname} status=${fio_status} proactive_profile=${csgc_proactive_profile}"
+if [ "${csgc_proactive_profile}" = "moderate" ] \
+    || [ "${csgc_proactive_profile}" = "aggressive" ]; then
+    if ! wait_csgc_proactive_idle "${csgc_proactive_control_path}"; then
+        fio_status=1
+    fi
+fi
 
 if [ "${measurement_epoch_enabled}" -eq 1 ]; then
     if ! set_gc_measurement_epoch "${gc_measurement_control_path}" stop; then
