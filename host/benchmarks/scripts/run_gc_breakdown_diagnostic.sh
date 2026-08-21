@@ -39,6 +39,8 @@ Configurations:
   mcsgc8t-continuous-supply
   mcsgc8t-conflict-aware-supply
   mcsgc8t-rolling-supply
+  mcsgc8t-parallel-gc-control
+  mcsgc8t-parallel-gc-inode-share
 
 Workloads:
   bigfile     4-job single-big-file workload (default)
@@ -221,6 +223,24 @@ case "${configuration}" in
         expected_branch=exp/diagnostic-mcsgc8t-rolling-supply-20260819
         prepare_configuration=mcsgc8t-rolling-supply
         test_mode=diagnostic-mcsgc8t-rolling-supply-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-parallel-gc-control)
+        expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-control-20260821
+        prepare_configuration=mcsgc8t-parallel-gc-control
+        test_mode=diagnostic-mcsgc8t-parallel-gc-control-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-parallel-gc-inode-share)
+        expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-inode-share-20260821
+        prepare_configuration=mcsgc8t-parallel-gc-inode-share
+        test_mode=diagnostic-mcsgc8t-parallel-gc-inode-share-csgc
         expected_production=1
         expected_move_plan=1
         expected_fast_unsafe=1

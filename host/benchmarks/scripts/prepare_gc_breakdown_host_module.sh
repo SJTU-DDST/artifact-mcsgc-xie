@@ -40,6 +40,10 @@ Configurations:
                         Conflict-aware staggered section supply
   mcsgc8t-rolling-supply
                         Depth-two rolling conflict-aware section supply
+  mcsgc8t-parallel-gc-control
+                        Parallel-GC diagnostic control module
+  mcsgc8t-parallel-gc-inode-share
+                        Two-way CSGC with shared inode leases
 EOF
 }
 
@@ -96,6 +100,12 @@ case "$1" in
         ;;
     mcsgc8t-rolling-supply)
         expected_branch=exp/diagnostic-mcsgc8t-rolling-supply-20260819
+        ;;
+    mcsgc8t-parallel-gc-control)
+        expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-control-20260821
+        ;;
+    mcsgc8t-parallel-gc-inode-share)
+        expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-inode-share-20260821
         ;;
     *)
         usage

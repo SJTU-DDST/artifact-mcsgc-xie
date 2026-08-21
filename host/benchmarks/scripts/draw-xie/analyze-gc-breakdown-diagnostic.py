@@ -889,6 +889,35 @@ def aggregate_global_supply_gaps(
         and record["trigger_done_ns"] <= window_end_ns
     )
 
+    events: DefaultDict[int, int] = defaultdict(int)
+    for interval_start, interval_end in request_intervals:
+        if interval_end <= interval_start:
+            continue
+        events[interval_start] += 1
+        events[interval_end] -= 1
+    depth = 0
+    peak_depth = 0
+    last_ns = window_start_ns
+    depth_ge_one_ns = 0
+    depth_ge_two_ns = 0
+    for event_ns in sorted(events):
+        clipped_ns = min(max(event_ns, window_start_ns), window_end_ns)
+        if clipped_ns > last_ns:
+            interval_ns = clipped_ns - last_ns
+            if depth >= 1:
+                depth_ge_one_ns += interval_ns
+            if depth >= 2:
+                depth_ge_two_ns += interval_ns
+            last_ns = clipped_ns
+        depth += events[event_ns]
+        peak_depth = max(peak_depth, depth)
+    if last_ns < window_end_ns:
+        interval_ns = window_end_ns - last_ns
+        if depth >= 1:
+            depth_ge_one_ns += interval_ns
+        if depth >= 2:
+            depth_ge_two_ns += interval_ns
+
     merged: List[Tuple[int, int]] = []
     for interval_start, interval_end in request_intervals:
         if interval_end < interval_start:
@@ -903,9 +932,14 @@ def aggregate_global_supply_gaps(
     metrics["host_supply_window_us"].append(duration_ns // 1000)
     metrics["host_supply_busy_us"].append(busy_ns // 1000)
     metrics["host_supply_idle_us"].append(max(0, duration_ns - busy_ns) // 1000)
+    metrics["host_supply_depth_ge_two_us"].append(depth_ge_two_ns // 1000)
+    metrics["host_supply_peak_outstanding"].append(peak_depth)
     if duration_ns:
         metrics["host_supply_coverage_permille"].append(
             busy_ns * 1000 // duration_ns
+        )
+        metrics["host_supply_depth_ge_two_coverage_permille"].append(
+            depth_ge_two_ns * 1000 // duration_ns
         )
 
     if not merged:
@@ -1059,6 +1093,11 @@ def parse_modern_records(
     conflict_supply_deferred_records = 0
     conflict_supply_overlap_records = 0
     rolling_supply_records = 0
+    parallel_control_records = 0
+    parallel_gc_records = 0
+    parallel_gc_shared_inode_records = 0
+    parallel_gc_shared_inode_overlap_records = 0
+    parallel_gc_invalid_records = 0
 
     for line in line_list:
         if "F2FS_GC_CHECKPOINT_DIAG " in line:
@@ -1212,6 +1251,93 @@ def parse_modern_records(
                 conflict_supply_deferred_records += 1
             elif values.get("decision") == "overlap":
                 conflict_supply_overlap_records += 1
+            continue
+
+        if "CSGC_PARALLEL_CONTROL_STAT " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            parallel_control_records += 1
+            for key in (
+                "first_worker_us",
+                "second_worker_us",
+                "overlap_us",
+                "first_blocks",
+                "second_blocks",
+                "exact_block_conflicts",
+            ):
+                add_if_present(metrics, values, key, f"parallel_control_{key}")
+            first_worker_us = int_value(values, "first_worker_us")
+            second_worker_us = int_value(values, "second_worker_us")
+            overlap_us = int_value(values, "overlap_us")
+            if (
+                first_worker_us is not None
+                and second_worker_us is not None
+                and overlap_us is not None
+            ):
+                union_us = first_worker_us + second_worker_us - overlap_us
+                metrics["parallel_control_worker_union_us"].append(union_us)
+                if union_us > 0:
+                    metrics[
+                        "parallel_control_overlap_coverage_permille"
+                    ].append(overlap_us * 1000 // union_us)
+            continue
+
+        if "CSGC_PARALLEL_GC_STAT " in line:
+            values = parse_kv(line)
+            structured_records += 1
+            parallel_gc_records += 1
+            for key in (
+                "active0_us",
+                "active1_us",
+                "active2_us",
+                "victim_claims",
+                "victim_releases",
+                "victim_collisions",
+                "victim_leaks",
+                "active_victims",
+                "inode_lease_new",
+                "inode_lease_join",
+                "inode_lease_release",
+                "lease_residuals",
+                "shared_inode_sections",
+                "exact_block_conflicts",
+            ):
+                add_if_present(metrics, values, key, f"parallel_gc_{key}")
+            active0_us = int_value(values, "active0_us") or 0
+            active1_us = int_value(values, "active1_us") or 0
+            active2_us = int_value(values, "active2_us") or 0
+            active_total_us = active0_us + active1_us + active2_us
+            metrics["parallel_gc_active_total_us"].append(active_total_us)
+            if active_total_us:
+                metrics["parallel_gc_active2_coverage_permille"].append(
+                    active2_us * 1000 // active_total_us
+                )
+            completed_slots = values.get("completed_slots")
+            completed_mask = None
+            if completed_slots:
+                try:
+                    completed_mask = int(completed_slots, 0)
+                except ValueError:
+                    completed_mask = None
+            if completed_mask is not None:
+                metrics["parallel_gc_completed_slots_mask"].append(completed_mask)
+            shared_inodes = int_value(values, "shared_inode_sections") or 0
+            block_conflicts = int_value(values, "exact_block_conflicts") or 0
+            if shared_inodes:
+                parallel_gc_shared_inode_records += 1
+                if not block_conflicts:
+                    parallel_gc_shared_inode_overlap_records += 1
+            if (
+                (int_value(values, "victim_claims") or 0)
+                != (int_value(values, "victim_releases") or 0)
+                or (int_value(values, "victim_leaks") or 0)
+                or (int_value(values, "active_victims") or 0)
+                or (int_value(values, "inode_lease_new") or 0)
+                != (int_value(values, "inode_lease_release") or 0)
+                or (int_value(values, "lease_residuals") or 0)
+                or completed_mask != 3
+            ):
+                parallel_gc_invalid_records += 1
             continue
 
         if "MCSGC_PIPELINE " in line:
@@ -1794,6 +1920,11 @@ def parse_modern_records(
         metrics["conflict_supply_overlap_fraction_permille"].append(
             conflict_supply_overlap_records * 1000 // conflict_supply_records
         )
+    if parallel_gc_shared_inode_records:
+        metrics["parallel_gc_shared_inode_overlap_fraction_permille"].append(
+            parallel_gc_shared_inode_overlap_records * 1000
+            // parallel_gc_shared_inode_records
+        )
 
     for batch in summary_batches.values():
         for source_key, value in batch.items():
@@ -1836,6 +1967,13 @@ def parse_modern_records(
         "conflict_supply_deferred_records": conflict_supply_deferred_records,
         "conflict_supply_overlap_records": conflict_supply_overlap_records,
         "rolling_supply_records": rolling_supply_records,
+        "parallel_control_records": parallel_control_records,
+        "parallel_gc_records": parallel_gc_records,
+        "parallel_gc_shared_inode_records": parallel_gc_shared_inode_records,
+        "parallel_gc_shared_inode_overlap_records": (
+            parallel_gc_shared_inode_overlap_records
+        ),
+        "parallel_gc_invalid_records": parallel_gc_invalid_records,
         "summary_segments": summary_segments,
         "summary_batches": len(summary_batches),
         "summary_batch_mismatches": summary_batch_mismatches,
@@ -2012,6 +2150,11 @@ def main() -> int:
         f"conflict_supply_deferred_records={diagnostics['conflict_supply_deferred_records']}",
         f"conflict_supply_overlap_records={diagnostics['conflict_supply_overlap_records']}",
         f"rolling_supply_records={diagnostics['rolling_supply_records']}",
+        f"parallel_control_records={diagnostics['parallel_control_records']}",
+        f"parallel_gc_records={diagnostics['parallel_gc_records']}",
+        f"parallel_gc_shared_inode_records={diagnostics['parallel_gc_shared_inode_records']}",
+        f"parallel_gc_shared_inode_overlap_records={diagnostics['parallel_gc_shared_inode_overlap_records']}",
+        f"parallel_gc_invalid_records={diagnostics['parallel_gc_invalid_records']}",
         f"summary_segments={diagnostics['summary_segments']}",
         f"summary_batches={diagnostics['summary_batches']}",
         f"summary_batch_mismatches={diagnostics['summary_batch_mismatches']}",
@@ -2069,6 +2212,18 @@ def main() -> int:
         "rolling conflict-aware supply",
         metrics,
         ("rolling_supply_",),
+    )
+    emit_group(
+        output,
+        "two-way parallel CSGC control",
+        metrics,
+        ("parallel_control_",),
+    )
+    emit_group(
+        output,
+        "two-way parallel CSGC manager",
+        metrics,
+        ("parallel_gc_",),
     )
     emit_group(output, "coarse PRE/SSD/POST intervals", metrics, ("phase_pre_", "phase_ssd_", "phase_post_"))
     emit_group(output, "original CSGC segment breakdown", metrics, ("original_segment_",))
