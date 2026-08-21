@@ -494,6 +494,7 @@ def parse_proactive_summary(
         "no_victim",
         "errors",
         "lock_busy",
+        "dirty_source_skips",
         "sections",
         "migrated_blocks",
         "active_us",

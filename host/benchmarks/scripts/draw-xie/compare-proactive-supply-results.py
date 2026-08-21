@@ -179,6 +179,9 @@ def metrics(run: Dict[str, object]) -> Dict[str, float]:
         "producer_triggers": stat(run, "proactive_triggers"),
         "producer_errors": stat(run, "proactive_errors"),
         "producer_lock_busy": stat(run, "proactive_lock_busy"),
+        "producer_dirty_source_skips": stat(
+            run, "proactive_dirty_source_skips"
+        ),
         "producer_active_s": stat(run, "proactive_active_us") / 1_000_000.0,
         "producer_idle_s": stat(run, "proactive_idle_us") / 1_000_000.0,
         "producer_enabled_at_stop": stat(run, "proactive_enabled"),
