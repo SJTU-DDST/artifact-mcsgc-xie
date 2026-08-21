@@ -1238,6 +1238,8 @@ def parse_modern_records(
                 "first_manifest",
                 "second_manifest",
                 "conflict_inodes",
+                "conflict_dnodes",
+                "exact_block_conflicts",
                 "first_discovery_failed",
                 "second_discovery_failed",
                 "deferred_wait_us",
@@ -1264,6 +1266,7 @@ def parse_modern_records(
                 "first_blocks",
                 "second_blocks",
                 "exact_block_conflicts",
+                "shared_dnode_conflicts",
             ):
                 add_if_present(metrics, values, key, f"parallel_control_{key}")
             first_worker_us = int_value(values, "first_worker_us")
@@ -1301,6 +1304,7 @@ def parse_modern_records(
                 "lease_residuals",
                 "shared_inode_sections",
                 "exact_block_conflicts",
+                "shared_dnode_conflicts",
             ):
                 add_if_present(metrics, values, key, f"parallel_gc_{key}")
             active0_us = int_value(values, "active0_us") or 0
@@ -1323,9 +1327,10 @@ def parse_modern_records(
                 metrics["parallel_gc_completed_slots_mask"].append(completed_mask)
             shared_inodes = int_value(values, "shared_inode_sections") or 0
             block_conflicts = int_value(values, "exact_block_conflicts") or 0
+            dnode_conflicts = int_value(values, "shared_dnode_conflicts") or 0
             if shared_inodes:
                 parallel_gc_shared_inode_records += 1
-                if not block_conflicts:
+                if not block_conflicts and not dnode_conflicts:
                     parallel_gc_shared_inode_overlap_records += 1
             if (
                 (int_value(values, "victim_claims") or 0)

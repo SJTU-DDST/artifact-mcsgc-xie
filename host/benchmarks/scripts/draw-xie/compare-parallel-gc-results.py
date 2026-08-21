@@ -154,6 +154,9 @@ def metrics(run: Dict[str, object]) -> Dict[str, float]:
             run, "parallel_gc_shared_inode_overlap_fraction_permille", "mean"
         ) / 10.0,
         "exact_block_conflicts": stat(run, "parallel_gc_exact_block_conflicts"),
+        "shared_dnode_conflicts": stat(
+            run, "parallel_gc_shared_dnode_conflicts"
+        ),
         "victim_claims": stat(run, "parallel_gc_victim_claims"),
         "victim_releases": stat(run, "parallel_gc_victim_releases"),
         "victim_collisions": stat(run, "parallel_gc_victim_collisions"),

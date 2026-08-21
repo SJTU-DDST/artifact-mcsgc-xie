@@ -191,6 +191,10 @@ run_one() {
         set -e
         printf 'fsck_log=%s\nfsck_status=%s\n' \
             "${fsck_log}" "${fsck_status}" >> "${manifest}"
+        if [ "${fsck_status}" -ne 0 ]; then
+            echo "ERROR: smoke fsck reported filesystem inconsistencies; see ${fsck_log}." >&2
+            return 1
+        fi
     fi
 }
 

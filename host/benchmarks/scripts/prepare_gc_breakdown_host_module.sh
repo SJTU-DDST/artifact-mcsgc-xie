@@ -44,6 +44,8 @@ Configurations:
                         Parallel-GC diagnostic control module
   mcsgc8t-parallel-gc-inode-share
                         Two-way CSGC with shared inode leases
+  mcsgc8t-parallel-gc-dnode-safe
+                        Two-way CSGC that defers shared dnode pages
 EOF
 }
 
@@ -106,6 +108,9 @@ case "$1" in
         ;;
     mcsgc8t-parallel-gc-inode-share)
         expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-inode-share-20260821
+        ;;
+    mcsgc8t-parallel-gc-dnode-safe)
+        expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-dnode-safe-20260821
         ;;
     *)
         usage
