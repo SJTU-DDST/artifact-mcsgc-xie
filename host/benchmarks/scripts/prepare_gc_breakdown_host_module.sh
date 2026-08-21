@@ -46,6 +46,8 @@ Configurations:
                         Two-way CSGC with shared inode leases
   mcsgc8t-parallel-gc-dnode-safe
                         Two-way CSGC that defers shared dnode pages
+  mcsgc8t-parallel-gc-unsafe-fast
+                        Unsafe two-way CSGC without pair-level diagnostics
 EOF
 }
 
@@ -111,6 +113,9 @@ case "$1" in
         ;;
     mcsgc8t-parallel-gc-dnode-safe)
         expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-dnode-safe-20260821
+        ;;
+    mcsgc8t-parallel-gc-unsafe-fast)
+        expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-unsafe-fast-20260821
         ;;
     *)
         usage
