@@ -16,8 +16,10 @@ mntpoint=${MNTPOINT}
 : "${fio_nofile_limit:=65536}"
 : "${formal_performance_only:=0}"
 : "${collect_diagnostic_workload_stats:=0}"
+: "${collect_supply_rootcause:=0}"
 : "${csgc_proactive_profile:=none}"
 csgc_proactive_started=0
+csgc_supply_rootcause_started=0
 
 # Best-effort shutdown when an interrupted runner leaves the producer enabled.
 cleanup_csgc_proactive() {
@@ -31,7 +33,27 @@ cleanup_csgc_proactive() {
     csgc_proactive_started=0
 }
 
-trap cleanup_csgc_proactive EXIT
+# Stop an interrupted Host diagnostic epoch without touching the device dump.
+cleanup_csgc_supply_rootcause() {
+    local attempt
+
+    if [ "${csgc_supply_rootcause_started:-0}" -ne 1 ] \
+        || [ -z "${csgc_supply_rootcause_control_path:-}" ] \
+        || [ ! -e "${csgc_supply_rootcause_control_path}" ]; then
+        return
+    fi
+    for ((attempt = 0; attempt < 200; attempt++)); do
+        if printf 'stop\n' | sudo tee "${csgc_supply_rootcause_control_path}" \
+                >/dev/null 2>&1; then
+            csgc_supply_rootcause_started=0
+            return
+        fi
+        sleep 0.05
+    done
+    echo "WARNING: CSGC supply root-cause epoch is still active" >&2
+}
+
+trap 'cleanup_csgc_supply_rootcause; cleanup_csgc_proactive' EXIT
 
 if [[ ! "${fio_gc_precondition}" =~ ^[01]$ ]]; then
     echo "ERROR: fio_gc_precondition must be 0 or 1" >&2
@@ -57,6 +79,10 @@ if [[ ! "${collect_diagnostic_workload_stats}" =~ ^[01]$ ]]; then
     echo "ERROR: collect_diagnostic_workload_stats must be 0 or 1" >&2
     exit 1
 fi
+if [[ ! "${collect_supply_rootcause}" =~ ^[01]$ ]]; then
+    echo "ERROR: collect_supply_rootcause must be 0 or 1" >&2
+    exit 1
+fi
 case "${csgc_proactive_profile}" in
     none|off|moderate|aggressive)
         ;;
@@ -74,7 +100,8 @@ fi
 
 workload_ssd_stats_enabled=0
 if [ "${measurement_epoch_enabled}" -eq 1 ] \
-    || [ "${collect_diagnostic_workload_stats}" -eq 1 ]; then
+    || [ "${collect_diagnostic_workload_stats}" -eq 1 ] \
+    || [ "${collect_supply_rootcause}" -eq 1 ]; then
     workload_ssd_stats_enabled=1
 fi
 
@@ -706,6 +733,22 @@ gc_measurement_control_path="${f2fs_sysfs_dir}/gc_measurement_control"
 csgc_proactive_control_path="${f2fs_sysfs_dir}/csgc_proactive_control"
 csgc_proactive_start_margin_path="${f2fs_sysfs_dir}/csgc_proactive_start_margin"
 csgc_proactive_stop_margin_path="${f2fs_sysfs_dir}/csgc_proactive_stop_margin"
+csgc_supply_rootcause_dir="${DEBUGFS_PATH}/${devpath##*/}"
+csgc_supply_rootcause_control_path="${csgc_supply_rootcause_dir}/csgc_supply_control"
+csgc_supply_rootcause_collector="$(dirname "$0")/collect-csgc-supply-rootcause.py"
+
+if [ "${collect_supply_rootcause}" -eq 1 ]; then
+    for supply_path in \
+        "${csgc_supply_rootcause_control_path}" \
+        "${csgc_supply_rootcause_dir}/csgc_supply_summary" \
+        "${csgc_supply_rootcause_dir}/csgc_supply_trace"; do
+        if [ ! -e "${supply_path}" ]; then
+            echo "ERROR: required CSGC supply diagnostic entry is unavailable: ${supply_path}" >&2
+            sudo umount "${devpath}" >/dev/null 2>&1 || true
+            exit 1
+        fi
+    done
+fi
 
 if [ "${measurement_epoch_enabled}" -eq 1 ]; then
     for gc_measurement_path in \
@@ -1061,6 +1104,19 @@ if [ "${workload_ssd_stats_enabled}" -eq 1 ]; then
     fi
 fi
 
+if [ "${collect_supply_rootcause}" -eq 1 ]; then
+    if ! python3 "${csgc_supply_rootcause_collector}" start \
+            --device "${devpath}" \
+            --nvme "${NVME_PATH}" \
+            --debugfs-dir "${csgc_supply_rootcause_dir}" \
+            --output-dir "${output_path}"; then
+        echo "ERROR: failed to start CSGC supply root-cause collection" >&2
+        sudo umount "${devpath}" >/dev/null 2>&1 || true
+        exit 1
+    fi
+    csgc_supply_rootcause_started=1
+fi
+
 emit_kernel_marker "MEASURED_FIO_START mode=${gc_mode} workload=${bmname} proactive_profile=${csgc_proactive_profile}"
 if [ "${csgc_proactive_profile}" = "moderate" ] \
     || [ "${csgc_proactive_profile}" = "aggressive" ]; then
@@ -1086,6 +1142,19 @@ emit_kernel_marker "MEASURED_FIO_END mode=${gc_mode} workload=${bmname} status=$
 if [ "${csgc_proactive_profile}" = "moderate" ] \
     || [ "${csgc_proactive_profile}" = "aggressive" ]; then
     if ! wait_csgc_proactive_idle "${csgc_proactive_control_path}"; then
+        fio_status=1
+    fi
+fi
+
+if [ "${collect_supply_rootcause}" -eq 1 ]; then
+    if python3 "${csgc_supply_rootcause_collector}" finish \
+            --device "${devpath}" \
+            --nvme "${NVME_PATH}" \
+            --debugfs-dir "${csgc_supply_rootcause_dir}" \
+            --output-dir "${output_path}"; then
+        csgc_supply_rootcause_started=0
+    else
+        echo "ERROR: failed to finish CSGC supply root-cause collection" >&2
         fio_status=1
     fi
 fi
