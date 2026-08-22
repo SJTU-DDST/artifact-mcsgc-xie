@@ -137,7 +137,7 @@ load_configuration() {
 check_kernel_anomalies() {
     local run_dir=$1
     local output="${run_dir}/kernel-anomalies.log"
-    local pattern='kernel BUG at|BUG: unable to handle|Oops:|RCU:.*stall|rcu: INFO:.*stall|watchdog: BUG: soft lockup|SBI_NEED_FSCK|EUCLEAN|Structure needs cleaning|Inconsistent error blkaddr|something went wrong during csgc|SIT.*(bitmap|mismatch|inconsistent|corrupt)|SSA.*(mismatch|inconsistent|corrupt)|nvme[^[:space:]]*.*timeout|I/O error|refcount_t: (underflow|saturated)|negative refcount'
+    local pattern='kernel BUG at|BUG: unable to handle|BUG: Bad page state|page dumped because|Oops:|general protection fault|slab-out-of-bounds|slab-use-after-free|use-after-free|list_del corruption|corrupted double-linked list|RCU:.*stall|rcu: INFO:.*stall|watchdog: BUG: soft lockup|SBI_NEED_FSCK|EUCLEAN|Structure needs cleaning|Inconsistent error blkaddr|something went wrong during csgc|SIT.*(bitmap|mismatch|inconsistent|corrupt)|SSA.*(mismatch|inconsistent|corrupt)|nvme[^[:space:]]*.*timeout|I/O error|refcount_t: (underflow|saturated)|negative refcount|CSGC_PAGE_REF_BUG|CSGC_QUIESCE_STAT.*drained=0|CSGC_PAGE_REF_STAT.*mismatch=1'
 
     if grep -Eai "${pattern}" "${run_dir}/external-dmesg.log" > "${output}"; then
         echo "ERROR: kernel anomaly detected; see ${output}." >&2
