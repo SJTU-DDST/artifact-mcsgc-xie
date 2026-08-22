@@ -1319,6 +1319,7 @@ def parse_modern_records(
                 "deferred_wait_us",
                 "successor_released",
                 "submit_wakeups",
+                "submit_timeouts",
                 "first_discovery_us",
                 "second_discovery_us",
                 "decision_after_second_launch_us",
