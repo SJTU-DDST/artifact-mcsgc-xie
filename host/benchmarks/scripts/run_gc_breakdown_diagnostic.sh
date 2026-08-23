@@ -288,7 +288,7 @@ case "${configuration}" in
         run_breakdown_parser=0
         ;;
     mcsgc8t-supply-rootcause)
-        expected_branch=exp/diagnostic-mcsgc8t-supply-rootcause-20260823
+        expected_branch=exp/diagnostic-mcsgc8t-supply-rootcause-lifecycle-20260823
         prepare_configuration=mcsgc8t-supply-rootcause
         test_mode=diagnostic-mcsgc8t-supply-rootcause-csgc
         expected_production=0

@@ -125,7 +125,7 @@ case "$1" in
         expected_branch=exp/diagnostic-mcsgc8t-proactive-supply-20260822
         ;;
     mcsgc8t-supply-rootcause)
-        expected_branch=exp/diagnostic-mcsgc8t-supply-rootcause-20260823
+        expected_branch=exp/diagnostic-mcsgc8t-supply-rootcause-lifecycle-20260823
         ;;
     *)
         usage
