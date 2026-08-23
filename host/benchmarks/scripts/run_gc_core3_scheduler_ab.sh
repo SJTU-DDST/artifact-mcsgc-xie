@@ -32,17 +32,22 @@ batch_id=$(date +"%Y%m%d_%H%M%S")
 batch_dir="${script_dir}/outputs-gc-core3-scheduler-ab/${batch_id}"
 manifest="${batch_dir}/results.txt"
 mode=${1:-all}
+bigfile_batch=${GC_CORE3_BIGFILE_BATCH_DIR:-}
 sudo_keepalive_pid=""
 module_path=""
 
 # Describe the destructive experiment and its optional phases.
 usage() {
     cat <<EOF
-Usage: ./$(basename -- "${script_path}") [all|smoke|full]
+Usage: ./$(basename -- "${script_path}") [all|smoke|full|smallfile]
 
   all    Run a budget=4 bigfile smoke test and then all six A/B runs.
   smoke  Run only the budget=4 bigfile smoke test and offline fsck.
   full   Run only budget=0/4/8 x bigfile/smallfile.
+  smallfile
+         Resume with budget=0/4/8 smallfile runs. Set
+         GC_CORE3_BIGFILE_BATCH_DIR to a validated batch containing the three
+         completed bigfile result-path files; the final report combines both.
 
 Every run resets, reformats, and overwrites /dev/nvme0n1. Run this outer
 script as the normal login user; it invokes sudo internally.
@@ -268,7 +273,7 @@ if [ "${mode}" = "-h" ] || [ "${mode}" = "--help" ]; then
     usage
     exit 0
 fi
-if [ "$#" -gt 1 ] || [[ ! "${mode}" =~ ^(all|smoke|full)$ ]]; then
+if [ "$#" -gt 1 ] || [[ ! "${mode}" =~ ^(all|smoke|full|smallfile)$ ]]; then
     usage >&2
     exit 1
 fi
@@ -284,6 +289,19 @@ if [ -r /sys/module/f2fs/refcnt ] \
     && [ "$(< /sys/module/f2fs/refcnt)" -ne 0 ]; then
     echo "ERROR: f2fs still has active references; refusing to run the matrix." >&2
     exit 1
+fi
+if [ "${mode}" = "smallfile" ]; then
+    if [ -z "${bigfile_batch}" ] || [ ! -d "${bigfile_batch}" ]; then
+        echo "ERROR: GC_CORE3_BIGFILE_BATCH_DIR must name the completed bigfile batch." >&2
+        exit 1
+    fi
+    for result_path in 01-b0-bigfile 02-b4-bigfile 03-b8-bigfile; do
+        if [ ! -s "${bigfile_batch}/${result_path}.result-path" ]; then
+            echo "ERROR: missing bigfile result path: ${result_path}" >&2
+            exit 1
+        fi
+    done
+    bigfile_batch=$(readlink -f -- "${bigfile_batch}")
 fi
 
 mkdir -p "${batch_dir}"
@@ -326,6 +344,9 @@ ensure_host_tree
     printf 'host_branch=%s\nhost_commit=%s\n' "${host_branch}" "${host_commit}"
     printf 'artifact_branch=%s\nartifact_commit=%s\n' \
         "${artifact_branch}" "$(git -C "${artifact_repo}" rev-parse HEAD)"
+    if [ "${mode}" = "smallfile" ]; then
+        printf 'bigfile_source_batch=%s\n' "${bigfile_batch}"
+    fi
     printf '%s\n' "${openssd_provenance}"
 } > "${manifest}"
 
@@ -343,16 +364,24 @@ if [ "${mode}" = "all" ] || [ "${mode}" = "full" ]; then
     run_one 0 bigfile 1
     run_one 4 bigfile 2
     run_one 8 bigfile 3
+fi
+
+if [ "${mode}" = "all" ] || [ "${mode}" = "full" ] \
+        || [ "${mode}" = "smallfile" ]; then
     run_one 0 smallfile 4
     run_one 4 smallfile 5
     run_one 8 smallfile 6
 
+    report_bigfile_batch=${batch_dir}
+    if [ "${mode}" = "smallfile" ]; then
+        report_bigfile_batch=${bigfile_batch}
+    fi
     report="${batch_dir}/mcsgc-core3-fair-scheduler-analysis-20260823.md"
     report_json="${batch_dir}/mcsgc-core3-fair-scheduler-analysis-20260823.json"
     python3 "${comparator}" \
-        --b0-big "$(<"${batch_dir}/01-b0-bigfile.result-path")" \
-        --b4-big "$(<"${batch_dir}/02-b4-bigfile.result-path")" \
-        --b8-big "$(<"${batch_dir}/03-b8-bigfile.result-path")" \
+        --b0-big "$(<"${report_bigfile_batch}/01-b0-bigfile.result-path")" \
+        --b4-big "$(<"${report_bigfile_batch}/02-b4-bigfile.result-path")" \
+        --b8-big "$(<"${report_bigfile_batch}/03-b8-bigfile.result-path")" \
         --b0-small "$(<"${batch_dir}/04-b0-smallfile.result-path")" \
         --b4-small "$(<"${batch_dir}/05-b4-smallfile.result-path")" \
         --b8-small "$(<"${batch_dir}/06-b8-smallfile.result-path")" \

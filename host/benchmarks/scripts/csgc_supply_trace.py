@@ -573,17 +573,30 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
         request_id for request_id in unmatched_device_ids
         if device_epoch_class[request_id] == "UNMAPPED"
     ]
+    cross_clock_tolerance_ns = max(
+        2_000_000,
+        mapping.get("best_pre_rtt_ns", 0),
+        mapping.get("best_post_rtt_ns", 0),
+    )
     ordering_violations = 0
+    submit_to_rx_violations = 0
+    slot_done_to_completion_violations = 0
+    device_lifecycle_violations = 0
+    tx_poll_after_host_completion = 0
     matched_rows = []
     for request_id in matched_ids:
         host_request = host_requests[request_id]
         device_request = device_requests[request_id]
         mapped_rx = map_device_time(mapping, device_request["rx_cmd_ns"])
+        mapped_slot_done = map_device_time(
+            mapping, device_request["slot_done_ns"])
         mapped_tx = map_device_time(mapping, device_request["tx_done_ns"])
         begin_to_rx = None if mapped_rx is None else \
             mapped_rx - host_request["submit_start_ns"]
         done_to_rx = None if mapped_rx is None else \
             mapped_rx - host_request["submit_done_ns"]
+        slot_done_to_completion = None if mapped_slot_done is None else \
+            host_request["completion_ns"] - mapped_slot_done
         tx_to_completion = None if mapped_tx is None else host_request["completion_ns"] - mapped_tx
         device_times = [
             device_request[key] for key in (
@@ -594,9 +607,21 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
         device_order_valid = all(
             earlier and later and earlier <= later
             for earlier, later in zip(device_times, device_times[1:]))
-        if begin_to_rx is not None and (
-                begin_to_rx < -2_000_000 or tx_to_completion < -2_000_000 or
-                not device_order_valid):
+        submit_to_rx_invalid = begin_to_rx is not None and \
+            begin_to_rx < -cross_clock_tolerance_ns
+        slot_done_to_completion_invalid = \
+            slot_done_to_completion is not None and \
+            slot_done_to_completion < -cross_clock_tolerance_ns
+        if submit_to_rx_invalid:
+            submit_to_rx_violations += 1
+        if slot_done_to_completion_invalid:
+            slot_done_to_completion_violations += 1
+        if not device_order_valid:
+            device_lifecycle_violations += 1
+        if tx_to_completion is not None and tx_to_completion < 0:
+            tx_poll_after_host_completion += 1
+        if submit_to_rx_invalid or slot_done_to_completion_invalid or \
+                not device_order_valid:
             ordering_violations += 1
         matched_rows.append({
             "request_id": request_id,
@@ -611,9 +636,12 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
             "device_tx_done_ns": device_request["tx_done_ns"],
             "host_completion_ns": host_request["completion_ns"],
             "mapped_device_rx_host_ns": mapped_rx,
+            "mapped_device_slot_done_host_ns": mapped_slot_done,
             "mapped_device_tx_host_ns": mapped_tx,
             "host_submit_start_to_device_rx_ns": begin_to_rx,
             "host_submit_done_to_device_rx_ns": done_to_rx,
+            "device_slot_done_to_host_completion_ns": \
+                slot_done_to_completion,
             "device_tx_to_host_completion_ns": tx_to_completion,
             "device_lifecycle_order_valid": device_order_valid,
             "host_status": host_request["status"],
@@ -646,18 +674,30 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
         unmatched_device_unmapped_ids
     mapping["host_duplicate_request_ids"] = host_duplicate_ids
     mapping["device_duplicate_request_ids"] = device_duplicate_ids
+    mapping["cross_clock_tolerance_ns"] = cross_clock_tolerance_ns
     mapping["request_ordering_violations"] = ordering_violations
     mapping["request_ordering_violation_ratio"] = violation_ratio
+    mapping["host_submit_to_device_rx_violations"] = \
+        submit_to_rx_violations
+    mapping["device_slot_done_to_host_completion_violations"] = \
+        slot_done_to_completion_violations
+    mapping["device_lifecycle_order_violations"] = \
+        device_lifecycle_violations
+    mapping["device_tx_poll_after_host_completion_count"] = \
+        tx_poll_after_host_completion
     if mapping.get("reliable") and (
             host_duplicate_ids or device_duplicate_ids or
             (len(matched_ids) >= 20 and violation_ratio > 0.10)):
         mapping["reliable"] = False
-        mapping["reason"] = "request_id uniqueness or ordering validation failed"
+        mapping["reason"] = \
+            "request_id uniqueness or causal ordering validation failed"
         for row in matched_rows:
             row["mapped_device_rx_host_ns"] = None
+            row["mapped_device_slot_done_host_ns"] = None
             row["mapped_device_tx_host_ns"] = None
             row["host_submit_start_to_device_rx_ns"] = None
             row["host_submit_done_to_device_rx_ns"] = None
+            row["device_slot_done_to_host_completion_ns"] = None
             row["device_tx_to_host_completion_ns"] = None
 
     timeline_rows = []

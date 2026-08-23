@@ -186,6 +186,22 @@ def main() -> None:
         assert boundary_result["clock_mapping"][
             "unmatched_device_boundary_request_ids"] == [3]
 
+        # Core0 may poll TX DMA completion after the Host has already observed
+        # command completion. This polling timestamp is diagnostic data, not a
+        # cross-clock causal boundary.
+        delayed_tx_device = dict(device)
+        delayed_tx_device["requests"] = [
+            dict(request) for request in device["requests"]
+        ]
+        delayed_tx_device["requests"][0]["tx_done_ns"] = 1_006_300_000
+        delayed_tx_result = analyze_traces(
+            host, delayed_tx_device, samples, root)
+        assert delayed_tx_result["clock_mapping"]["reliable"]
+        assert delayed_tx_result["clock_mapping"][
+            "device_tx_poll_after_host_completion_count"] == 1
+        assert delayed_tx_result["clock_mapping"][
+            "device_slot_done_to_host_completion_violations"] == 0
+
         wide_samples = [dict(sample) for sample in samples]
         wide_samples.append({
             "phase": "pre",
