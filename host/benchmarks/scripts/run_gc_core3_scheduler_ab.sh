@@ -82,6 +82,15 @@ resolve_host_tree() {
         '
 }
 
+# Treat the build configuration as worktree-local state while still rejecting
+# any tracked Host source change that would invalidate the fixed baseline.
+host_tree_has_source_changes() {
+    local tree=$1
+
+    ! git -C "${tree}" diff --quiet HEAD -- . ':!.config' \
+        || ! git -C "${tree}" diff --cached --quiet HEAD -- . ':!.config'
+}
+
 # Fast-forward the fixed Host branch and attach its existing diagnostic tree.
 ensure_host_tree() {
     local remote_commit
@@ -107,7 +116,7 @@ ensure_host_tree() {
         git -C "${host_repo}" branch -f "${host_branch}" "${host_commit}"
         if [ -d "${host_worktree}" ] \
             && [ "$(git -C "${host_worktree}" rev-parse HEAD)" = "${host_commit}" ] \
-            && [ -z "$(git -C "${host_worktree}" status --porcelain=v1 --untracked-files=no)" ]; then
+            && ! host_tree_has_source_changes "${host_worktree}"; then
             git -C "${host_worktree}" switch "${host_branch}"
         else
             host_worktree=/home/xin/work-xie/mcsgc-real/linux-cs-core3-scheduler-host-20260823
@@ -126,8 +135,8 @@ ensure_host_tree() {
     fi
     host_worktree=${resolved}
     if [ "$(git -C "${host_worktree}" rev-parse HEAD)" != "${host_commit}" ] \
-        || [ -n "$(git -C "${host_worktree}" status --porcelain=v1 --untracked-files=no)" ]; then
-        echo "ERROR: fixed Host worktree is not clean at ${host_commit}." >&2
+        || host_tree_has_source_changes "${host_worktree}"; then
+        echo "ERROR: fixed Host worktree has tracked source changes at ${host_commit}." >&2
         return 1
     fi
 }
