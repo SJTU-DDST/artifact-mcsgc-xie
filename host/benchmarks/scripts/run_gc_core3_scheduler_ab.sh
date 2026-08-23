@@ -33,6 +33,7 @@ batch_dir="${script_dir}/outputs-gc-core3-scheduler-ab/${batch_id}"
 manifest="${batch_dir}/results.txt"
 mode=${1:-all}
 bigfile_batch=${GC_CORE3_BIGFILE_BATCH_DIR:-}
+resume_batch=${GC_CORE3_RESUME_BATCH_DIR:-}
 sudo_keepalive_pid=""
 module_path=""
 
@@ -48,6 +49,8 @@ Usage: ./$(basename -- "${script_path}") [all|smoke|full|smallfile]
          Resume with budget=0/4/8 smallfile runs. Set
          GC_CORE3_BIGFILE_BATCH_DIR to a validated batch containing the three
          completed bigfile result-path files; the final report combines both.
+         GC_CORE3_RESUME_BATCH_DIR may name an interrupted smallfile batch;
+         completed runs are revalidated and skipped.
 
 Every run resets, reformats, and overwrites /dev/nvme0n1. Run this outer
 script as the normal login user; it invokes sudo internally.
@@ -269,6 +272,30 @@ run_one() {
     fi
 }
 
+# Revalidate and reuse a completed smallfile run when resuming a batch.
+run_or_reuse_smallfile() {
+    local budget=$1
+    local sequence=$2
+    local label
+    local result_path_file
+    local run_dir
+
+    label=$(printf '%02d-b%s-smallfile' "${sequence}" "${budget}")
+    result_path_file="${batch_dir}/${label}.result-path"
+    if [ -s "${result_path_file}" ]; then
+        run_dir=$(<"${result_path_file}")
+        if [ ! -d "${run_dir}" ]; then
+            echo "ERROR: completed result directory is missing: ${run_dir}" >&2
+            return 1
+        fi
+        check_kernel_anomalies "${run_dir}"
+        python3 "${validator}" "${run_dir}" "${budget}"
+        echo "Reusing validated ${label}: ${run_dir}"
+        return 0
+    fi
+    run_one "${budget}" smallfile "${sequence}"
+}
+
 if [ "${mode}" = "-h" ] || [ "${mode}" = "--help" ]; then
     usage
     exit 0
@@ -276,6 +303,24 @@ fi
 if [ "$#" -gt 1 ] || [[ ! "${mode}" =~ ^(all|smoke|full|smallfile)$ ]]; then
     usage >&2
     exit 1
+fi
+if [ -n "${resume_batch}" ]; then
+    if [ "${mode}" != "smallfile" ] || [ ! -d "${resume_batch}" ]; then
+        echo "ERROR: GC_CORE3_RESUME_BATCH_DIR requires smallfile mode and an existing batch." >&2
+        exit 1
+    fi
+    resume_batch=$(readlink -f -- "${resume_batch}")
+    batch_dir=${resume_batch}
+    manifest="${batch_dir}/results.txt"
+    if [ ! -s "${manifest}" ]; then
+        echo "ERROR: interrupted batch has no manifest: ${manifest}" >&2
+        exit 1
+    fi
+    if [ -z "${bigfile_batch}" ]; then
+        bigfile_batch=$(awk -F= \
+            '$1 == "bigfile_source_batch" { print substr($0, index($0, "=") + 1); exit }' \
+            "${manifest}")
+    fi
 fi
 if [ "${EUID}" -eq 0 ]; then
     echo "ERROR: do not run the outer matrix through sudo." >&2
@@ -337,18 +382,26 @@ if [ "${actual_openssd_branch}" != "${openssd_branch}" ] \
 fi
 
 ensure_host_tree
-{
-    printf 'started_at=%s\n' "$(date --iso-8601=seconds)"
-    printf 'mode=%s\nhost=%s\nssd_thread_mode=ssd1t\n' \
-        "${mode}" "$(hostname)"
-    printf 'host_branch=%s\nhost_commit=%s\n' "${host_branch}" "${host_commit}"
-    printf 'artifact_branch=%s\nartifact_commit=%s\n' \
-        "${artifact_branch}" "$(git -C "${artifact_repo}" rev-parse HEAD)"
-    if [ "${mode}" = "smallfile" ]; then
-        printf 'bigfile_source_batch=%s\n' "${bigfile_batch}"
-    fi
-    printf '%s\n' "${openssd_provenance}"
-} > "${manifest}"
+if [ -n "${resume_batch}" ]; then
+    {
+        printf '\nresumed_at=%s\n' "$(date --iso-8601=seconds)"
+        printf 'resume_artifact_commit=%s\n' \
+            "$(git -C "${artifact_repo}" rev-parse HEAD)"
+    } >> "${manifest}"
+else
+    {
+        printf 'started_at=%s\n' "$(date --iso-8601=seconds)"
+        printf 'mode=%s\nhost=%s\nssd_thread_mode=ssd1t\n' \
+            "${mode}" "$(hostname)"
+        printf 'host_branch=%s\nhost_commit=%s\n' "${host_branch}" "${host_commit}"
+        printf 'artifact_branch=%s\nartifact_commit=%s\n' \
+            "${artifact_branch}" "$(git -C "${artifact_repo}" rev-parse HEAD)"
+        if [ "${mode}" = "smallfile" ]; then
+            printf 'bigfile_source_batch=%s\n' "${bigfile_batch}"
+        fi
+        printf '%s\n' "${openssd_provenance}"
+    } > "${manifest}"
+fi
 
 build_tools
 load_host_module
@@ -368,9 +421,9 @@ fi
 
 if [ "${mode}" = "all" ] || [ "${mode}" = "full" ] \
         || [ "${mode}" = "smallfile" ]; then
-    run_one 0 smallfile 4
-    run_one 4 smallfile 5
-    run_one 8 smallfile 6
+    run_or_reuse_smallfile 0 4
+    run_or_reuse_smallfile 4 5
+    run_or_reuse_smallfile 8 6
 
     report_bigfile_batch=${batch_dir}
     if [ "${mode}" = "smallfile" ]; then
