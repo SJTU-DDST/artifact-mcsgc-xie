@@ -517,6 +517,12 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
     output_dir.mkdir(parents=True, exist_ok=True)
     mapping = build_clock_mapping(sync_samples)
     host_header = host["header"]
+    mapped_device_freeze_ns = map_device_time(
+        mapping, device["header"]["freeze_ns"])
+    mapping["mapped_device_freeze_host_ns"] = mapped_device_freeze_ns
+    mapping["device_freeze_after_host_epoch_ns"] = \
+        None if mapped_device_freeze_ns is None else \
+        mapped_device_freeze_ns - host_header["end_ns"]
     epoch_ns = host_header["end_ns"] - host_header["start_ns"]
     gap_total_ns = sum(max(0, gap["end_ns"] - gap["start_ns"])
                        for gap in host["gaps"])

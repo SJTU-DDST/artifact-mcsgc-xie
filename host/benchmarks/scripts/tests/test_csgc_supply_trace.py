@@ -151,6 +151,8 @@ def main() -> None:
             "unmatched_device_boundary_request_count"] == 0
         assert result["clock_mapping"][
             "unmatched_device_interior_request_count"] == 0
+        assert result["clock_mapping"][
+            "device_freeze_after_host_epoch_ns"] == 0
         assert result["joint_attribution_emitted"]
         assert result["device"]["timeline_summary"]["normal_io_active_pct"] == 100
         assert result["device"]["scheduler"]["normal_sq_yield_count"] == 3
