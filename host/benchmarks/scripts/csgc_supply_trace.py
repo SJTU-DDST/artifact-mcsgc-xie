@@ -109,6 +109,7 @@ def decode_host_trace(path: Path) -> dict[str, Any]:
     counters = struct.unpack_from("<6Q", data, 272)
     counts = struct.unpack_from("<6I", data, 320)
     active = list(struct.unpack_from(f"<{len(REASONS)}I", data, 344))
+    timestamp_reorders, = struct.unpack_from("<Q", data, 400)
     gap_count, request_count, gap_capacity, request_capacity, max_outstanding, outstanding = counts
 
     expected = header_size + gap_count * gap_size + request_count * request_size
@@ -156,6 +157,7 @@ def decode_host_trace(path: Path) -> dict[str, Any]:
             "gap_dropped": counters[0],
             "request_dropped": counters[1],
             "transition_errors": counters[2],
+            "timestamp_reorders": timestamp_reorders,
             "dirty_victims": counters[3],
             "no_victims": counters[4],
             "retries": counters[5],
@@ -563,6 +565,7 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
             "gap_dropped": host_header["gap_dropped"],
             "request_dropped": host_header["request_dropped"],
             "transition_errors": host_header["transition_errors"],
+            "timestamp_reorders": host_header["timestamp_reorders"],
             "gap_by_dominant_reason": {
                 reason: summarize_ns(values) for reason, values in by_reason.items()
             },

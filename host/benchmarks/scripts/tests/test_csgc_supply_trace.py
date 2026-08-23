@@ -39,6 +39,7 @@ def build_host_trace(path: Path) -> None:
     struct.pack_into("<QQQ", data, 24, 7, 2_000_000_000, 2_010_000_000)
     struct.pack_into("<6I", data, 320, gap_count, request_count,
                      65536, 262144, 1, 0)
+    struct.pack_into("<Q", data, 400, 11)
 
     gap = HOST_HEADER_SIZE
     struct.pack_into("<QQQQ", data, gap, 2_004_000_000, 2_006_000_000, 1, 2)
@@ -106,6 +107,7 @@ def main() -> None:
         build_device_trace(device_path)
         host = decode_host_trace(host_path)
         device = decode_device_trace(device_path)
+        assert host["header"]["timestamp_reorders"] == 11
         assert device["header"]["timeline_overflow_count"] == 3
         assert device["header"]["request_overflow_count"] == 2
 
