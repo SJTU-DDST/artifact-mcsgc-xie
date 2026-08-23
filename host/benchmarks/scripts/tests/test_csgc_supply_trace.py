@@ -131,7 +131,7 @@ def main() -> None:
         normal_batch = device["header"]["scheduler"]["distributions"][
             "normal_sq_batch_size"]
         assert normal_batch["mean_requests"] == 3
-        assert normal_batch["p95_requests"] == 7
+        assert normal_batch["p95_requests"] == 4
 
         samples = []
         for phase, device_ns in (("pre", 1_000_000_000),
@@ -153,6 +153,19 @@ def main() -> None:
         assert (root / "csgc-supply-gaps.csv").is_file()
         assert json.loads((root / "csgc-supply-analysis.json").read_text())["device"][
             "timeline_overflow_count"] == 3
+
+        wide_samples = [dict(sample) for sample in samples]
+        wide_samples.append({
+            "phase": "pre",
+            "epoch": 9,
+            "device_time_ns": 1_002_000_000,
+            "host_before_ns": 2_000_000_000,
+            "host_after_ns": 2_010_000_000,
+        })
+        wide_result = analyze_traces(host, device, wide_samples, root)
+        assert wide_result["clock_mapping"]["reliable"]
+        assert wide_result["clock_mapping"]["max_residual_ns"] == 3_000_000
+        assert wide_result["clock_mapping"]["max_interval_error_ns"] == 0
 
         bad_samples = [dict(sample) for sample in samples]
         bad_samples[-1]["host_before_ns"] += 20_000_000

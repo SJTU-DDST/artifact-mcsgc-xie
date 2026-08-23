@@ -160,8 +160,10 @@ def decode_distribution(data: bytes, offset: int, histogram_unit: str) -> dict[s
             "min_requests": minimum if count else 0,
             "max_requests": maximum if count else 0,
         })
+    histogram_max = maximum // 1_000 if histogram_unit == "us" else maximum
     for label, pct in (("p50", 0.50), ("p95", 0.95), ("p99", 0.99)):
-        result[f"{label}_{histogram_unit}"] = histogram_percentile(histogram, pct)
+        upper_bound = histogram_percentile(histogram, pct)
+        result[f"{label}_{histogram_unit}"] = min(upper_bound, histogram_max)
     return result
 
 
@@ -426,22 +428,29 @@ def build_clock_mapping(samples: list[dict[str, Any]]) -> dict[str, Any]:
 
     scale = (post["host_mid_ns"] - pre["host_mid_ns"]) / device_delta
     offset = pre["host_mid_ns"] - scale * pre["device_time_ns"]
+    mapped_times = [scale * item["device_time_ns"] + offset for item in samples]
     residuals = [
-        abs((scale * item["device_time_ns"] + offset) - item["host_mid_ns"])
-        for item in samples
+        abs(mapped - item["host_mid_ns"])
+        for mapped, item in zip(mapped_times, samples)
     ]
-    max_rtt = max(item["rtt_ns"] for item in (pre, post))
-    tolerance = max(2_000_000, max_rtt)
-    reliable = 0.995 <= scale <= 1.005 and max(residuals, default=0) <= tolerance
+    interval_errors = [
+        max(item["host_before_ns"] - mapped,
+            mapped - item["host_after_ns"], 0)
+        for mapped, item in zip(mapped_times, samples)
+    ]
+    tolerance = 2_000_000
+    reliable = 0.995 <= scale <= 1.005 and \
+        max(interval_errors, default=0) <= tolerance
     result.update({
         "reliable": reliable,
-        "reason": "ok" if reliable else "clock fit exceeds drift or residual limit",
+        "reason": "ok" if reliable else "clock fit exceeds drift or host interval limit",
         "scale": scale,
         "offset_ns": offset,
         "best_pre_rtt_ns": pre["rtt_ns"],
         "best_post_rtt_ns": post["rtt_ns"],
         "max_residual_ns": max(residuals, default=0),
         "median_residual_ns": statistics.median(residuals) if residuals else 0,
+        "max_interval_error_ns": max(interval_errors, default=0),
     })
     return result
 

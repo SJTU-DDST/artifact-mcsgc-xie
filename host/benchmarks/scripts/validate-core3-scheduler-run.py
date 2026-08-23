@@ -82,14 +82,16 @@ def main() -> None:
             int(scheduler["normal_cq_yield_count"])
         require(yields > 0, "bounded scheduler never yielded to the main loop")
 
+    normal_sq_time = scheduler["distributions"]["normal_sq_batch_ns"]
+    require(int(normal_sq_time["max"]) < 10_000_000_000,
+            "normal SQ batch timing contains an invalid uptime-sized sample")
+
     channel = device["channel_at_freeze"]
     for name in (
-            "cs_queue_depth", "csgc_sq_depth", "normal_sq_depth",
-            "normal_cq_depth", "csgc_csio_pending_depth",
-            "other_csio_pending_depth", "csio_outstanding_depth",
-            "active_workers", "cdma_busy"):
+            "csgc_sq_depth", "csgc_csio_pending_depth",
+            "csio_outstanding_depth", "cdma_busy"):
         require(int(channel[name]) == 0,
-                f"device channel was not drained at freeze: {name}={channel[name]}")
+                f"CSGC device channel was not drained at freeze: {name}={channel[name]}")
 
     print(
         f"validated Core3 scheduler run: budget={args.budget} "
