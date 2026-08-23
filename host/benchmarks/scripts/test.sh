@@ -500,9 +500,11 @@ echo "Running evaluation for $gc_mode..."
         prefill_ratio use_cgroup host_mem_usage nr_cs_cores csgc_sync fio_timebased\
         ssd_enable_l2p ssd_enable_nand_lat ssd_enable_dsm fsck_after_run light_evaluation \
         fio_gc_precondition fio_gc_precondition_size_per_job fio_gc_precondition_max_rounds \
-        formal_performance_only collect_diagnostic_workload_stats \
+        formal_performance_only collect_diagnostic_workload_stats collect_supply_rootcause \
+        csgc_core3_normal_budget csgc_supply_trace_abi_expected \
         csgc_proactive_profile \
-        FORMAL_HOST_BRANCH FORMAL_HOST_COMMIT FORMAL_MODULE_SHA256
+        FORMAL_HOST_BRANCH FORMAL_HOST_COMMIT FORMAL_MODULE_SHA256 \
+        OPENSSD_BRANCH OPENSSD_COMMIT ARTIFACT_BRANCH ARTIFACT_COMMIT
         
         case "${workload_type}" in 
             "filebench")

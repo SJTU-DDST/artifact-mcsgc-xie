@@ -17,6 +17,8 @@ mntpoint=${MNTPOINT}
 : "${formal_performance_only:=0}"
 : "${collect_diagnostic_workload_stats:=0}"
 : "${collect_supply_rootcause:=0}"
+: "${csgc_core3_normal_budget:=}"
+: "${csgc_supply_trace_abi_expected:=2}"
 : "${csgc_proactive_profile:=none}"
 csgc_proactive_started=0
 csgc_supply_rootcause_started=0
@@ -81,6 +83,15 @@ if [[ ! "${collect_diagnostic_workload_stats}" =~ ^[01]$ ]]; then
 fi
 if [[ ! "${collect_supply_rootcause}" =~ ^[01]$ ]]; then
     echo "ERROR: collect_supply_rootcause must be 0 or 1" >&2
+    exit 1
+fi
+if [ -n "${csgc_core3_normal_budget}" ] \
+    && [[ ! "${csgc_core3_normal_budget}" =~ ^(0|4|8)$ ]]; then
+    echo "ERROR: csgc_core3_normal_budget must be empty, 0, 4, or 8" >&2
+    exit 1
+fi
+if [[ ! "${csgc_supply_trace_abi_expected}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: csgc_supply_trace_abi_expected must be a positive integer" >&2
     exit 1
 fi
 case "${csgc_proactive_profile}" in
@@ -148,6 +159,56 @@ run_fio_logged() {
     command_status=${PIPESTATUS[0]}
 
     return "${command_status}"
+}
+
+# Set and verify the runtime Core3 normal-I/O budget before formatting.
+set_core3_normal_budget() {
+    local devpath=$1
+    local budget=$2
+    local log_path=$3
+    local set_output
+    local get_output
+    local actual
+
+    if ! set_output=$(sudo "${NVME_PATH}" ssd-admin "${devpath}" -o 5 \
+            --core3-budget "${budget}" 2>&1); then
+        printf '%s\n' "${set_output}" | tee "${log_path}" >&2
+        return 1
+    fi
+    if ! get_output=$(sudo "${NVME_PATH}" ssd-admin "${devpath}" -o 0 2>&1); then
+        printf '%s\n%s\n' "${set_output}" "${get_output}" \
+            | tee "${log_path}" >&2
+        return 1
+    fi
+    printf '%s\n%s\n' "${set_output}" "${get_output}" | tee "${log_path}"
+    actual=$(printf '%s\n' "${get_output}" \
+        | sed -n 's/^core3_normal_budget=//p' | tail -n 1)
+    if [ "${actual}" != "${budget}" ]; then
+        echo "ERROR: Core3 budget verification failed: expected=${budget} actual=${actual:-missing}" \
+            | tee -a "${log_path}" >&2
+        return 1
+    fi
+}
+
+# Record source and binary provenance next to the workload output.
+record_core3_scheduler_provenance() {
+    local path=$1
+
+    {
+        printf 'host_branch=%s\n' "${FORMAL_HOST_BRANCH:-unknown}"
+        printf 'host_commit=%s\n' "${FORMAL_HOST_COMMIT:-unknown}"
+        printf 'f2fs_module_sha256=%s\n' "${FORMAL_MODULE_SHA256:-unknown}"
+        printf 'openssd_branch=%s\n' "${OPENSSD_BRANCH:-unknown}"
+        printf 'openssd_commit=%s\n' "${OPENSSD_COMMIT:-unknown}"
+        printf 'artifact_branch=%s\n' "${ARTIFACT_BRANCH:-unknown}"
+        printf 'artifact_commit=%s\n' "${ARTIFACT_COMMIT:-unknown}"
+        printf 'core3_normal_budget=%s\n' "${csgc_core3_normal_budget:-unset}"
+        printf 'supply_trace_abi=%s\n' "${csgc_supply_trace_abi_expected}"
+        printf 'ssd_thread_mode=%s\n' "${ssd_thread_mode:-unknown}"
+        printf 'l2p=%s\n' "${ssd_enable_l2p:-unknown}"
+        printf 'nand_latency=%s\n' "${ssd_enable_nand_lat:-unknown}"
+        printf 'dsm=%s\n' "${ssd_enable_dsm:-unknown}"
+    } > "${path}"
 }
 
 # Emit a timestamped marker to the kernel ring buffer for dmesg collectors.
@@ -721,6 +782,15 @@ load_f2fs_module $gc_mode
 install_f2fs_tools $gc_mode
 prepare_device "${devpath}" "${output_path}"
 reset_ssd_config "${devpath}" "${ssd_enable_l2p}" "${ssd_enable_nand_lat}" "${ssd_enable_dsm}"
+if [ -n "${csgc_core3_normal_budget}" ]; then
+    if ! set_core3_normal_budget "${devpath}" "${csgc_core3_normal_budget}" \
+            "${output_path}/core3-scheduler-config.log"; then
+        echo "ERROR: failed to configure the OpenSSD Core3 scheduler" >&2
+        exit 1
+    fi
+fi
+record_core3_scheduler_provenance \
+    "${output_path}/core3-scheduler-provenance.log"
 mkfs_and_mount "${devpath}" "${mntpoint}" "${segs_per_sec}" "${f2fs_enable_discard}" "${ssd_enable_l2p}"
 setup_gc_config "${gc_mode}" "${nr_cs_cores}" "${csgc_sync}"
 setup_cgroup_mem "${use_cgroup}" "${host_mem_usage}"
@@ -1117,11 +1187,11 @@ if [ "${collect_supply_rootcause}" -eq 1 ]; then
     csgc_supply_rootcause_started=1
 fi
 
-emit_kernel_marker "MEASURED_FIO_START mode=${gc_mode} workload=${bmname} proactive_profile=${csgc_proactive_profile}"
+emit_kernel_marker "MEASURED_FIO_START mode=${gc_mode} workload=${bmname} proactive_profile=${csgc_proactive_profile} core3_budget=${csgc_core3_normal_budget:-unset}"
 if [ "${csgc_proactive_profile}" = "moderate" ] \
     || [ "${csgc_proactive_profile}" = "aggressive" ]; then
     if ! set_csgc_proactive_control "${csgc_proactive_control_path}" start; then
-        emit_kernel_marker "MEASURED_FIO_END mode=${gc_mode} workload=${bmname} status=1 proactive_profile=${csgc_proactive_profile}"
+        emit_kernel_marker "MEASURED_FIO_END mode=${gc_mode} workload=${bmname} status=1 proactive_profile=${csgc_proactive_profile} core3_budget=${csgc_core3_normal_budget:-unset}"
         set_gc_measurement_epoch "${gc_measurement_control_path}" stop || true
         sudo umount "${devpath}" >/dev/null 2>&1 || true
         exit 1
@@ -1138,7 +1208,7 @@ if [ "${csgc_proactive_profile}" = "moderate" ] \
         csgc_proactive_started=0
     fi
 fi
-emit_kernel_marker "MEASURED_FIO_END mode=${gc_mode} workload=${bmname} status=${fio_status} proactive_profile=${csgc_proactive_profile}"
+emit_kernel_marker "MEASURED_FIO_END mode=${gc_mode} workload=${bmname} status=${fio_status} proactive_profile=${csgc_proactive_profile} core3_budget=${csgc_core3_normal_budget:-unset}"
 if [ "${csgc_proactive_profile}" = "moderate" ] \
     || [ "${csgc_proactive_profile}" = "aggressive" ]; then
     if ! wait_csgc_proactive_idle "${csgc_proactive_control_path}"; then

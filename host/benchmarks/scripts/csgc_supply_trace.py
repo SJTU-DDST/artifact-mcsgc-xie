@@ -17,7 +17,8 @@ from typing import Any, Iterable
 HOST_MAGIC = 0x48534743
 DEVICE_MAGIC = 0x43535254
 SYNC_MAGIC = 0x43535453
-TRACE_VERSION = 1
+HOST_TRACE_VERSION = 1
+DEVICE_TRACE_VERSION = 2
 PAGE_SIZE = 4096
 TIMELINE_INTERVAL_NS = 1_000_000
 
@@ -49,6 +50,7 @@ CORE_STATES = [
     "C12_WAIT_CSIO",
     "C12_PACK",
     "C3_NORMAL_EMU_IO",
+    "C3_NORMAL_CQ",
     "C3_CSGC_SQ",
     "C3_CSIO_SCHED",
     "C3_CDMA",
@@ -58,17 +60,39 @@ CORE_STATES = [
 HOST_HEADER_SIZE = 408
 HOST_GAP_SIZE = 264
 HOST_REQUEST_SIZE = 48
-DEVICE_HEADER_SIZE = 688
-DEVICE_TIMELINE_SIZE = 18
+DEVICE_HEADER_SIZE = 3376
+DEVICE_TIMELINE_SIZE = 32
 DEVICE_REQUEST_SIZE = 96
 SYNC_RECORD_SIZE = 64
+DEVICE_DISTRIBUTION_SIZE = 288
+DEVICE_SCHEDULER_SIZE = 2632
+DEVICE_CHANNEL_SIZE = 56
+DEVICE_HISTOGRAM_BUCKETS = 32
 
 HOST_REQUEST_SUBMITTED = 1 << 1
 
 HOST_REQUEST_STRUCT = struct.Struct("<QQQQIIiI")
-DEVICE_TIMELINE_STRUCT = struct.Struct("<4BHH6BI")
+DEVICE_TIMELINE_STRUCT = struct.Struct("<4B6H8BII")
 DEVICE_REQUEST_STRUCT = struct.Struct("<10QiIHHI")
 SYNC_STRUCT = struct.Struct("<IHHQQQQQIIQ")
+DEVICE_DISTRIBUTION_STRUCT = struct.Struct("<4Q32Q")
+DEVICE_SCHEDULER_PREFIX_STRUCT = struct.Struct("<II4Q")
+DEVICE_CHANNEL_STRUCT = struct.Struct("<14I")
+
+DEVICE_DISTRIBUTIONS = (
+    ("normal_sq_batch_size", "requests"),
+    ("normal_sq_batch_ns", "us"),
+    ("normal_cq_batch_size", "requests"),
+    ("normal_cq_batch_ns", "us"),
+    ("csgc_sq_batch_size", "requests"),
+    ("csgc_sq_batch_ns", "us"),
+    ("csio_poll_gap_ns", "us"),
+    ("csgc_pending_wait_ns", "us"),
+    ("other_pending_wait_ns", "us"),
+)
+
+CSIO_OWNERS = ("NONE", "CSGC", "OTHER")
+CDMA_OWNERS = ("NONE", "CSGC", "OTHER")
 
 
 def percentile(values: Iterable[float], pct: float) -> float:
@@ -87,7 +111,58 @@ def summarize_ns(values: Iterable[int]) -> dict[str, float | int]:
         "mean_us": statistics.fmean(data) / 1_000 if data else 0.0,
         "median_us": statistics.median(data) / 1_000 if data else 0.0,
         "p95_us": percentile(data, 0.95) / 1_000,
+        "p99_us": percentile(data, 0.99) / 1_000,
+        "min_us": min(data) / 1_000 if data else 0.0,
+        "max_us": max(data) / 1_000 if data else 0.0,
     }
+
+
+def histogram_percentile(histogram: list[int], pct: float) -> int:
+    """Return the inclusive upper bound of a base-two histogram percentile."""
+    total = sum(histogram)
+    if total == 0:
+        return 0
+    target = max(1, math.ceil(total * pct))
+    cumulative = 0
+    for bucket, count in enumerate(histogram):
+        cumulative += count
+        if cumulative >= target:
+            return 0 if bucket == 0 else (1 << bucket) - 1
+    return (1 << (len(histogram) - 1)) - 1
+
+
+def decode_distribution(data: bytes, offset: int, histogram_unit: str) -> dict[str, Any]:
+    """Decode one fixed-width device distribution and approximate percentiles."""
+    values = DEVICE_DISTRIBUTION_STRUCT.unpack_from(data, offset)
+    count, total, minimum, maximum = values[:4]
+    histogram = list(values[4:])
+    if sum(histogram) != count:
+        raise ValueError("Device scheduler histogram count is inconsistent")
+    result: dict[str, Any] = {
+        "count": count,
+        "sum": total,
+        "min": minimum if count else 0,
+        "max": maximum if count else 0,
+        "mean": total / count if count else 0.0,
+        "histogram": histogram,
+        "histogram_unit": histogram_unit,
+    }
+    if histogram_unit == "us":
+        result.update({
+            "total_ms": total / 1_000_000,
+            "mean_us": total / count / 1_000 if count else 0.0,
+            "min_us": minimum / 1_000 if count else 0.0,
+            "max_us": maximum / 1_000 if count else 0.0,
+        })
+    elif histogram_unit == "requests":
+        result.update({
+            "mean_requests": total / count if count else 0.0,
+            "min_requests": minimum if count else 0,
+            "max_requests": maximum if count else 0,
+        })
+    for label, pct in (("p50", 0.50), ("p95", 0.95), ("p99", 0.99)):
+        result[f"{label}_{histogram_unit}"] = histogram_percentile(histogram, pct)
+    return result
 
 
 def decode_host_trace(path: Path) -> dict[str, Any]:
@@ -97,7 +172,7 @@ def decode_host_trace(path: Path) -> dict[str, Any]:
 
     magic, version, header_size, gap_size, request_size, reason_count, flags = \
         struct.unpack_from("<IHHIIII", data, 0)
-    if magic != HOST_MAGIC or version != TRACE_VERSION:
+    if magic != HOST_MAGIC or version != HOST_TRACE_VERSION:
         raise ValueError(f"Unsupported Host trace magic/version: {magic:#x}/{version}")
     if (header_size, gap_size, request_size, reason_count) != (
             HOST_HEADER_SIZE, HOST_GAP_SIZE, HOST_REQUEST_SIZE, len(REASONS)):
@@ -177,7 +252,7 @@ def decode_device_trace(path: Path) -> dict[str, Any]:
     if len(data) < PAGE_SIZE:
         raise ValueError("Device dump is shorter than one page")
     magic, version, header_size, page_size, flags = struct.unpack_from("<IHHII", data, 0)
-    if magic != DEVICE_MAGIC or version != TRACE_VERSION:
+    if magic != DEVICE_MAGIC or version != DEVICE_TRACE_VERSION:
         raise ValueError(f"Unsupported device trace magic/version: {magic:#x}/{version}")
     if header_size != DEVICE_HEADER_SIZE or page_size != PAGE_SIZE:
         raise ValueError("Device dump header ABI does not match the decoder")
@@ -209,9 +284,27 @@ def decode_device_trace(path: Path) -> dict[str, Any]:
         list(core_values[core * state_count:(core + 1) * state_count])
         for core in range(4)
     ]
-    current_states = list(struct.unpack_from("<4I", data, 560))
-    transitions = list(struct.unpack_from("<4I", data, 576))
-    channel_values = struct.unpack_from("<8I", data, 592)
+    current_states = list(struct.unpack_from("<4I", data, 592))
+    transitions = list(struct.unpack_from("<4I", data, 608))
+    channel_values = DEVICE_CHANNEL_STRUCT.unpack_from(data, 624)
+    scheduler_offset = 624 + DEVICE_CHANNEL_SIZE
+    scheduler_prefix = DEVICE_SCHEDULER_PREFIX_STRUCT.unpack_from(
+        data, scheduler_offset)
+    scheduler = {
+        "normal_budget": scheduler_prefix[0],
+        "normal_sq_yield_count": scheduler_prefix[2],
+        "normal_cq_yield_count": scheduler_prefix[3],
+        "csio_poll_long_count": scheduler_prefix[4],
+        "csio_poll_long_ns": scheduler_prefix[5],
+        "distributions": {},
+    }
+    distribution_offset = scheduler_offset + DEVICE_SCHEDULER_PREFIX_STRUCT.size
+    for name, unit in DEVICE_DISTRIBUTIONS:
+        scheduler["distributions"][name] = decode_distribution(
+            data, distribution_offset, unit)
+        distribution_offset += DEVICE_DISTRIBUTION_SIZE
+    if distribution_offset != scheduler_offset + DEVICE_SCHEDULER_SIZE:
+        raise ValueError("Device scheduler ABI size does not match the decoder")
 
     timelines = []
     previous_interval = -1
@@ -220,22 +313,32 @@ def decode_device_trace(path: Path) -> dict[str, Any]:
             data, timeline_offset + index * timeline_size)
         if any(state >= len(CORE_STATES) for state in values[0:4]):
             raise ValueError("Device timeline contains an invalid core state")
-        if values[12] <= previous_interval:
+        if values[12] >= len(CSIO_OWNERS) or values[14] >= len(CDMA_OWNERS):
+            raise ValueError("Device timeline contains an invalid owner")
+        if values[17] not in (0, 4, 8):
+            raise ValueError("Device timeline contains an invalid Core3 budget")
+        if values[18] <= previous_interval:
             raise ValueError("Device timeline interval indexes are not increasing")
-        previous_interval = values[12]
+        previous_interval = values[18]
         timelines.append({
             "index": index,
-            "device_interval": values[12],
-            "device_ns": start_ns + values[12] * TIMELINE_INTERVAL_NS,
+            "device_interval": values[18],
+            "device_ns": start_ns + values[18] * TIMELINE_INTERVAL_NS,
             "core_state": list(values[0:4]),
             "cs_queue_depth": values[4],
-            "csio_pending_depth": values[5],
-            "csio_outstanding_depth": values[6],
-            "active_workers": values[7],
-            "cdma_busy": values[8],
-            "cdma_owner": values[9],
-            "normal_io_pending": values[10],
-            "normal_io_active": values[11],
+            "csgc_sq_depth": values[5],
+            "normal_sq_depth": values[6],
+            "normal_cq_depth": values[7],
+            "csgc_csio_pending_depth": values[8],
+            "other_csio_pending_depth": values[9],
+            "csio_outstanding_depth": values[10],
+            "active_workers": values[11],
+            "csio_owner": values[12],
+            "cdma_busy": values[13],
+            "cdma_owner": values[14],
+            "normal_io_pending": values[15],
+            "normal_io_active": values[16],
+            "core3_normal_budget": values[17],
         })
 
     requests = []
@@ -265,9 +368,13 @@ def decode_device_trace(path: Path) -> dict[str, Any]:
             "core_current_state": current_states,
             "core_transitions": transitions,
             "channel": dict(zip((
-                "cs_queue_depth", "csio_pending_depth", "csio_outstanding_depth",
-                "active_workers", "cdma_busy", "cdma_owner",
-                "normal_io_pending", "normal_io_active"), channel_values)),
+                "cs_queue_depth", "csgc_sq_depth", "normal_sq_depth",
+                "normal_cq_depth", "csgc_csio_pending_depth",
+                "other_csio_pending_depth", "csio_outstanding_depth",
+                "active_workers", "csio_owner", "cdma_busy", "cdma_owner",
+                "normal_io_pending", "normal_io_active",
+                "core3_normal_budget"), channel_values)),
+            "scheduler": scheduler,
         },
         "timeline": timelines,
         "requests": requests,
@@ -284,9 +391,11 @@ def decode_sync_page(data: bytes) -> dict[str, int]:
         "reserved", "sequence",
     )
     sample = dict(zip(keys, values))
-    if sample["magic"] != SYNC_MAGIC or sample["version"] != TRACE_VERSION or \
+    if sample["magic"] != SYNC_MAGIC or \
+            sample["version"] != DEVICE_TRACE_VERSION or \
             sample["record_size"] != SYNC_RECORD_SIZE:
         raise ValueError("Time synchronization page has an incompatible ABI")
+    sample["core3_normal_budget"] = sample["reserved"]
     return sample
 
 
@@ -459,6 +568,10 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
 
     violation_ratio = ordering_violations / len(matched_ids) if matched_ids else 0.0
     mapping["matched_request_count"] = len(matched_ids)
+    mapping["valid_host_request_count"] = len(valid_host_requests)
+    mapping["valid_device_request_count"] = len(valid_device_requests)
+    mapping["unmatched_host_request_count"] = len(valid_host_requests) - len(matched_ids)
+    mapping["unmatched_device_request_count"] = len(valid_device_requests) - len(matched_ids)
     mapping["host_duplicate_request_ids"] = host_duplicate_ids
     mapping["device_duplicate_request_ids"] = device_duplicate_ids
     mapping["request_ordering_violations"] = ordering_violations
@@ -490,6 +603,8 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
             "core1_state": CORE_STATES[record["core_state"][1]],
             "core2_state": CORE_STATES[record["core_state"][2]],
             "core3_state": CORE_STATES[record["core_state"][3]],
+            "csio_owner_name": CSIO_OWNERS[record["csio_owner"]],
+            "cdma_owner_name": CDMA_OWNERS[record["cdma_owner"]],
             **{key: value for key, value in record.items()
                if key not in {"index", "device_interval", "device_ns", "core_state"}},
         })
@@ -526,10 +641,13 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
                 row["cs_queue_empty_pct"] = 100.0 * sum(
                     record["cs_queue_depth"] == 0 for record in records) / len(records)
                 row["csio_empty_pct"] = 100.0 * sum(
-                    record["csio_pending_depth"] == 0 and
+                    record["csgc_csio_pending_depth"] == 0 and
+                    record["other_csio_pending_depth"] == 0 and
                     record["csio_outstanding_depth"] == 0 for record in records) / len(records)
                 row["cdma_idle_pct"] = 100.0 * sum(
                     not record["cdma_busy"] for record in records) / len(records)
+                row["normal_io_pending_pct"] = 100.0 * sum(
+                    record["normal_io_pending"] for record in records) / len(records)
                 row["normal_io_active_pct"] = 100.0 * sum(
                     record["normal_io_active"] for record in records) / len(records)
         gap_rows.append(row)
@@ -551,6 +669,84 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
     write_csv(output_dir / "csgc-supply-gaps.csv", gap_rows)
     write_csv(output_dir / "csgc-device-timeline.csv", timeline_rows)
     write_csv(output_dir / "csgc-matched-requests.csv", matched_rows)
+
+    timeline_count = len(device["timeline"])
+    timeline_summary = {
+        "sample_count": timeline_count,
+        "normal_sq_nonempty_pct": 100.0 * sum(
+            record["normal_sq_depth"] > 0 for record in device["timeline"]
+        ) / timeline_count if timeline_count else 0.0,
+        "normal_cq_nonempty_pct": 100.0 * sum(
+            record["normal_cq_depth"] > 0 for record in device["timeline"]
+        ) / timeline_count if timeline_count else 0.0,
+        "csgc_sq_nonempty_pct": 100.0 * sum(
+            record["csgc_sq_depth"] > 0 for record in device["timeline"]
+        ) / timeline_count if timeline_count else 0.0,
+        "csgc_csio_pending_pct": 100.0 * sum(
+            record["csgc_csio_pending_depth"] > 0 for record in device["timeline"]
+        ) / timeline_count if timeline_count else 0.0,
+        "other_csio_pending_pct": 100.0 * sum(
+            record["other_csio_pending_depth"] > 0 for record in device["timeline"]
+        ) / timeline_count if timeline_count else 0.0,
+        "cdma_busy_pct": 100.0 * sum(
+            record["cdma_busy"] for record in device["timeline"]
+        ) / timeline_count if timeline_count else 0.0,
+        "normal_io_pending_pct": 100.0 * sum(
+            record["normal_io_pending"] for record in device["timeline"]
+        ) / timeline_count if timeline_count else 0.0,
+        "normal_io_active_pct": 100.0 * sum(
+            record["normal_io_active"] for record in device["timeline"]
+        ) / timeline_count if timeline_count else 0.0,
+        "core3_budget_values": sorted({
+            record["core3_normal_budget"] for record in device["timeline"]
+        }),
+        "core3_state_pct": {},
+        "csio_owner_pct": {},
+        "cdma_owner_pct": {},
+    }
+    if timeline_count:
+        core3_counts = Counter(record["core_state"][3] for record in device["timeline"])
+        timeline_summary["core3_state_pct"] = {
+            CORE_STATES[state]: 100.0 * count / timeline_count
+            for state, count in sorted(core3_counts.items())
+        }
+        csio_counts = Counter(record["csio_owner"] for record in device["timeline"])
+        timeline_summary["csio_owner_pct"] = {
+            CSIO_OWNERS[owner]: 100.0 * count / timeline_count
+            for owner, count in sorted(csio_counts.items())
+        }
+        cdma_counts = Counter(record["cdma_owner"] for record in device["timeline"])
+        timeline_summary["cdma_owner_pct"] = {
+            CDMA_OWNERS[owner]: 100.0 * count / timeline_count
+            for owner, count in sorted(cdma_counts.items())
+        }
+
+    lifecycle_phases = {
+        "rx_payload_ns": [],
+        "enqueue_wait_ns": [],
+        "worker_start_wait_ns": [],
+        "worker_to_leader_ns": [],
+        "leader_ns": [],
+        "result_pack_ns": [],
+        "result_tx_ns": [],
+        "total_ns": [],
+    }
+    for request in valid_device_requests:
+        phase_bounds = (
+            ("rx_payload_ns", "rx_cmd_ns", "rx_done_ns"),
+            ("enqueue_wait_ns", "enqueue_ns", "dequeue_ns"),
+            ("worker_start_wait_ns", "dequeue_ns", "worker_start_ns"),
+            ("worker_to_leader_ns", "worker_start_ns", "leader_start_ns"),
+            ("leader_ns", "leader_start_ns", "leader_end_ns"),
+            ("result_pack_ns", "leader_end_ns", "slot_done_ns"),
+            ("result_tx_ns", "slot_done_ns", "tx_done_ns"),
+            ("total_ns", "rx_cmd_ns", "tx_done_ns"),
+        )
+        for phase, begin_key, end_key in phase_bounds:
+            begin = request[begin_key]
+            end = request[end_key]
+            if begin and end >= begin:
+                lifecycle_phases[phase].append(end - begin)
 
     result = {
         "host": {
@@ -577,13 +773,20 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
             "dominant_reason_total_ns": host_header["dominant_ns"],
         },
         "device": {
-            "timeline_count": len(device["timeline"]),
+            "timeline_count": timeline_count,
             "request_count": len(device["requests"]),
             "timeline_overflow_count": device["header"]["timeline_overflow_count"],
             "request_overflow_count": device["header"]["request_overflow_count"],
             "core_state_ns": {
                 f"core{core}": dict(zip(CORE_STATES, values))
                 for core, values in enumerate(device["header"]["core_state_ns"])
+            },
+            "channel_at_freeze": device["header"]["channel"],
+            "scheduler": device["header"]["scheduler"],
+            "timeline_summary": timeline_summary,
+            "request_lifecycle": {
+                phase: summarize_ns(values)
+                for phase, values in lifecycle_phases.items()
             },
         },
         "clock_mapping": mapping,

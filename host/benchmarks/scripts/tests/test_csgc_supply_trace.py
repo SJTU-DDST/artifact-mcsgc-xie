@@ -13,9 +13,11 @@ SCRIPT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from csgc_supply_trace import (  # noqa: E402
+    DEVICE_DISTRIBUTION_SIZE,
     DEVICE_HEADER_SIZE,
     DEVICE_MAGIC,
     DEVICE_REQUEST_STRUCT,
+    DEVICE_SCHEDULER_PREFIX_STRUCT,
     DEVICE_TIMELINE_STRUCT,
     HOST_GAP_SIZE,
     HOST_HEADER_SIZE,
@@ -69,7 +71,7 @@ def build_device_trace(path: Path) -> None:
     request_offset = PAGE_SIZE * 2
     total_size = PAGE_SIZE * 3
     data = bytearray(total_size)
-    struct.pack_into("<IHHII", data, 0, DEVICE_MAGIC, 1,
+    struct.pack_into("<IHHII", data, 0, DEVICE_MAGIC, 2,
                      DEVICE_HEADER_SIZE, PAGE_SIZE, 0x7)
     struct.pack_into("<5Q", data, 16, 9, 1_000_000_000,
                      1_010_000_000, total_size, timeline_offset)
@@ -79,11 +81,26 @@ def build_device_trace(path: Path) -> None:
     struct.pack_into("<4I", data, 72, DEVICE_REQUEST_STRUCT.size,
                      request_count, 600064, 262144)
     struct.pack_into("<3Q", data, 88, 3, 2, 16)
+    struct.pack_into("<14I", data, 624,
+                     0, 0, 8, 2, 1, 0, 1, 1, 1, 1, 1, 1, 1, 4)
+    scheduler_offset = 680
+    DEVICE_SCHEDULER_PREFIX_STRUCT.pack_into(
+        data, scheduler_offset, 4, 0, 3, 2, 1, 2_000_000)
+    histogram = [0] * 32
+    histogram[2] = 1
+    histogram[3] = 1
+    struct.pack_into("<4Q32Q", data,
+                     scheduler_offset + DEVICE_SCHEDULER_PREFIX_STRUCT.size,
+                     2, 6, 2, 4, *histogram)
+    assert DEVICE_DISTRIBUTION_SIZE == struct.calcsize("<4Q32Q")
 
     for index in range(timeline_count):
         DEVICE_TIMELINE_STRUCT.pack_into(
             data, timeline_offset + index * DEVICE_TIMELINE_STRUCT.size,
-            0, 6, 0, 12, 0, 0, 0, 1, 0, 0, 0, 0, index + 1)
+            0, 6, 0, 13,
+            0, 1, 8, 2, 1, 0,
+            1, 1, 1, 1, 1, 1, 1, 4,
+            index + 1, 0)
 
     DEVICE_REQUEST_STRUCT.pack_into(
         data, request_offset, 1,
@@ -110,6 +127,11 @@ def main() -> None:
         assert host["header"]["timestamp_reorders"] == 11
         assert device["header"]["timeline_overflow_count"] == 3
         assert device["header"]["request_overflow_count"] == 2
+        assert device["header"]["scheduler"]["normal_budget"] == 4
+        normal_batch = device["header"]["scheduler"]["distributions"][
+            "normal_sq_batch_size"]
+        assert normal_batch["mean_requests"] == 3
+        assert normal_batch["p95_requests"] == 7
 
         samples = []
         for phase, device_ns in (("pre", 1_000_000_000),
@@ -126,6 +148,8 @@ def main() -> None:
         assert result["clock_mapping"]["reliable"]
         assert result["clock_mapping"]["matched_request_count"] == 2
         assert result["joint_attribution_emitted"]
+        assert result["device"]["timeline_summary"]["normal_io_active_pct"] == 100
+        assert result["device"]["scheduler"]["normal_sq_yield_count"] == 3
         assert (root / "csgc-supply-gaps.csv").is_file()
         assert json.loads((root / "csgc-supply-analysis.json").read_text())["device"][
             "timeline_overflow_count"] == 3

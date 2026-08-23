@@ -50,6 +50,8 @@ Configurations:
                         Unsafe two-way CSGC without pair-level diagnostics
   mcsgc8t-proactive-supply
                         Runtime-selectable proactive CSGC producer
+  mcsgc8t-supply-rootcause
+                        Fixed Host for joint Host/OpenSSD supply tracing
 EOF
 }
 
@@ -121,6 +123,9 @@ case "$1" in
         ;;
     mcsgc8t-proactive-supply)
         expected_branch=exp/diagnostic-mcsgc8t-proactive-supply-20260822
+        ;;
+    mcsgc8t-supply-rootcause)
+        expected_branch=exp/diagnostic-mcsgc8t-supply-rootcause-20260823
         ;;
     *)
         usage

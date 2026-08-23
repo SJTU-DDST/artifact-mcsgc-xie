@@ -6878,6 +6878,7 @@ ret:
 // sudo ./nvme ssd-admin /dev/nvme1n1 --op 0					# get config
 // sudo ./nvme ssd-admin /dev/nvme1n1 --op 1 --l2p 1 --nand 0	# set config
 // sudo ./nvme ssd-admin /dev/nvme1n1 --op 2					# reset stat
+// sudo ./nvme ssd-admin /dev/nvme1n1 --op 5 --core3-budget 4
 static int signal_ssd_admin(int argc, char **argv, const char *desc)
 {
 	int fd, err;
@@ -6887,6 +6888,9 @@ static int signal_ssd_admin(int argc, char **argv, const char *desc)
 		SSD_ADMIN_GET_CFG = 0,
 		SSD_ADMIN_SET_CFG,
 		SSD_ADMIN_RESET_STAT,
+		SSD_ADMIN_PROBE_FS,
+		SSD_ADMIN_CDMA_BENCH,
+		SSD_ADMIN_SET_CORE3_SCHED,
 		SSD_ADMIN_NR_OPS,
 	};
 
@@ -6899,6 +6903,7 @@ static int signal_ssd_admin(int argc, char **argv, const char *desc)
 	struct config {
 		enum ssd_admin_op op;
 		struct ssd_config ssd_cfg;
+		int core3_budget;
 	};
 
 	struct config cfg = {
@@ -6908,29 +6913,47 @@ static int signal_ssd_admin(int argc, char **argv, const char *desc)
 			.nand_latency_emu_enabled = -1,
 			.dsm_enabled = -1,
 		},
+		.core3_budget = -1,
 	};
 
 	OPT_ARGS(opts) = {
-		OPT_INT("op", 'o', &cfg.op, "operation type: 0/1 get/set ssd config, 2 reset ssd stat"),
+		OPT_INT("op", 'o', &cfg.op, "operation type: 0 get config, 1 set config, 2 reset stat, 5 set Core3 budget"),
 		OPT_INT("l2p", 'l', &cfg.ssd_cfg.l2p_mapping_enabled, "<for op=1>, l2p mapping enabled"),
 		OPT_INT("nand", 'n', &cfg.ssd_cfg.nand_latency_emu_enabled, "<for op=1>, nand latency emulation enabled"),
 		OPT_INT("dsm", 'd', &cfg.ssd_cfg.dsm_enabled, "<for op=1>, dataset management enabled"),
+		OPT_INT("core3-budget", 'b', &cfg.core3_budget, "<for op=5>, normal I/O budget: 0, 4, or 8"),
 		OPT_END()
 	};
 
 	err = fd = parse_and_open(argc, argv, desc, opts);
 	if (fd < 0)
 		goto ret;
+	if ((cfg.op != SSD_ADMIN_GET_CFG && cfg.op != SSD_ADMIN_SET_CFG &&
+	     cfg.op != SSD_ADMIN_RESET_STAT &&
+	     cfg.op != SSD_ADMIN_SET_CORE3_SCHED) ||
+	    (cfg.op == SSD_ADMIN_SET_CORE3_SCHED &&
+	     cfg.core3_budget != 0 && cfg.core3_budget != 4 &&
+	     cfg.core3_budget != 8)) {
+		fprintf(stderr, "Invalid SSD admin operation or Core3 budget\n");
+		errno = EINVAL;
+		err = -1;
+		goto close_fd;
+	}
 
 	memset(&cmd, 0, sizeof(struct nvme_admin_cmd));
 	cmd.opcode = nvme_admin_ssd_admin;
 	cmd.cdw10 = cfg.op;
-	cmd.cdw11 = cfg.ssd_cfg.l2p_mapping_enabled;
+	cmd.cdw11 = cfg.op == SSD_ADMIN_SET_CORE3_SCHED ?
+		    cfg.core3_budget : cfg.ssd_cfg.l2p_mapping_enabled;
 	cmd.cdw12 = cfg.ssd_cfg.nand_latency_emu_enabled;
 	cmd.cdw13 = cfg.ssd_cfg.dsm_enabled;
 
 	err = nvme_submit_admin_passthru(fd, &cmd);
+	if (err == 0 && (cfg.op == SSD_ADMIN_GET_CFG ||
+			 cfg.op == SSD_ADMIN_SET_CORE3_SCHED))
+		printf("core3_normal_budget=%u\n", cmd.result);
 
+close_fd:
 	close(fd);
 ret:
 	return nvme_status_to_errno(err, false);
@@ -6958,7 +6981,7 @@ static int cdma_bench_cmd(int argc, char **argv, struct command *command,
 
 static int ssd_admin_cmd(int argc, char **argv, struct command *command, struct plugin *plugin)
 {
-	const char *desc = "Perform in-storage io test";
+	const char *desc = "Get or update OpenSSD runtime configuration";
 	return signal_ssd_admin(argc, argv, desc);
 }
 

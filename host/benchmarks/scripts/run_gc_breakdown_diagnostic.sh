@@ -44,6 +44,7 @@ Configurations:
   mcsgc8t-parallel-gc-dnode-safe
   mcsgc8t-parallel-gc-unsafe-fast
   mcsgc8t-proactive-supply
+  mcsgc8t-supply-rootcause
 
 Workloads:
   bigfile     4-job single-big-file workload (default)
@@ -63,6 +64,7 @@ fi
 
 configuration=$1
 workload=${2:-bigfile}
+collect_supply_rootcause_run=0
 
 case "${workload}" in
     bigfile)
@@ -285,6 +287,16 @@ case "${configuration}" in
         expected_fast_unsafe=1
         run_breakdown_parser=0
         ;;
+    mcsgc8t-supply-rootcause)
+        expected_branch=exp/diagnostic-mcsgc8t-supply-rootcause-20260823
+        prepare_configuration=mcsgc8t-supply-rootcause
+        test_mode=diagnostic-mcsgc8t-supply-rootcause-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        collect_supply_rootcause_run=1
+        ;;
     *)
         usage
         exit 1
@@ -363,6 +375,7 @@ export CSGC_EXPECTED_OPENSSD_PRODUCTION_PERFORMANCE="${expected_production}"
 export CSGC_EXPECTED_MOVE_PLAN_V2="${expected_move_plan}"
 export CSGC_EXPECTED_MOVE_PLAN_FAST_UNSAFE="${expected_fast_unsafe}"
 export collect_diagnostic_workload_stats=1
+export collect_supply_rootcause=${collect_supply_rootcause_run}
 export csgc_proactive_profile=${proactive_profile:-none}
 export FORMAL_HOST_BRANCH="${actual_branch}"
 export FORMAL_HOST_COMMIT="${host_commit}"
