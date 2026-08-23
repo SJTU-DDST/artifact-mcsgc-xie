@@ -104,7 +104,7 @@ def build_run(path: Path, budget: int, bandwidth: float) -> None:
                     "cs_queue_depth", "csgc_sq_depth", "normal_sq_depth",
                     "normal_cq_depth", "csgc_csio_pending_depth",
                     "other_csio_pending_depth", "csio_outstanding_depth",
-                    "active_workers", "cdma_busy",
+                    "active_workers", "csio_owner", "cdma_busy", "cdma_owner",
                 )
             },
         },
@@ -161,6 +161,16 @@ def main() -> None:
             for budget in (0, 4, 8):
                 path = root / f"{workload}-{budget}"
                 build_run(path, budget, 300.0 + budget)
+                analysis_path = path / "csgc-supply-analysis.json"
+                analysis = json.loads(analysis_path.read_text())
+                channel = analysis["device"]["channel_at_freeze"]
+                channel.update({
+                    "csio_outstanding_depth": 1,
+                    "csio_owner": 2,
+                    "cdma_busy": 1,
+                    "cdma_owner": 2,
+                })
+                analysis_path.write_text(json.dumps(analysis), encoding="ascii")
                 runs[(workload, budget)] = path
                 subprocess.run(
                     [str(VALIDATOR), str(path), str(budget)], check=True,

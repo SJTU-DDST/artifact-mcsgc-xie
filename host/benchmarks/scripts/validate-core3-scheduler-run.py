@@ -90,16 +90,23 @@ def main() -> None:
 
     channel = device["channel_at_freeze"]
     for name in (
-            "csgc_sq_depth", "csgc_csio_pending_depth",
-            "csio_outstanding_depth", "cdma_busy"):
+            "csgc_sq_depth", "csgc_csio_pending_depth", "active_workers"):
         require(int(channel[name]) == 0,
                 f"CSGC device channel was not drained at freeze: {name}={channel[name]}")
+    require(not (int(channel["csio_outstanding_depth"]) and
+                 int(channel["csio_owner"]) == 1),
+            "a CSGC-owned CSIO request remained active at freeze")
+    require(not (int(channel["cdma_busy"]) and
+                 int(channel["cdma_owner"]) == 1),
+            "a CSGC-owned CDMA transfer remained active at freeze")
 
     print(
         f"validated Core3 scheduler run: budget={args.budget} "
         f"matched_requests={matched} "
         f"boundary_device_requests="
-        f"{mapping.get('unmatched_device_boundary_request_count', 0)}"
+        f"{mapping.get('unmatched_device_boundary_request_count', 0)} "
+        f"csio_owner_at_freeze={channel['csio_owner']} "
+        f"cdma_owner_at_freeze={channel['cdma_owner']}"
     )
 
 
