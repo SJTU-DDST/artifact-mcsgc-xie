@@ -291,7 +291,7 @@ case "${configuration}" in
         expected_branch=exp/diagnostic-mcsgc8t-supply-rootcause-20260823
         prepare_configuration=mcsgc8t-supply-rootcause
         test_mode=diagnostic-mcsgc8t-supply-rootcause-csgc
-        expected_production=1
+        expected_production=0
         expected_move_plan=1
         expected_fast_unsafe=1
         run_breakdown_parser=0
