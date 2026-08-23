@@ -461,6 +461,27 @@ def map_device_time(mapping: dict[str, Any], device_ns: int) -> int | None:
     return round(mapping["scale"] * device_ns + mapping["offset_ns"])
 
 
+def classify_device_request_epoch(mapping: dict[str, Any],
+                                  request: dict[str, Any],
+                                  start_ns: int, end_ns: int) -> str:
+    """Classify a device request relative to the frozen Host epoch."""
+    mapped_rx = map_device_time(mapping, request["rx_cmd_ns"])
+    mapped_tx = map_device_time(mapping, request["tx_done_ns"])
+    if mapped_rx is None or mapped_tx is None:
+        return "UNMAPPED"
+    if mapped_tx < start_ns:
+        return "BEFORE_EPOCH"
+    if mapped_rx > end_ns:
+        return "AFTER_EPOCH"
+    if mapped_rx < start_ns and mapped_tx > end_ns:
+        return "SPANS_EPOCH"
+    if mapped_rx < start_ns:
+        return "CROSSES_START"
+    if mapped_tx > end_ns:
+        return "CROSSES_END"
+    return "INSIDE_EPOCH"
+
+
 def coverage_at_least(requests: list[dict[str, Any]], start_ns: int,
                       end_ns: int, depth: int) -> float:
     if end_ns <= start_ns:
@@ -526,6 +547,26 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
     host_requests = {item["request_id"]: item for item in valid_host_requests}
     device_requests = {item["request_id"]: item for item in valid_device_requests}
     matched_ids = sorted(host_requests.keys() & device_requests.keys())
+    device_epoch_class = {
+        item["request_id"]: classify_device_request_epoch(
+            mapping, item, host_header["start_ns"], host_header["end_ns"])
+        for item in valid_device_requests
+    }
+    device_epoch_class_counts = Counter(device_epoch_class.values())
+    unmatched_host_ids = sorted(host_requests.keys() - device_requests.keys())
+    unmatched_device_ids = sorted(device_requests.keys() - host_requests.keys())
+    unmatched_device_interior_ids = [
+        request_id for request_id in unmatched_device_ids
+        if device_epoch_class[request_id] == "INSIDE_EPOCH"
+    ]
+    unmatched_device_boundary_ids = [
+        request_id for request_id in unmatched_device_ids
+        if device_epoch_class[request_id] not in {"INSIDE_EPOCH", "UNMAPPED"}
+    ]
+    unmatched_device_unmapped_ids = [
+        request_id for request_id in unmatched_device_ids
+        if device_epoch_class[request_id] == "UNMAPPED"
+    ]
     ordering_violations = 0
     matched_rows = []
     for request_id in matched_ids:
@@ -579,8 +620,24 @@ def analyze_traces(host: dict[str, Any], device: dict[str, Any],
     mapping["matched_request_count"] = len(matched_ids)
     mapping["valid_host_request_count"] = len(valid_host_requests)
     mapping["valid_device_request_count"] = len(valid_device_requests)
-    mapping["unmatched_host_request_count"] = len(valid_host_requests) - len(matched_ids)
-    mapping["unmatched_device_request_count"] = len(valid_device_requests) - len(matched_ids)
+    mapping["unmatched_host_request_count"] = len(unmatched_host_ids)
+    mapping["unmatched_device_request_count"] = len(unmatched_device_ids)
+    mapping["device_request_epoch_class_counts"] = dict(
+        sorted(device_epoch_class_counts.items()))
+    mapping["unmatched_host_request_ids"] = unmatched_host_ids
+    mapping["unmatched_device_request_ids"] = unmatched_device_ids
+    mapping["unmatched_device_interior_request_count"] = len(
+        unmatched_device_interior_ids)
+    mapping["unmatched_device_boundary_request_count"] = len(
+        unmatched_device_boundary_ids)
+    mapping["unmatched_device_unmapped_request_count"] = len(
+        unmatched_device_unmapped_ids)
+    mapping["unmatched_device_interior_request_ids"] = \
+        unmatched_device_interior_ids
+    mapping["unmatched_device_boundary_request_ids"] = \
+        unmatched_device_boundary_ids
+    mapping["unmatched_device_unmapped_request_ids"] = \
+        unmatched_device_unmapped_ids
     mapping["host_duplicate_request_ids"] = host_duplicate_ids
     mapping["device_duplicate_request_ids"] = device_duplicate_ids
     mapping["request_ordering_violations"] = ordering_violations

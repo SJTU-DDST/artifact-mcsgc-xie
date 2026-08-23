@@ -119,6 +119,11 @@ def command_finish(args: argparse.Namespace) -> None:
     control = args.debugfs_dir / "csgc_supply_control"
     write_control(control, "stop", retries=200)
 
+    # Freeze the device snapshot immediately after the Host epoch.  The time
+    # synchronization page remains live after the diagnostic dump is frozen.
+    collect_device_dump(args.nvme, args.device,
+                        args.output_dir / "ssd-csgc-supply-trace.bin")
+
     sync_path = args.output_dir / "csgc-time-sync.json"
     samples = json.loads(sync_path.read_text(encoding="ascii"))
     samples.extend(collect_sync_samples(args.nvme, args.device, "post", args.samples))
@@ -129,8 +134,6 @@ def command_finish(args: argparse.Namespace) -> None:
         read_privileged(args.debugfs_dir / "csgc_supply_summary"))
     (args.output_dir / "host-csgc-supply-trace.bin").write_bytes(
         read_privileged(args.debugfs_dir / "csgc_supply_trace"))
-    collect_device_dump(args.nvme, args.device,
-                        args.output_dir / "ssd-csgc-supply-trace.bin")
     command_analyze(args)
 
 
@@ -145,6 +148,8 @@ def command_analyze(args: argparse.Namespace) -> None:
         "outstanding_ge_2_coverage_pct": result["host"]["outstanding_ge_2_coverage_pct"],
         "clock_mapping_reliable": result["clock_mapping"]["reliable"],
         "matched_request_count": result["clock_mapping"]["matched_request_count"],
+        "boundary_device_request_count": result["clock_mapping"][
+            "unmatched_device_boundary_request_count"],
     }, indent=2, sort_keys=True))
 
 

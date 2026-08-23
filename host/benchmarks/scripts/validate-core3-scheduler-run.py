@@ -59,12 +59,14 @@ def main() -> None:
     require(mapping.get("reliable") is True, "Host/device clock mapping is unreliable")
     matched = int(mapping.get("matched_request_count", 0))
     host_count = int(mapping.get("valid_host_request_count", -1))
-    device_count = int(mapping.get("valid_device_request_count", -1))
-    require(matched > 0 and matched == host_count == device_count,
-            "not every valid Host and device request is associated")
-    require(int(mapping.get("unmatched_host_request_count", -1)) == 0 and
-            int(mapping.get("unmatched_device_request_count", -1)) == 0,
-            "unmatched request IDs remain")
+    require(matched > 0 and matched == host_count,
+            "not every valid Host request is associated with the device")
+    require(int(mapping.get("unmatched_host_request_count", -1)) == 0,
+            "unmatched Host request IDs remain")
+    require(int(mapping.get("unmatched_device_interior_request_count", -1)) == 0,
+            "an unmatched device request remains inside the Host epoch")
+    require(int(mapping.get("unmatched_device_unmapped_request_count", -1)) == 0,
+            "an unmatched device request could not be placed on the Host clock")
     require(int(host.get("gap_dropped", -1)) == 0 and
             int(host.get("request_dropped", -1)) == 0,
             "Host trace dropped records")
@@ -95,7 +97,9 @@ def main() -> None:
 
     print(
         f"validated Core3 scheduler run: budget={args.budget} "
-        f"matched_requests={matched}"
+        f"matched_requests={matched} "
+        f"boundary_device_requests="
+        f"{mapping.get('unmatched_device_boundary_request_count', 0)}"
     )
 
 

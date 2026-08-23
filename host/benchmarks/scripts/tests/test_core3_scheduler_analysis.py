@@ -115,6 +115,9 @@ def build_run(path: Path, budget: int, bandwidth: float) -> None:
             "valid_device_request_count": 10,
             "unmatched_host_request_count": 0,
             "unmatched_device_request_count": 0,
+            "unmatched_device_interior_request_count": 0,
+            "unmatched_device_boundary_request_count": 0,
+            "unmatched_device_unmapped_request_count": 0,
         },
     }
     (path / "csgc-supply-analysis.json").write_text(

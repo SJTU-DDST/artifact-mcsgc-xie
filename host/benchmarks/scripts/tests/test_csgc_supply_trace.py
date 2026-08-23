@@ -147,12 +147,42 @@ def main() -> None:
         result = analyze_traces(host, device, samples, root)
         assert result["clock_mapping"]["reliable"]
         assert result["clock_mapping"]["matched_request_count"] == 2
+        assert result["clock_mapping"][
+            "unmatched_device_boundary_request_count"] == 0
+        assert result["clock_mapping"][
+            "unmatched_device_interior_request_count"] == 0
         assert result["joint_attribution_emitted"]
         assert result["device"]["timeline_summary"]["normal_io_active_pct"] == 100
         assert result["device"]["scheduler"]["normal_sq_yield_count"] == 3
         assert (root / "csgc-supply-gaps.csv").is_file()
         assert json.loads((root / "csgc-supply-analysis.json").read_text())["device"][
             "timeline_overflow_count"] == 3
+
+        boundary_device = dict(device["requests"][-1])
+        boundary_device.update({
+            "request_id": 3,
+            "rx_cmd_ns": 1_011_000_000,
+            "rx_done_ns": 1_011_010_000,
+            "enqueue_ns": 1_011_020_000,
+            "dequeue_ns": 1_011_030_000,
+            "worker_start_ns": 1_011_040_000,
+            "leader_start_ns": 1_011_050_000,
+            "leader_end_ns": 1_011_100_000,
+            "slot_done_ns": 1_011_110_000,
+            "tx_done_ns": 1_011_120_000,
+        })
+        device_with_boundary = dict(device)
+        device_with_boundary["requests"] = device["requests"] + [boundary_device]
+        boundary_result = analyze_traces(
+            host, device_with_boundary, samples, root)
+        assert boundary_result["clock_mapping"][
+            "unmatched_device_request_count"] == 1
+        assert boundary_result["clock_mapping"][
+            "unmatched_device_boundary_request_count"] == 1
+        assert boundary_result["clock_mapping"][
+            "unmatched_device_interior_request_count"] == 0
+        assert boundary_result["clock_mapping"][
+            "unmatched_device_boundary_request_ids"] == [3]
 
         wide_samples = [dict(sample) for sample in samples]
         wide_samples.append({
