@@ -39,6 +39,8 @@ Configurations:
   mcsgc8t-continuous-supply
   mcsgc8t-conflict-aware-supply
   mcsgc8t-rolling-supply
+  mcsgc8t-conflict-aware-lifecycle-fast
+  mcsgc8t-rolling-lifecycle-fast
   mcsgc8t-parallel-gc-control
   mcsgc8t-parallel-gc-inode-share
   mcsgc8t-parallel-gc-dnode-safe
@@ -226,6 +228,24 @@ case "${configuration}" in
         expected_branch=exp/diagnostic-mcsgc8t-rolling-supply-20260819
         prepare_configuration=mcsgc8t-rolling-supply
         test_mode=diagnostic-mcsgc8t-rolling-supply-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-conflict-aware-lifecycle-fast)
+        expected_branch=exp/diagnostic-mcsgc8t-conflict-aware-lifecycle-fast-20260825
+        prepare_configuration=mcsgc8t-conflict-aware-lifecycle-fast
+        test_mode=diagnostic-mcsgc8t-conflict-aware-lifecycle-fast-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        ;;
+    mcsgc8t-rolling-lifecycle-fast)
+        expected_branch=exp/diagnostic-mcsgc8t-rolling-lifecycle-fast-20260825
+        prepare_configuration=mcsgc8t-rolling-lifecycle-fast
+        test_mode=diagnostic-mcsgc8t-rolling-lifecycle-fast-csgc
         expected_production=1
         expected_move_plan=1
         expected_fast_unsafe=1

@@ -40,6 +40,10 @@ Configurations:
                         Conflict-aware staggered section supply
   mcsgc8t-rolling-supply
                         Depth-two rolling conflict-aware section supply
+  mcsgc8t-conflict-aware-lifecycle-fast
+                        Conflict-aware supply with low-overhead lifecycle fix
+  mcsgc8t-rolling-lifecycle-fast
+                        Rolling supply with low-overhead lifecycle fix
   mcsgc8t-parallel-gc-control
                         Parallel-GC diagnostic control module
   mcsgc8t-parallel-gc-inode-share
@@ -106,6 +110,12 @@ case "$1" in
         ;;
     mcsgc8t-rolling-supply)
         expected_branch=exp/diagnostic-mcsgc8t-rolling-supply-20260819
+        ;;
+    mcsgc8t-conflict-aware-lifecycle-fast)
+        expected_branch=exp/diagnostic-mcsgc8t-conflict-aware-lifecycle-fast-20260825
+        ;;
+    mcsgc8t-rolling-lifecycle-fast)
+        expected_branch=exp/diagnostic-mcsgc8t-rolling-lifecycle-fast-20260825
         ;;
     mcsgc8t-parallel-gc-control)
         expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-control-20260821
