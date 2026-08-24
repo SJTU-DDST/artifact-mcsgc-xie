@@ -255,7 +255,9 @@ ensure_exact_host_worktree() {
     local tree
     local status_line path
 
-    git -C "${host_repo}" fetch --prune origin
+    # Callers capture stdout as the resolved path, so all Git diagnostics must
+    # stay off stdout.
+    git -C "${host_repo}" fetch --quiet --prune origin >&2
     git -C "${host_repo}" show-ref --verify --quiet \
         "refs/remotes/origin/${branch}" \
         || die "required remote Host branch is unavailable: origin/${branch}"
@@ -268,7 +270,7 @@ ensure_exact_host_worktree() {
         [ "$(git -C "${host_repo}" rev-parse "${branch_ref}")" = "${commit}" ] \
             || die "local Host branch does not point to pinned commit: ${branch}"
     else
-        git -C "${host_repo}" branch --track "${branch}" "origin/${branch}" \
+        git -C "${host_repo}" branch --track "${branch}" "origin/${branch}" >&2 \
             || die "failed to create local Host branch ${branch}"
         [ "$(git -C "${host_repo}" rev-parse "${branch_ref}")" = "${commit}" ] \
             || die "remote Host branch does not point to pinned commit: ${branch}"
@@ -289,7 +291,8 @@ ensure_exact_host_worktree() {
     if [ "${#matches[@]}" -eq 0 ]; then
         [ ! -e "${preferred_path}" ] \
             || die "preferred Host worktree path already exists: ${preferred_path}"
-        git -C "${host_repo}" worktree add "${preferred_path}" "${branch}"
+        git -C "${host_repo}" worktree add --quiet \
+            "${preferred_path}" "${branch}" >&2
         tree=${preferred_path}
     elif [ "${#matches[@]}" -eq 1 ]; then
         tree=${matches[0]}
