@@ -127,11 +127,10 @@ tmux new -s csgc-reproduce-original
 ./run_best_performance_reproduction.sh original
 ```
 
-不要在最外层加 `sudo`。脚本会自行获取 sudo，并要求输入：
-
-```text
-DESTROY /dev/nvme0n1
-```
+不要在最外层加 `sudo`。脚本会自行获取 sudo。
+启动 `original` 子命令即表示授权脚本连续重置并覆盖 `/dev/nvme0n1`
+两次。脚本会打印破坏性警告，但不会再停下来要求交互确认。若脚本在实验开始前
+退出，重新执行同一命令会继续已有 batch；已经完整记录的子实验会被自动跳过。
 
 脚本自动执行：
 
@@ -187,6 +186,10 @@ cd /home/xin/artifact-csgc/host/benchmarks/scripts
 tmux new -s csgc-reproduce-best
 ./run_best_performance_reproduction.sh best
 ```
+
+启动 `best` 子命令同样表示授权脚本连续重置并覆盖 `/dev/nvme0n1` 两次，
+不会出现额外的交互确认。若阶段中断，修复环境后重新执行同一命令即可接续，
+已经完整记录的子实验不会重复运行。
 
 脚本会自动找到上一步未完成的 batch，然后：
 

@@ -48,7 +48,8 @@ Commands:
   status     Show the active or most recently completed batch.
 
 Run this script as the normal login user, not through sudo. It requests sudo
-itself. Each benchmark resets, formats, and overwrites /dev/nvme0n1.
+itself. Invoking original or best authorizes that phase to reset, format, and
+overwrite /dev/nvme0n1 twice without an additional confirmation prompt.
 EOF
 }
 
@@ -142,17 +143,14 @@ check_common_prerequisites() {
         || die "at least 15 GiB free space is required for logs"
 }
 
-confirm_destructive_phase() {
+announce_destructive_phase() {
     local phase=$1
-    local confirmation
 
     echo
     echo "DESTRUCTIVE WARNING"
     echo "Phase '${phase}' resets and overwrites /dev/nvme0n1 twice."
     echo "All filesystem data on this namespace will be lost."
-    read -r -p "Type 'DESTROY /dev/nvme0n1' to continue: " confirmation
-    [ "${confirmation}" = "DESTROY /dev/nvme0n1" ] \
-        || die "confirmation did not match; no benchmark was started"
+    echo "Starting immediately without an interactive confirmation prompt."
 }
 
 start_sudo_keepalive() {
@@ -467,12 +465,31 @@ record_run() {
     echo "Result directory: ${run_dir}"
 }
 
+run_is_complete() {
+    local label=$1
+    local metrics_file="${batch_dir}/${label}.metrics"
+    local stable_link="${batch_dir}/${label}"
+
+    if [ -s "${metrics_file}" ] && [ -L "${stable_link}" ] \
+        && [ -d "${stable_link}" ]; then
+        return 0
+    fi
+    if [ -e "${metrics_file}" ] || [ -L "${stable_link}" ]; then
+        die "incomplete saved result for ${label}; inspect ${batch_dir}"
+    fi
+    return 1
+}
+
 run_original_one() {
     local workload=$1
     local label="original-csgc-${workload}"
     local started_epoch
     local run_dir
 
+    if run_is_complete "${label}"; then
+        echo "Skipping completed run: ${label}"
+        return 0
+    fi
     verify_openssd_source "${original_ssd_branch}" "${original_ssd_commit}" \
         "${label}"
     started_epoch=$(date +%s)
@@ -487,6 +504,10 @@ run_best_one() {
     local result_path_file="${batch_dir}/${label}.result-path"
     local run_dir
 
+    if run_is_complete "${label}"; then
+        echo "Skipping completed run: ${label}"
+        return 0
+    fi
     verify_openssd_source "${best_ssd_branch}" "${best_ssd_commit}" "${label}"
     sudo env GC_BREAKDOWN_RESULT_PATH_FILE="${result_path_file}" \
         "${diagnostic_runner}" mcsgc8t-conflict-aware-supply "${workload}"
@@ -545,7 +566,23 @@ initialize_batch() {
     if [ -s "${active_batch_file}" ]; then
         local existing
         existing=$(<"${active_batch_file}")
-        die "an unfinished batch already exists: ${existing}; run status first"
+        [ -d "${existing}" ] \
+            || die "active batch directory is missing: ${existing}"
+        [ "$(read_state "${existing}/state")" = "running-original" ] \
+            || die "active batch is not in the original phase: ${existing}"
+        batch_dir=${existing}
+        manifest="${batch_dir}/manifest.txt"
+        [ -s "${manifest}" ] || die "active batch manifest is missing: ${manifest}"
+        {
+            printf '\noriginal_phase_resumed_at=%s\n' "$(date --iso-8601=seconds)"
+            printf 'resumed_artifact_branch=%s\n' \
+                "$(git -C "${artifact_repo}" branch --show-current)"
+            printf 'resumed_artifact_commit=%s\n' \
+                "$(git -C "${artifact_repo}" rev-parse HEAD)"
+            printf 'resumed_script_sha256=%s\n' \
+                "$(sha256sum "${script_path}" | awk '{print $1}')"
+        } >> "${manifest}"
+        return 0
     fi
 
     batch_id=$(date +"%Y%m%d_%H%M%S")
@@ -567,13 +604,21 @@ initialize_batch() {
 }
 
 resume_batch_for_best() {
+    local state
+
     [ -s "${active_batch_file}" ] \
         || die "no active original phase exists; run the original phase first"
     batch_dir=$(<"${active_batch_file}")
     [ -d "${batch_dir}" ] || die "active batch directory is missing: ${batch_dir}"
     manifest="${batch_dir}/manifest.txt"
-    [ "$(read_state "${batch_dir}/state")" = "awaiting-best-firmware" ] \
-        || die "batch is not ready for the best phase: $(read_state "${batch_dir}/state")"
+    state=$(read_state "${batch_dir}/state")
+    case "${state}" in
+        awaiting-best-firmware|running-best)
+            ;;
+        *)
+            die "batch is not ready for the best phase: ${state}"
+            ;;
+    esac
     for required in \
         original-csgc-bigfile.metrics \
         original-csgc-smallfile.metrics; do
@@ -587,7 +632,7 @@ run_original_phase() {
     initialize_batch
     exec > >(tee -a "${batch_dir}/original-phase-console.log") 2>&1
     echo "Batch directory: ${batch_dir}"
-    confirm_destructive_phase original
+    announce_destructive_phase original
     start_sudo_keepalive
     verify_openssd_source "${original_ssd_branch}" "${original_ssd_commit}" \
         original-preflight
@@ -610,7 +655,7 @@ run_best_phase() {
     resume_batch_for_best
     exec > >(tee -a "${batch_dir}/best-phase-console.log") 2>&1
     echo "Resuming batch: ${batch_dir}"
-    confirm_destructive_phase best
+    announce_destructive_phase best
     start_sudo_keepalive
     verify_openssd_source "${best_ssd_branch}" "${best_ssd_commit}" best-preflight
     prepare_best_host
