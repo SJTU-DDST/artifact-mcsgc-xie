@@ -200,13 +200,13 @@ ensure_exact_host_worktree() {
         fi
         [ ! -e "${preferred_path}" ] \
             || die "preferred Host worktree path already exists: ${preferred_path}"
-        git -C "${host_repo}" worktree add --quiet --detach \
-            "${preferred_path}" "${commit}"
+        git -C "${host_repo}" worktree add --quiet --force \
+            "${preferred_path}" "${branch}"
         tree=${preferred_path}
     elif [ "${#live_matches[@]}" -eq 1 ]; then
         tree=${live_matches[0]}
     else
-        die "more than one worktree claims Host branch ${branch}"
+        die "more than one live worktree claims Host branch ${branch}"
     fi
 
     [ "$(git -C "${tree}" rev-parse HEAD)" = "${commit}" ] \
