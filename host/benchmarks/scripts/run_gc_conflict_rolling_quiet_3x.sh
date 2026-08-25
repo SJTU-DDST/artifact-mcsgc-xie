@@ -36,12 +36,12 @@ declare -A branches=(
     [rolling-final]=exp/formal-mcsgc8t-rolling-lifecycle-quiet-20260825
 )
 declare -A commits=(
-    [conflict-aware]=972958bd18a61516ee2cee2218a8d46bb746fa98
-    [rolling-final]=9575a1f861278b91afdbf0d3e60324e571b2430e
+    [conflict-aware]=25bd2e365a37c0ec159e1b9a0aab6f94c1d8df26
+    [rolling-final]=ed3f5afadd70c4a3a35d5eb15f1a39fb8058f58f
 )
 declare -A base_commits=(
-    [conflict-aware]=76e57c02caeafd4e27ad488b51c3385dfb9973c6
-    [rolling-final]=441f1b1f6449e4f9ea2e2b35c401669a9e29b4d3
+    [conflict-aware]=972958bd18a61516ee2cee2218a8d46bb746fa98
+    [rolling-final]=9575a1f861278b91afdbf0d3e60324e571b2430e
 )
 declare -A runner_configs=(
     [conflict-aware]=mcsgc8t-conflict-aware-lifecycle-quiet
@@ -63,8 +63,8 @@ usage() {
 Usage: ./$(basename -- "${script_path}") [--dry-run]
 
 Builds these pinned quiet lifecycle-fixed Host revisions once:
-  conflict-aware  972958bd18a61516ee2cee2218a8d46bb746fa98
-  rolling-final   9575a1f861278b91afdbf0d3e60324e571b2430e
+  conflict-aware  25bd2e365a37c0ec159e1b9a0aab6f94c1d8df26
+  rolling-final   ed3f5afadd70c4a3a35d5eb15f1a39fb8058f58f
 
 It first executes all six smallfile runs, then all six bigfile runs. Each
 revision and workload is repeated three times, for 12 destructive benchmarks
@@ -157,6 +157,7 @@ ensure_exact_host_worktree() {
     local branch_ref="refs/heads/${branch}"
     local worktree_output
     local -a matches
+    local -a live_matches=()
     local tree
     local status_line
     local path
@@ -187,13 +188,23 @@ ensure_exact_host_worktree() {
         ' <<< "${worktree_output}"
     )
 
-    if [ "${#matches[@]}" -eq 0 ]; then
+    for path in "${matches[@]}"; do
+        if [ -d "${path}" ]; then
+            live_matches+=("${path}")
+        fi
+    done
+
+    if [ "${#live_matches[@]}" -eq 0 ]; then
+        if [ "${#matches[@]}" -gt 0 ]; then
+            preferred_path="${preferred_path}-${batch_id}"
+        fi
         [ ! -e "${preferred_path}" ] \
             || die "preferred Host worktree path already exists: ${preferred_path}"
-        git -C "${host_repo}" worktree add --quiet "${preferred_path}" "${branch}"
+        git -C "${host_repo}" worktree add --quiet --detach \
+            "${preferred_path}" "${commit}"
         tree=${preferred_path}
-    elif [ "${#matches[@]}" -eq 1 ]; then
-        tree=${matches[0]}
+    elif [ "${#live_matches[@]}" -eq 1 ]; then
+        tree=${live_matches[0]}
     else
         die "more than one worktree claims Host branch ${branch}"
     fi
