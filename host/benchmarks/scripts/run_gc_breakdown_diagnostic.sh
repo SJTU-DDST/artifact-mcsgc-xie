@@ -41,6 +41,8 @@ Configurations:
   mcsgc8t-rolling-supply
   mcsgc8t-conflict-aware-lifecycle-fast
   mcsgc8t-rolling-lifecycle-fast
+  mcsgc8t-conflict-aware-lifecycle-quiet
+  mcsgc8t-rolling-lifecycle-quiet
   mcsgc8t-parallel-gc-control
   mcsgc8t-parallel-gc-inode-share
   mcsgc8t-parallel-gc-dnode-safe
@@ -65,6 +67,7 @@ fi
 
 configuration=$1
 workload=${2:-bigfile}
+diagnostic_workload_stats=1
 
 case "${workload}" in
     bigfile)
@@ -251,6 +254,26 @@ case "${configuration}" in
         expected_fast_unsafe=1
         run_breakdown_parser=0
         ;;
+    mcsgc8t-conflict-aware-lifecycle-quiet)
+        expected_branch=exp/formal-mcsgc8t-conflict-aware-lifecycle-quiet-20260825
+        prepare_configuration=mcsgc8t-conflict-aware-lifecycle-quiet
+        test_mode=formal-mcsgc8t-conflict-aware-lifecycle-quiet-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        diagnostic_workload_stats=0
+        ;;
+    mcsgc8t-rolling-lifecycle-quiet)
+        expected_branch=exp/formal-mcsgc8t-rolling-lifecycle-quiet-20260825
+        prepare_configuration=mcsgc8t-rolling-lifecycle-quiet
+        test_mode=formal-mcsgc8t-rolling-lifecycle-quiet-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        diagnostic_workload_stats=0
+        ;;
     mcsgc8t-parallel-gc-control)
         expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-control-20260821
         prepare_configuration=mcsgc8t-parallel-gc-control
@@ -382,7 +405,7 @@ export CSGC_EXPECTED_SSD_THREAD_MODE=ssd1t
 export CSGC_EXPECTED_OPENSSD_PRODUCTION_PERFORMANCE="${expected_production}"
 export CSGC_EXPECTED_MOVE_PLAN_V2="${expected_move_plan}"
 export CSGC_EXPECTED_MOVE_PLAN_FAST_UNSAFE="${expected_fast_unsafe}"
-export collect_diagnostic_workload_stats=1
+export collect_diagnostic_workload_stats=${diagnostic_workload_stats}
 export csgc_proactive_profile=${proactive_profile:-none}
 export FORMAL_HOST_BRANCH="${actual_branch}"
 export FORMAL_HOST_COMMIT="${host_commit}"

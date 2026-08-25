@@ -44,6 +44,10 @@ Configurations:
                         Conflict-aware supply with low-overhead lifecycle fix
   mcsgc8t-rolling-lifecycle-fast
                         Rolling supply with low-overhead lifecycle fix
+  mcsgc8t-conflict-aware-lifecycle-quiet
+                        Quiet conflict-aware lifecycle-fixed module
+  mcsgc8t-rolling-lifecycle-quiet
+                        Quiet rolling lifecycle-fixed module
   mcsgc8t-parallel-gc-control
                         Parallel-GC diagnostic control module
   mcsgc8t-parallel-gc-inode-share
@@ -116,6 +120,12 @@ case "$1" in
         ;;
     mcsgc8t-rolling-lifecycle-fast)
         expected_branch=exp/diagnostic-mcsgc8t-rolling-lifecycle-fast-20260825
+        ;;
+    mcsgc8t-conflict-aware-lifecycle-quiet)
+        expected_branch=exp/formal-mcsgc8t-conflict-aware-lifecycle-quiet-20260825
+        ;;
+    mcsgc8t-rolling-lifecycle-quiet)
+        expected_branch=exp/formal-mcsgc8t-rolling-lifecycle-quiet-20260825
         ;;
     mcsgc8t-parallel-gc-control)
         expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-control-20260821
