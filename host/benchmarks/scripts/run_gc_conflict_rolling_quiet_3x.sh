@@ -36,12 +36,12 @@ declare -A branches=(
     [rolling-final]=exp/formal-mcsgc8t-rolling-lifecycle-quiet-20260825
 )
 declare -A commits=(
-    [conflict-aware]=25bd2e365a37c0ec159e1b9a0aab6f94c1d8df26
-    [rolling-final]=ed3f5afadd70c4a3a35d5eb15f1a39fb8058f58f
+    [conflict-aware]=9f432d2fa2a4a665f99e55562b903a74008da873
+    [rolling-final]=e94392029fbdabca386b0b2be3300be84ea90324
 )
 declare -A base_commits=(
-    [conflict-aware]=972958bd18a61516ee2cee2218a8d46bb746fa98
-    [rolling-final]=9575a1f861278b91afdbf0d3e60324e571b2430e
+    [conflict-aware]=25bd2e365a37c0ec159e1b9a0aab6f94c1d8df26
+    [rolling-final]=ed3f5afadd70c4a3a35d5eb15f1a39fb8058f58f
 )
 declare -A runner_configs=(
     [conflict-aware]=mcsgc8t-conflict-aware-lifecycle-quiet
@@ -63,8 +63,8 @@ usage() {
 Usage: ./$(basename -- "${script_path}") [--dry-run]
 
 Builds these pinned quiet lifecycle-fixed Host revisions once:
-  conflict-aware  25bd2e365a37c0ec159e1b9a0aab6f94c1d8df26
-  rolling-final   ed3f5afadd70c4a3a35d5eb15f1a39fb8058f58f
+  conflict-aware  9f432d2fa2a4a665f99e55562b903a74008da873
+  rolling-final   e94392029fbdabca386b0b2be3300be84ea90324
 
 It first executes all six smallfile runs, then all six bigfile runs. Each
 revision and workload is repeated three times, for 12 destructive benchmarks
