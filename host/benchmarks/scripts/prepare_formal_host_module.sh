@@ -6,6 +6,26 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 host_repo=/home/xin/work-xie/mcsgc-real/linux-cs
 source "${script_dir}/formal_host_worktree.sh"
 
+# Generate the architecture headers required by an out-of-tree module build.
+prepare_kernel_build_tree() {
+    local header
+    local -a required_headers=(
+        arch/x86/include/generated/asm/rwonce.h
+        arch/x86/include/generated/asm/unaligned.h
+        arch/x86/include/generated/uapi/asm/types.h
+    )
+
+    echo "Preparing kernel build metadata in ${host_tree}"
+    make -s prepare modules_prepare LOCALVERSION=-csgcmt
+
+    for header in "${required_headers[@]}"; do
+        if [ ! -r "${header}" ]; then
+            echo "ERROR: required generated header is unavailable: ${header}" >&2
+            return 1
+        fi
+    done
+}
+
 usage() {
     cat <<'EOF'
 Usage: ./prepare_formal_host_module.sh <configuration>
@@ -65,6 +85,7 @@ if ! grep -q '^CONFIG_F2FS_STAT_FS=y$' .config; then
     echo "ERROR: failed to enable CONFIG_F2FS_STAT_FS" >&2
     exit 1
 fi
+prepare_kernel_build_tree
 
 echo "Building formal Host module from ${actual_branch}"
 sudo ./build_f2fs.sh
