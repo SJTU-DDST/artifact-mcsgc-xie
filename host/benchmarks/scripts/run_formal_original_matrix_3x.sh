@@ -280,30 +280,149 @@ formal_output_root() {
     esac
 }
 
+# Return the result-directory pattern generated for one formal workload.
+formal_run_dir_pattern() {
+    case "$1" in
+        smallfile)
+            printf '%s\n' 'fio_rw16t26336file_*'
+            ;;
+        bigfile)
+            printf '%s\n' 'fio_randwrite_*'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Return the fio job name recorded in the aggregate JSON result.
+formal_fio_job_name() {
+    case "$1" in
+        smallfile)
+            printf '%s\n' 'pipeline_partitioned_randwrite'
+            ;;
+        bigfile)
+            printf '%s\n' 'randwrite'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Return the measured-window identifiers emitted to the kernel log.
+formal_kernel_marker_fields() {
+    local configuration=$1
+    local workload=$2
+    local mode
+    local workload_name
+
+    case "${configuration}" in
+        original-csgc)
+            mode=cs
+            ;;
+        original-ori)
+            mode=ori
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    case "${workload}" in
+        smallfile)
+            workload_name=rw16t26336file
+            ;;
+        bigfile)
+            workload_name=randwrite
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    printf '%s\t%s\n' "${mode}" "${workload_name}"
+}
+
 # Find the only result directory created by the just-completed formal run.
 find_new_formal_run() {
     local configuration=$1
-    local started_epoch=$2
+    local workload=$2
+    local start_marker=$3
     local root
+    local run_pattern
     local top
+    local -a top_dirs
     local -a run_dirs
 
     root=$(formal_output_root "${configuration}") \
         || die "unsupported formal configuration: ${configuration}"
-    top=$(
+    run_pattern=$(formal_run_dir_pattern "${workload}") \
+        || die "unsupported formal workload: ${workload}"
+    [ -e "${start_marker}" ] \
+        || die "run start marker is missing: ${start_marker}"
+    mapfile -t top_dirs < <(
         find "${root}" -mindepth 1 -maxdepth 1 -type d \
-            -printf '%T@ %p\n' 2>/dev/null \
-            | sort -nr | head -n 1 | cut -d' ' -f2- || true
+            -newer "${start_marker}" -print 2>/dev/null
     )
-    [ -n "${top}" ] || die "failed to locate output for ${configuration}"
-    [ "$(stat -c %Y "${top}")" -ge "${started_epoch}" ] \
-        || die "the formal runner did not create a new output directory"
+    [ "${#top_dirs[@]}" -eq 1 ] \
+        || die "expected one new output for ${configuration}, found ${#top_dirs[@]}"
+    top=${top_dirs[0]}
     mapfile -t run_dirs < <(
-        find "${top}" -mindepth 1 -maxdepth 1 -type d -name 'fio_*' -print
+        find "${top}" -mindepth 1 -maxdepth 1 -type d \
+            -name "${run_pattern}" -print
     )
     [ "${#run_dirs[@]}" -eq 1 ] \
-        || die "expected one fio result under ${top}, found ${#run_dirs[@]}"
+        || die "expected one ${workload} result under ${top}, found ${#run_dirs[@]}"
     printf '%s\n' "${run_dirs[0]}"
+}
+
+# Require exactly one fixed marker in a completed run log.
+require_single_marker() {
+    local input=$1
+    local marker=$2
+    local description=$3
+    local count
+
+    count=$(grep -Fc -- "${marker}" "${input}" || true)
+    [ "${count}" -eq 1 ] \
+        || die "expected one ${description} in ${input}, found ${count}"
+}
+
+# Validate the local artifacts that prove one synchronous test.sh invocation
+# reached a successful measured-fio boundary and returned normally.
+validate_completed_run() {
+    local run_dir=$1
+    local configuration=$2
+    local workload=$3
+    local terminal_log="${run_dir}/terminal.log"
+    local fio_log="${run_dir}/fio.log"
+    local dmesg_log="${run_dir}/dmesg.log"
+    local marker_fields
+    local kernel_mode
+    local kernel_workload
+
+    [ -s "${terminal_log}" ] \
+        || die "terminal log is missing: ${terminal_log}"
+    [ -s "${fio_log}" ] || die "fio log is missing: ${fio_log}"
+    [ -s "${dmesg_log}" ] || die "kernel log is missing: ${dmesg_log}"
+
+    require_single_marker "${terminal_log}" \
+        "Formal Host commit: ${host_commit}" "pinned Host commit record"
+    require_single_marker "${terminal_log}" \
+        "Formal f2fs module SHA-256: ${module_sha256}" \
+        "compiled module hash record"
+    require_single_marker "${terminal_log}" \
+        '=============end fio=============' "terminal completion marker"
+
+    marker_fields=$(formal_kernel_marker_fields \
+        "${configuration}" "${workload}") \
+        || die "failed to resolve measured-fio marker fields"
+    IFS=$'\t' read -r kernel_mode kernel_workload <<< "${marker_fields}"
+    require_single_marker "${dmesg_log}" \
+        "MEASURED_FIO_START mode=${kernel_mode} workload=${kernel_workload}" \
+        "measured-fio start marker"
+    require_single_marker "${dmesg_log}" \
+        "MEASURED_FIO_END mode=${kernel_mode} workload=${kernel_workload} status=0" \
+        "successful measured-fio end marker"
 }
 
 # Reject a completed run containing a high-confidence kernel failure.
@@ -324,13 +443,15 @@ check_kernel_anomalies() {
 # pattern matching.
 extract_fio_metrics() {
     local run_dir=$1
+    local expected_job_name=$2
 
-    python3 - "${run_dir}/fio.log" <<'PY'
+    python3 - "${run_dir}/fio.log" "${expected_job_name}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 fio_path = Path(sys.argv[1])
+expected_job_name = sys.argv[2]
 text = fio_path.read_text(errors="replace")
 json_start = text.find("{")
 if json_start < 0:
@@ -343,6 +464,12 @@ except json.JSONDecodeError as error:
 jobs = document.get("jobs", [])
 if not jobs:
     raise SystemExit(f"fio jobs are missing: {fio_path}")
+job_names = {str(job.get("jobname", "")) for job in jobs}
+if job_names != {expected_job_name}:
+    raise SystemExit(
+        f"unexpected fio jobs {sorted(job_names)}; "
+        f"expected {expected_job_name}: {fio_path}"
+    )
 errors = [int(job.get("error", 0)) for job in jobs]
 if any(errors):
     raise SystemExit(f"fio reported job errors {errors}: {fio_path}")
@@ -370,8 +497,9 @@ run_one() {
     local configuration=$3
     local workload=$4
     local label
-    local started_epoch
+    local start_marker
     local run_dir
+    local expected_job_name
     local metrics
     local bw_mib_s
     local iops
@@ -397,23 +525,18 @@ run_one() {
     echo "============================================================"
 
     openssd_provenance=$(verify_openssd_provenance)
-    started_epoch=$(date +%s)
+    start_marker="${batch_dir}/${label}.start-marker"
+    : > "${start_marker}"
     sudo -n "${runner}" "${configuration}" "${workload}"
-    run_dir=$(find_new_formal_run "${configuration}" "${started_epoch}")
+    run_dir=$(find_new_formal_run \
+        "${configuration}" "${workload}" "${start_marker}")
 
-    [ -s "${run_dir}/fio.log" ] || die "fio log is missing: ${run_dir}/fio.log"
-    [ -s "${run_dir}/terminal.log" ] \
-        || die "terminal log is missing: ${run_dir}/terminal.log"
-    grep -Fq "Formal Host commit: ${host_commit}" "${run_dir}/terminal.log" \
-        || die "result does not record the pinned Host commit"
-    grep -Fq "Formal f2fs module SHA-256: ${module_sha256}" \
-        "${run_dir}/terminal.log" \
-        || die "result does not record the compiled module hash"
-    grep -Fq 'Test script completed.' "${run_dir}/terminal.log" \
-        || die "formal runner did not reach its completion marker"
+    validate_completed_run "${run_dir}" "${configuration}" "${workload}"
     check_kernel_anomalies "${run_dir}"
 
-    metrics=$(extract_fio_metrics "${run_dir}") \
+    expected_job_name=$(formal_fio_job_name "${workload}") \
+        || die "unsupported formal workload: ${workload}"
+    metrics=$(extract_fio_metrics "${run_dir}" "${expected_job_name}") \
         || die "failed to extract fio metrics for ${label}"
     IFS=$'\t' read -r bw_mib_s iops runtime_s io_gib fio_error <<< "${metrics}"
     [ "${fio_error}" = "0" ] || die "fio reported error=${fio_error}"
