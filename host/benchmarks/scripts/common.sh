@@ -215,6 +215,12 @@ setup_cgroup_mem() {
     fi
 }
 
+# Run the original prefill writer with only the privileges needed by the mount.
+run_prefill_writer() {
+    sudo timeout --signal=TERM --kill-after=30s 1800s \
+        "${FILE_WRITER_DIR}/file_writer" "$@"
+}
+
 prefill_storage_fio() {
     local devpath=$1
     local mntpoint=$2
@@ -236,7 +242,8 @@ prefill_storage_fio() {
 
     echo "Prefilling storage, ratio=${prefill_ratio}, size=${prefill_size_human}"
     ${FILE_WRITER_DIR}/build.sh
-    ${FILE_WRITER_DIR}/file_writer ${mntpoint} testbigfile 1 ${prefill_size} ${prefill_threads} ${prefill_io_size} ${prefill_mode} ${prefill_use_fallocate}
+    run_prefill_writer "${mntpoint}" testbigfile 1 "${prefill_size}" \
+        "${prefill_threads}" "${prefill_io_size}" "${prefill_mode}" "${prefill_use_fallocate}"
     echo "Prefilled storage, size: <${prefill_size}>"
 }
 
@@ -262,6 +269,7 @@ prefill_storage_ycsb() {
     
     echo "Prefilling storage, ratio=${prefill_ratio}, size=${prefill_size_human}"
     ${FILE_WRITER_DIR}/build.sh
-    ${FILE_WRITER_DIR}/file_writer ${mntpoint} testbigfile ${prefill_numfiles} ${prefill_size} ${prefill_threads} ${prefill_io_size} ${prefill_mode} ${prefill_use_fallocate}
+    run_prefill_writer "${mntpoint}" testbigfile "${prefill_numfiles}" "${prefill_size}" \
+        "${prefill_threads}" "${prefill_io_size}" "${prefill_mode}" "${prefill_use_fallocate}"
     echo "Prefilled storage, size: <${prefill_size}>"
 }
