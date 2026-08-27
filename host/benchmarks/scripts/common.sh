@@ -88,7 +88,9 @@ load_f2fs_module() {
 prepare_device() {
     local devpath=$1
     local output_dir=$2
-    sudo umount "${devpath}" >/dev/null
+    if findmnt -rn -S "${devpath}" >/dev/null; then
+        sudo umount "${devpath}"
+    fi
     sudo dmesg -c > "${output_dir}/dmesg.old"
 }
 
@@ -123,10 +125,14 @@ umount_and_get_stat() {
     sleep ${wait_time}
     
     if [ "$gc_mode" != "iplfs" ]; then
-        echo "csgc status:" `cat ${DEBUGFS_PATH}/csgc_status`
+        if [ -r "${DEBUGFS_PATH}/csgc_status" ]; then
+            echo "csgc status: $(cat "${DEBUGFS_PATH}/csgc_status")"
+        else
+            echo "csgc status: unavailable"
+        fi
 
         echo "umount device"
-        sudo umount ${devpath}
+        sudo umount "${devpath}"
 
         dmesg | grep -E '<ORIGC STAT>' | tee -a ${output_path}
         dmesg | grep -E '<CSGC STAT>' | tee -a ${output_path}
@@ -139,7 +145,7 @@ umount_and_get_stat() {
         dmesg | grep -oE 'f2fs gc data page hit count: [0-9]+, total req count: [0-9]+' | tee -a ${output_path}
     else
         echo "umount device"
-        sudo umount ${devpath}
+        sudo umount "${devpath}"
     fi
 
     get_ssd_stat "${devpath}" "${output_path}"
@@ -159,6 +165,7 @@ mkfs_and_mount() {
         segs_per_sec=1
         discard_option="discard"
     fi
+    sudo mkdir -p "${mntpoint}"
     echo "Formatting filesystem with segs_per_sec=${segs_per_sec}"
     sudo mkfs.f2fs -f -s "${segs_per_sec}" "${devpath}"
     if [ $ssd_enable_l2p -eq 2 ]; then # csgc, need to send fs-ready signal and mkfs again
@@ -258,4 +265,3 @@ prefill_storage_ycsb() {
     ${FILE_WRITER_DIR}/file_writer ${mntpoint} testbigfile ${prefill_numfiles} ${prefill_size} ${prefill_threads} ${prefill_io_size} ${prefill_mode} ${prefill_use_fallocate}
     echo "Prefilled storage, size: <${prefill_size}>"
 }
-

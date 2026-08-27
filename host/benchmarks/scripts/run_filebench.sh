@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -uo pipefail
+
 source ./common.sh
 mntpoint=${MNTPOINT}
 
@@ -21,7 +23,7 @@ output_path=${output_path_base}/${workload_type}_${bmname}_s${segs_per_sec}
 mkdir -p ${output_path}
 
 echo 0 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
-echo 20 > /proc/sys/kernel/panic # dont panic! wait 20s before reboot if kernel panics
+echo 20 | sudo tee /proc/sys/kernel/panic > /dev/null
 
 # load_f2fs_module $gc_mode
 install_f2fs_tools $gc_mode
@@ -33,18 +35,19 @@ setup_cgroup_mem "${use_cgroup}" "${host_mem_usage}"
 
 echo "======================================================="
 
-tmp_workload_path="${WORKLOAD_PATH_BASE}/${workload_type}/${bmname}_tmp.f"
-cp ${workload_path} ${tmp_workload_path}
-sed -i "s|__DATA_PATH_PLACEHOLDER__|${mntpoint}|g" ${tmp_workload_path}
-sed -i "s|__RUNTIME_PLACEHOLDER__|${runtime}|g" ${tmp_workload_path}
+tmp_workload_path="${output_path}/${bmname}.resolved.f"
+cp "${workload_path}" "${tmp_workload_path}"
+sed -i "s|__DATA_PATH_PLACEHOLDER__|${mntpoint}|g" "${tmp_workload_path}"
+sed -i "s|__RUNTIME_PLACEHOLDER__|${runtime}|g" "${tmp_workload_path}"
 
 reset_ssd_stat "${devpath}"
+filebench_status=0
 if [ ${use_cgroup} -eq 1 ]; then
-    sudo cgexec -g memory:${CGROUP_NAME} filebench -f ${tmp_workload_path} \
-    2>&1 | tee -a ${output_path}/${workload_type}.log
+    sudo cgexec -g memory:${CGROUP_NAME} filebench -f "${tmp_workload_path}" \
+    2>&1 | tee -a "${output_path}/${workload_type}.log" || filebench_status=$?
 else
-    filebench -f ${tmp_workload_path} \
-    2>&1 | tee -a ${output_path}/${workload_type}.log
+    filebench -f "${tmp_workload_path}" \
+    2>&1 | tee -a "${output_path}/${workload_type}.log" || filebench_status=$?
 fi
 echo "======================================================="
 
@@ -56,7 +59,15 @@ if [ ${fsck_after_run} -ne 0 ]; then
     echo "finished fsck"
 fi
 
-rm ${tmp_workload_path}
-chown -R $(whoami):$(whoami) ${output_path}
+chown -R "$(whoami):$(whoami)" "${output_path}"
 
+if [ "${filebench_status}" -ne 0 ]; then
+    echo "ERROR: filebench failed with status ${filebench_status}" >&2
+    exit "${filebench_status}"
+fi
+
+if ! grep -q 'IO Summary:' "${output_path}/${workload_type}.log"; then
+    echo "ERROR: filebench log has no IO Summary" >&2
+    exit 1
+fi
 

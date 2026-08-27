@@ -1,7 +1,27 @@
 #!/bin/bash
 
+set -uo pipefail
+
 source ./common.sh
 YCSB_DIR=../ycsb-0.17.0
+
+mysql_started=0
+
+# Stop MySQL and release the benchmark mount after an early userspace failure.
+cleanup_ycsb() {
+    local status=$?
+
+    if [ "${mysql_started}" -eq 1 ] || systemctl is-active --quiet mysql; then
+        sudo systemctl stop mysql >/dev/null 2>&1 || true
+    fi
+    if [ "${status}" -ne 0 ] && [ -n "${devpath:-}" ] \
+        && findmnt -rn -S "${devpath}" >/dev/null; then
+        sudo umount "${devpath}" >/dev/null 2>&1 || true
+    fi
+    exit "${status}"
+}
+
+trap cleanup_ycsb EXIT
 
 if [ $light_evaluation -eq 1 ]; then
     operationcount=1000000  # 1M
@@ -23,7 +43,7 @@ output_path=${output_path_base}/${workload_type}_${bmname}_s${segs_per_sec}_${pr
 mkdir -p ${output_path}
 
 echo 0 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
-echo 20 > /proc/sys/kernel/panic # dont panic! wait 20s before reboot if kernel panics
+echo 20 | sudo tee /proc/sys/kernel/panic > /dev/null
 
 # load_f2fs_module $gc_mode
 install_f2fs_tools $gc_mode
@@ -41,8 +61,16 @@ fi
 
 prefill=1
 if [ $prefill -eq 1 ]; then
-    prefill_outputs="$(prefill_storage_ycsb "${devpath}" "${mntpoint}" "${prefill_ratio}" "${gc_mode}")" && echo "${prefill_outputs}"
+    if ! prefill_outputs="$(prefill_storage_ycsb "${devpath}" "${mntpoint}" "${prefill_ratio}" "${gc_mode}")"; then
+        echo "ERROR: YCSB prefill failed" >&2
+        exit 1
+    fi
+    echo "${prefill_outputs}"
     prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
+    if [ -z "${prefill_size}" ]; then
+        echo "ERROR: failed to parse YCSB prefill size" >&2
+        exit 1
+    fi
 fi
 
 # exit 0
@@ -53,11 +81,20 @@ echo "Initializing MySQL: copy mysql data to mntpoint"
 sudo chmod 777 ${mntpoint}
 sudo cp -a /var/lib/mysql ${mntpoint}/mysql
 echo "Start MySQL service..."
+sudo systemctl reset-failed mysql >/dev/null 2>&1 || true
 sudo systemctl start mysql
-if systemctl is-active --quiet mysql; then
+for _ in $(seq 1 60); do
+    if systemctl is-active --quiet mysql && mysqladmin ping --silent >/dev/null 2>&1; then
+        mysql_started=1
+        break
+    fi
+    sleep 1
+done
+if [ "${mysql_started}" -eq 1 ]; then
     echo "Successfully started MySQL service."
 else
     echo "Failed to start MySQL service."
+    sudo journalctl -u mysql -n 80 --no-pager > "${output_path}/mysql-start-failure.log" 2>&1 || true
     exit 1
 fi
 
@@ -80,6 +117,7 @@ USER_DB_NAME="ycsb_db"
 USER_PASSWORD="1111"
 
 echo "Start running ycsb ${bmname}" | tee -a ${output_path}/${workload_type}.log
+ycsb_status=0
 ${YCSB_DIR}/bin/ycsb run jdbc    \
     -P ${workload_path}  \
     -P ${YCSB_DIR}/jdbc-binding/conf/db.properties  \
@@ -90,9 +128,10 @@ ${YCSB_DIR}/bin/ycsb run jdbc    \
     ${workload_property_flags} \
     -threads 36 \
     -s \
-    2>&1 | tee ${output_path}/${workload_type}.log
+    2>&1 | tee -a ${output_path}/${workload_type}.log || ycsb_status=$?
 
 sudo systemctl stop mysql
+mysql_started=0
 echo "======================================================="
 
 
@@ -104,6 +143,15 @@ if [ ${fsck_after_run} -ne 0 ]; then
     echo "finished fsck"
 fi
 
-chown -R $(whoami):$(whoami) ${output_path}
+chown -R "$(whoami):$(whoami)" "${output_path}"
 
+if [ "${ycsb_status}" -ne 0 ]; then
+    echo "ERROR: YCSB failed with status ${ycsb_status}" >&2
+    exit "${ycsb_status}"
+fi
+
+if ! grep -q '\[OVERALL\], Throughput(ops/sec)' "${output_path}/${workload_type}.log"; then
+    echo "ERROR: YCSB log has no final throughput" >&2
+    exit 1
+fi
 

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -uo pipefail
+
 source ./common.sh
 mntpoint=${MNTPOINT}
 
@@ -24,7 +26,7 @@ output_path=${output_path_base}/${workload_type}_${bmname}_s${segs_per_sec}_${pr
 mkdir -p ${output_path}
 
 echo 0 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
-echo 20 > /proc/sys/kernel/panic # dont panic! wait 20s before reboot if kernel panics
+echo 20 | sudo tee /proc/sys/kernel/panic > /dev/null
 
 # load_f2fs_module $gc_mode
 install_f2fs_tools $gc_mode
@@ -38,8 +40,16 @@ setup_cgroup_mem "${use_cgroup}" "${host_mem_usage}"
 echo "======================================================="
 # exit 0
 
-prefill_outputs="$(prefill_storage_fio "${devpath}" "${mntpoint}" "${prefill_ratio}" "${gc_mode}")" && echo "${prefill_outputs}"
+if ! prefill_outputs="$(prefill_storage_fio "${devpath}" "${mntpoint}" "${prefill_ratio}" "${gc_mode}")"; then
+    echo "ERROR: fio prefill failed" >&2
+    exit 1
+fi
+echo "${prefill_outputs}"
 prefill_size=$(echo "${prefill_outputs}" | sed -n 's/.*<\([0-9]\+\)>.*$/\1/p')
+if [ -z "${prefill_size}" ]; then
+    echo "ERROR: failed to parse fio prefill size" >&2
+    exit 1
+fi
 
 fio_flags="
     --directory=${mntpoint}
@@ -58,10 +68,13 @@ fi
     
 reset_ssd_stat "${devpath}"
 
+fio_status=0
 if [ ${use_cgroup} -eq 1 ]; then
-    sudo cgexec -g memory:${CGROUP_NAME} fio ${fio_flags} ${runtime_flag} ${workload_path} 2>&1 | tee -a ${output_path}/${workload_type}.log
+    sudo cgexec -g memory:${CGROUP_NAME} fio ${fio_flags} ${runtime_flag} "${workload_path}" \
+        2>&1 | tee -a "${output_path}/${workload_type}.log" || fio_status=$?
 else
-    fio ${fio_flags} ${workload_path} 2>&1 | tee -a ${output_path}/${workload_type}.log
+    fio ${fio_flags} "${workload_path}" \
+        2>&1 | tee -a "${output_path}/${workload_type}.log" || fio_status=$?
 fi
 echo "======================================================="
 
@@ -73,5 +86,14 @@ if [ ${fsck_after_run} -ne 0 ]; then
     echo "finished fsck"
 fi
 
-chown -R $(whoami):$(whoami) ${output_path}
+chown -R "$(whoami):$(whoami)" "${output_path}"
 
+if [ "${fio_status}" -ne 0 ]; then
+    echo "ERROR: fio failed with status ${fio_status}" >&2
+    exit "${fio_status}"
+fi
+
+if ! grep -q 'Run status group' "${output_path}/${workload_type}.log"; then
+    echo "ERROR: fio log has no final run status" >&2
+    exit 1
+fi
