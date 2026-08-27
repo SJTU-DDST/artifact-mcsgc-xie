@@ -261,7 +261,8 @@ validate_case() {
         ycsb)
             log_path="${output_path}/ycsb.log"
             grep -q '\[OVERALL\], Throughput(ops/sec)' "${log_path}"
-            grep -q '\[CLEANUP\], Operations, 1' "${log_path}"
+            grep -q '\[CLEANUP\], Operations, 36' "${log_path}"
+            ! grep -q 'Return=ERROR' "${log_path}"
             ;;
     esac
 

@@ -134,15 +134,15 @@ umount_and_get_stat() {
         echo "umount device"
         sudo umount "${devpath}"
 
-        dmesg | grep -E '<ORIGC STAT>' | tee -a ${output_path}
-        dmesg | grep -E '<CSGC STAT>' | tee -a ${output_path}
+        sudo dmesg | grep -E '<ORIGC STAT>' | tee -a ${output_path}
+        sudo dmesg | grep -E '<CSGC STAT>' | tee -a ${output_path}
         
-        dmesg | grep -oE 'f2fs csgc called [0-9]+ times'
-        dmesg | grep -oE 'f2fs csgc skip count: [0-9]+' | tee -a ${output_path}
-        dmesg | grep -oE 'f2fs csgc data page cached count: [0-9]+, dirty count [0-9]+, hole count: [0-9]+' | tee -a ${output_path}
-        dmesg | grep -oE 'f2fs csgc get dpage time: [0-9]+ ns, grab dpage time: [0-9]+ ns' | tee -a ${output_path}
-        dmesg | grep -oE 'AVG get time: [0-9]+ ns, grab time: [0-9]+ ns' | tee -a ${output_path}
-        dmesg | grep -oE 'f2fs gc data page hit count: [0-9]+, total req count: [0-9]+' | tee -a ${output_path}
+        sudo dmesg | grep -oE 'f2fs csgc called [0-9]+ times'
+        sudo dmesg | grep -oE 'f2fs csgc skip count: [0-9]+' | tee -a ${output_path}
+        sudo dmesg | grep -oE 'f2fs csgc data page cached count: [0-9]+, dirty count [0-9]+, hole count: [0-9]+' | tee -a ${output_path}
+        sudo dmesg | grep -oE 'f2fs csgc get dpage time: [0-9]+ ns, grab dpage time: [0-9]+ ns' | tee -a ${output_path}
+        sudo dmesg | grep -oE 'AVG get time: [0-9]+ ns, grab time: [0-9]+ ns' | tee -a ${output_path}
+        sudo dmesg | grep -oE 'f2fs gc data page hit count: [0-9]+, total req count: [0-9]+' | tee -a ${output_path}
     else
         echo "umount device"
         sudo umount "${devpath}"
@@ -150,7 +150,7 @@ umount_and_get_stat() {
 
     get_ssd_stat "${devpath}" "${output_path}"
 
-    sudo dmesg > $(dirname ${output_path})/dmesg.log
+    sudo dmesg > "$(dirname "${output_path}")/dmesg.log"
 }
 
 # format storage and mount 
