@@ -220,7 +220,7 @@ prefill_storage_fio() {
     local mntpoint=$2
     local prefill_ratio=$3
     local gc_mode=$4
-    local storage_size=$(blockdev --getsize64 ${devpath})
+    local storage_size=$(sudo blockdev --getsize64 "${devpath}")
     local prefill_size=$(echo "${storage_size} * ${prefill_ratio} / 1" | bc)
     local prefill_size_human="$(echo "${prefill_size} / 1024 / 1024 / 1024" | bc)G"
     local prefill_threads=10
@@ -245,7 +245,7 @@ prefill_storage_ycsb() {
     local mntpoint=$2
     local prefill_ratio=$3
     local gc_mode=$4
-    local storage_size=$(blockdev --getsize64 ${devpath})
+    local storage_size=$(sudo blockdev --getsize64 "${devpath}")
     local prefill_size=$(echo "${storage_size} * ${prefill_ratio} / 1" | bc)
     local prefill_size_human="$(echo "${prefill_size} / 1024 / 1024 / 1024" | bc)G"
     local prefill_threads=16
