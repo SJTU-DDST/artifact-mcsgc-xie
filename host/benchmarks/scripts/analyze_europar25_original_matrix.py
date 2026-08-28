@@ -43,6 +43,18 @@ def last_match(pattern: str, text: str) -> Optional[str]:
     return matches[-1] if matches else None
 
 
+def read_key_values(path: Path) -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    if not path.exists():
+        return values
+    for line in read_text(path).splitlines():
+        if "=" not in line or line.startswith("["):
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
 def parse_case(row: Dict[str, str]) -> Dict[str, object]:
     output = Path(row["output_path"])
     workload_type = row["workload_type"]
@@ -256,12 +268,31 @@ def plot_figure7(cases: Dict[str, Dict[str, object]], figures: Path) -> None:
         ("ori", "F2FS", F2FS_COLOR, "^"),
         ("cs", "CSGC", CSGC_COLOR, "o"),
     ):
-        migration = [require_metric(cases, f"{mode}-{suffix}", "migration_us") for suffix in suffixes]
+        migration = [cases[f"{mode}-{suffix}"].get("migration_us") for suffix in suffixes]
         throughput = [require_metric(cases, f"{mode}-{suffix}", "throughput_ops_s") / 1000 for suffix in suffixes]
         waf = [require_metric(cases, f"{mode}-{suffix}", "waf") for suffix in suffixes]
-        axes[0].plot(sizes, migration, label=label, color=color, marker=marker, markeredgecolor="black")
+        if all(value is not None for value in migration):
+            axes[0].plot(
+                sizes,
+                [float(value) for value in migration],
+                label=label,
+                color=color,
+                marker=marker,
+                markeredgecolor="black",
+            )
         axes[1].plot(sizes, throughput, label=label, color=color, marker=marker, markeredgecolor="black")
         axes[2].plot(sizes, waf, label=label, color=color, marker=marker, markeredgecolor="black")
+    if not axes[0].lines:
+        axes[0].text(
+            0.5,
+            0.5,
+            "Not collected\n(runtime breakdown disabled)",
+            ha="center",
+            va="center",
+            transform=axes[0].transAxes,
+            fontsize=10,
+        )
+        axes[0].set_xticks(range(len(sizes)), sizes)
     axes[0].set_ylabel("Migration Latency (us)")
     axes[1].set_ylabel("Throughput (kop/s)")
     axes[2].set_ylabel("Write Amplification")
@@ -273,6 +304,8 @@ def plot_figure7(cases: Dict[str, Dict[str, object]], figures: Path) -> None:
 
 
 def build_report(batch: Path, cases: Dict[str, Dict[str, object]], summary_csv: Path) -> str:
+    provenance = read_key_values(batch / "provenance.txt")
+    completed = read_key_values(batch / "completed.env")
     overall = [
         ("Filebench fileserver", "filebench-fileserver"),
         ("Filebench varmail", "filebench-varmail"),
@@ -287,7 +320,12 @@ def build_report(batch: Path, cases: Dict[str, Dict[str, object]], summary_csv: 
         "",
         f"- 批次目录：`{batch}`",
         "- 执行者：Codex 直接运行",
-        "- 最外层脚本：`run_europar25_original_matrix.sh`",
+        f"- 开始时间：`{completed.get('started_at', provenance.get('started_at', 'unknown'))}`",
+        f"- 完成时间：`{completed.get('completed_at', 'unknown')}`",
+        f"- 最外层脚本：`{provenance.get('outer_script', 'run_europar25_original_matrix.sh')}`",
+        f"- Host：`{provenance.get('host_branch', 'unknown')}@{provenance.get('host_commit', 'unknown')}`",
+        f"- OpenSSD 源码：`{provenance.get('openssd_expected_branch', 'unknown')}@{provenance.get('openssd_expected_commit', 'unknown')}`",
+        f"- 实验工具：`{provenance.get('artifact_reproduction_branch', 'unknown')}@{provenance.get('artifact_reproduction_commit', 'unknown')}`",
         "- 实验点：修复版原始 CSGC 与原始 ORI 各 22 点，共 44 点；不含 IPLFS。",
         "- workload 来源：作者 artifact `main@0271b907ec00ed643fd139403b726817c9fe8c32`。",
         f"- 结构化数据：`{summary_csv.name}`",
@@ -306,12 +344,113 @@ def build_report(batch: Path, cases: Dict[str, Dict[str, object]], summary_csv: 
     lines.extend(
         [
             "",
-            f"六项负载的 CSGC/ORI 几何平均加速为 **{geometric_mean(speedups):.3f}x**。",
+            f"六项负载的 CSGC/ORI 算术平均加速为 **{sum(speedups) / len(speedups):.3f}x**，"
+            f"几何平均为 **{geometric_mean(speedups):.3f}x**。论文报告的 F2FS 对比算术平均为 "
+            "`2.76x`，本轮结果与其接近；本轮最大加速为 YCSB-F 的 "
+            f"**{max(speedups):.3f}x**。",
+            "",
+            "## YCSB-A 延迟",
+            "",
+            "| 指标 | ORI (ms) | CSGC (ms) | ORI/CSGC |",
+            "|---|---:|---:|---:|",
+        ]
+    )
+    for label, key in (
+        ("Read average", "read_avg_us"),
+        ("Read P99", "read_p99_us"),
+        ("Update average", "update_avg_us"),
+        ("Update P99", "update_p99_us"),
+    ):
+        ori = require_metric(cases, "ori-ycsb-a", key) / 1000
+        cs = require_metric(cases, "cs-ycsb-a", key) / 1000
+        lines.append(f"| {label} | {ori:.3f} | {cs:.3f} | {ori / cs:.3f}x |")
+
+    lines.extend(
+        [
+            "",
+            "## 存储利用率",
+            "",
+            "| 利用率 | ORI (kop/s) | CSGC (kop/s) | 加速 | ORI WAF | CSGC WAF |",
+            "|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for value in ("0.6", "0.7", "0.8", "0.9", "0.95"):
+        suffix = f"fio-util-{value}"
+        ori = require_metric(cases, f"ori-{suffix}", "throughput_ops_s")
+        cs = require_metric(cases, f"cs-{suffix}", "throughput_ops_s")
+        ori_waf = require_metric(cases, f"ori-{suffix}", "waf")
+        cs_waf = require_metric(cases, f"cs-{suffix}", "waf")
+        lines.append(
+            f"| {float(value) * 100:.0f}% | {ori / 1000:.3f} | {cs / 1000:.3f} | "
+            f"{cs / ori:.3f}x | {ori_waf:.3f} | {cs_waf:.3f} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Section size",
+            "",
+            "| segments/section | ORI (kop/s) | CSGC (kop/s) | 加速 | ORI WAF | CSGC WAF |",
+            "|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for size in ("1", "2", "4", "8", "16"):
+        suffix = f"fio-section-{size}"
+        ori = require_metric(cases, f"ori-{suffix}", "throughput_ops_s")
+        cs = require_metric(cases, f"cs-{suffix}", "throughput_ops_s")
+        ori_waf = require_metric(cases, f"ori-{suffix}", "waf")
+        cs_waf = require_metric(cases, f"cs-{suffix}", "waf")
+        lines.append(
+            f"| {size} | {ori / 1000:.3f} | {cs / 1000:.3f} | {cs / ori:.3f}x | "
+            f"{ori_waf:.3f} | {cs_waf:.3f} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "> Figure 7(a) 的平均块迁移延迟未采集。正式 quiet Host 关闭了 "
+            "`CONFIG_F2FS_CSGC_RUNTIME_BREAKDOWN`，因此图中保留对应面板并明确标为 N/A，"
+            "不使用吞吐或总 GC 时间反推该指标。",
+            "",
+            "## 写倾斜度",
+            "",
+            "| 分布 | ORI (kop/s) | CSGC (kop/s) | 加速 | ORI WAF | CSGC WAF |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for label, suffix in (
+        ("uniform", "fio-skew-uniform"),
+        ("Zipf 0.3", "fio-skew-0.3"),
+        ("Zipf 0.7", "fio-skew-0.7"),
+        ("Zipf 0.9", "fio-skew-0.9"),
+        ("Zipf 1.1", "fio-skew-1.1"),
+    ):
+        ori = require_metric(cases, f"ori-{suffix}", "throughput_ops_s")
+        cs = require_metric(cases, f"cs-{suffix}", "throughput_ops_s")
+        ori_waf = require_metric(cases, f"ori-{suffix}", "waf")
+        cs_waf = require_metric(cases, f"cs-{suffix}", "waf")
+        lines.append(
+            f"| {label} | {ori / 1000:.3f} | {cs / 1000:.3f} | {cs / ori:.3f}x | "
+            f"{ori_waf:.3f} | {cs_waf:.3f} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## 图表",
+            "",
+            "- `figures/figure4_overall_performance.*`：对应论文 Figure 4。",
+            "- `figures/figure5_timeline_and_latency.*`：对应论文 Figure 5。",
+            "- `figures/figure6_storage_utilization.*`：对应论文 Figure 6。",
+            "- `figures/figure7_section_size.*`：对应论文 Figure 7；面板 (a) 标明未采集。",
+            "- `figures/figure8_write_skewness.*`：对应论文 Figure 8。",
             "",
             "## 口径说明",
             "",
             "- 本轮忠实使用 artifact 的实际 workload 配置，而不是后来加入充分 GC 预热的正式负载。",
             "- artifact 中 Filebench 使用 54,000 个均匀分布在 512 KiB 至 1.5 MiB 的文件；这与论文文字中对 varmail 的 64 KiB 描述存在差异。",
+            "- Figure 5 的 artifact period workload 实际执行 60 秒（`psrun -5 $runtime`，"
+            "其中 `$runtime=60`），论文正文写 300 秒。本轮图按实际公开 workload 绘制。",
             "- artifact 的 YCSB runner 使用 36 线程；论文正文写 32 线程。本轮以公开 artifact 为准。",
             "- fio 在预填充后立即运行，不增加额外 16 GiB GC 预热，因此与近期 GC-heavy 正式结果不可直接混用。",
             "- 运行固件无法从 Host 侧逐字节证明 ELF 身份；本批次保存了 OpenSSD 源码提交和 Vitis 输入文件哈希。",
