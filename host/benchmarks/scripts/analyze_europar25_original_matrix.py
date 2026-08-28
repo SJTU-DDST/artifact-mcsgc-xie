@@ -486,7 +486,7 @@ def main() -> None:
     ]
     summary_csv = analysis_dir / "experiment-summary.csv"
     with summary_csv.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=scalar_keys)
+        writer = csv.DictWriter(handle, fieldnames=scalar_keys, lineterminator="\n")
         writer.writeheader()
         for case_id in sorted(cases):
             writer.writerow({key: cases[case_id].get(key) for key in scalar_keys})
