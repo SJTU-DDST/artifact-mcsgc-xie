@@ -5,10 +5,10 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPRO_TREE=$(cd "${SCRIPT_DIR}/../../.." && pwd)
 SOURCE_COMMIT=0271b907ec00ed643fd139403b726817c9fe8c32
-HOST_TREE=/tmp/linux-cs-formal-original-matrix-20260826
-HOST_COMMIT=813c35f3ec81bc317c2ca82d796e9a767ad6384e
+HOST_TREE=/home/xin/work-xie/mcsgc-real/linux-cs-formal-original-lifecycle-fix-20260828
+HOST_COMMIT=ecfcc36c89b8ecb29ded364257f672dd9ff363e2
 HOST_MODULE=${HOST_TREE}/fs/f2fs/f2fs.ko
-HOST_MODULE_SHA256=0e4b6cb77aac59b998b9a5c0b57e5e99be4b8e0c6456fc7f9c5447dc598eb0b2
+HOST_MODULE_SHA256=7f3d8d60c8543f09bf4fb76f1c052992c96ffc2982420bdc77d4e64f0acd5f4f
 OPENSSD_HOST=192.168.98.31
 OPENSSD_TREE=/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc
 OPENSSD_BRANCH=formal-original-csgc-main-20260809
