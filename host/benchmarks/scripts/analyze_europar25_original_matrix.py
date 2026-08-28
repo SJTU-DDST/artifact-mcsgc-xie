@@ -341,13 +341,25 @@ def build_report(batch: Path, cases: Dict[str, Dict[str, object]], summary_csv: 
         speedup = cs / ori
         speedups.append(speedup)
         lines.append(f"| {label} | {ori / 1000:.3f} | {cs / 1000:.3f} | {speedup:.3f}x |")
+
+    all_arithmetic_mean = sum(speedups) / len(speedups)
+    all_geometric_mean = geometric_mean(speedups)
+    paper_comparable_geometric_mean = geometric_mean(speedups[:5])
     lines.extend(
         [
             "",
-            f"六项负载的 CSGC/ORI 算术平均加速为 **{sum(speedups) / len(speedups):.3f}x**，"
-            f"几何平均为 **{geometric_mean(speedups):.3f}x**。论文报告的 F2FS 对比算术平均为 "
-            "`2.76x`，本轮结果与其接近；本轮最大加速为 YCSB-F 的 "
-            f"**{max(speedups):.3f}x**。",
+            f"六项配置等权计算时，CSGC/ORI 算术平均为 **{all_arithmetic_mean:.3f}x**，"
+            f"几何平均为 **{all_geometric_mean:.3f}x**。跨异构负载汇总应优先使用几何平均。",
+            "",
+            "论文正文报告相对 F2FS 平均 `2.76x`。原作者 Figure 4 绘图脚本使用几何平均，"
+            "而不是算术平均；由论文图中公开的舍入柱值反推，`2.76x` 最符合前五个主要负载点"
+            "（不重复计入作为 fio 替代分布的 `fio-skewed`）的几何平均。按相同前五项口径，"
+            f"本轮为 **{paper_comparable_geometric_mean:.3f}x**。不过公开脚本当前又对六项调用"
+            "几何平均函数，与论文正文数字不自洽，因此无法从公开材料百分之百还原作者最终的"
+            "统计集合。此前将本轮六项算术平均与论文 `2.76x` 直接比较是不正确的。",
+            "",
+            f"本轮最大加速为 YCSB-F 的 **{max(speedups):.3f}x**；论文对应值为 `3.61x`，"
+            "二者负载和结论一致，但数值并不完全相同。",
             "",
             "## YCSB-A 延迟",
             "",
