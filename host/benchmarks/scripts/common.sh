@@ -123,6 +123,13 @@ umount_and_get_stat() {
     
     echo "sleep ${wait_time} seconds before umount and dmesg"
     sleep ${wait_time}
+
+    # Drain buffered writes while the mount and its backing device are still
+    # fully registered. This runs after the benchmark's measured interval.
+    if findmnt -rn -S "${devpath}" >/dev/null; then
+        echo "sync mounted filesystem before umount"
+        sudo sync -f "${MNTPOINT}"
+    fi
     
     if [ "$gc_mode" != "iplfs" ]; then
         if [ -r "${DEBUGFS_PATH}/csgc_status" ]; then
