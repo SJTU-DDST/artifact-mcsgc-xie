@@ -8,6 +8,8 @@ SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 SCRIPT_DIR=$(cd -- "$(dirname -- "${SCRIPT_PATH}")" && pwd)
 REPRO_TREE=$(cd -- "${SCRIPT_DIR}/../../.." && pwd)
 SOURCE_COMMIT=0271b907ec00ed643fd139403b726817c9fe8c32
+NVME_CLI_DIR=${REPRO_TREE}/host/src/nvme-cli
+NVME_CLI_PATH=${NVME_CLI_DIR}/nvme
 HOST_REPO=/home/xin/work-xie/mcsgc-real/linux-cs
 OPENSSD_HOST=192.168.98.31
 OPENSSD_TREE=/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc
@@ -48,6 +50,7 @@ BATCH_DIR=""
 CASE_RESULTS=""
 OUTER_START_TICKS=""
 STARTED_AT=""
+NVME_CLI_SHA256=""
 
 # Keep every descendant benchmark non-interactive. A detached tmux session
 # cannot answer a sudo prompt, so fail immediately instead of stalling a case.
@@ -305,6 +308,30 @@ build_configuration() {
     } >> "${BATCH_DIR}/provenance.txt"
 }
 
+# Build the private nvme-cli used for SSD reset, fs-ready, and statistics.
+build_nvme_cli() {
+    echo "Building nvme-cli at $(date --iso-8601=seconds)"
+    make -s -C "${NVME_CLI_DIR}" -j"$(nproc)"
+    [ -x "${NVME_CLI_PATH}" ] || die "nvme-cli was not produced: ${NVME_CLI_PATH}"
+    "${NVME_CLI_PATH}" version >/dev/null
+    sudo "${NVME_CLI_PATH}" id-ctrl "${DEVICE}" >/dev/null
+    NVME_CLI_SHA256=$(sha256sum "${NVME_CLI_PATH}" | awk '{print $1}')
+    {
+        printf '\n[nvme-cli]\n'
+        printf 'path=%s\nsha256=%s\n' "${NVME_CLI_PATH}" "${NVME_CLI_SHA256}"
+    } >> "${BATCH_DIR}/provenance.txt"
+}
+
+# Reject a missing or changed private nvme-cli before touching the device.
+verify_nvme_cli() {
+    local actual_sha
+
+    [ -x "${NVME_CLI_PATH}" ] || die "nvme-cli is missing: ${NVME_CLI_PATH}"
+    actual_sha=$(sha256sum "${NVME_CLI_PATH}" | awk '{print $1}')
+    [ "${actual_sha}" = "${NVME_CLI_SHA256}" ] \
+        || die "nvme-cli changed during the matrix"
+}
+
 # Load one prebuilt candidate after verifying the namespace is unmounted.
 load_configuration() {
     local configuration=$1
@@ -352,6 +379,7 @@ preflight() {
     done
     [ -x "${SCRIPT_DIR}/../file_writer/build.sh" ] || die "file writer build script is missing"
     [ -x "${SCRIPT_DIR}/../ycsb-0.17.0/bin/ycsb" ] || die "YCSB is missing"
+    [ -f "${NVME_CLI_DIR}/Makefile" ] || die "nvme-cli source tree is missing"
     sudo test -f /var/lib/mysql/ycsb_db/usertable.ibd || die "preloaded YCSB database is missing"
     grep -Rqs '^datadir[[:space:]]*=[[:space:]]*/mnt/openssd_f2fs/mysql' /etc/mysql \
         || die "MySQL datadir is not configured for the OpenSSD mount"
@@ -510,6 +538,7 @@ start_sudo_keepalive
 if [ "${MODE}" = start ]; then
     write_provenance
 fi
+build_nvme_cli
 for configuration in "${CONFIGURATIONS[@]}"; do
     ensure_exact_host_worktree "${configuration}"
     build_configuration "${configuration}"
@@ -530,6 +559,7 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
     fi
 
     verify_openssd_provenance >/dev/null
+    verify_nvme_cli
     load_configuration "${configuration}"
     config_path="${BATCH_DIR}/generated-configs/${case_id}.sh"
     write_case_config "${config_path}" "${workload_type}" "${bmname}" "${distribution}" \
