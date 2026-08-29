@@ -28,8 +28,8 @@ declare -A HOST_BRANCHES=(
     [rolling-final]=exp/formal-mcsgc8t-rolling-lifecycle-quiet-lowspace-20260829
 )
 declare -A HOST_COMMITS=(
-    [conflict-aware]=3a0aaa90034e74ff63e247668e17a89f24c82a96
-    [rolling-final]=6fa0bd8bbf8802804e2536a87ba1c33d0e644d93
+    [conflict-aware]=feab2b3b73a61bd9a5dabbea870b473d6dda164f
+    [rolling-final]=9c597c8e400f5a343cf154f03f898f88c421c44b
 )
 declare -A HOST_BASE_COMMITS=(
     [conflict-aware]=9f432d2fa2a4a665f99e55562b903a74008da873
@@ -427,6 +427,8 @@ validate_case() {
         filebench)
             log_path="${output_path}/filebench.log"
             grep -q 'IO Summary:' "${log_path}"
+            ! grep -Eq 'NO VALID RESULTS|Failed to open file|flowop .* failed|Input/output error' \
+                "${log_path}"
             ;;
         fio)
             log_path="${output_path}/fio.log"
@@ -440,7 +442,7 @@ validate_case() {
             ! grep -q 'Return=ERROR' "${log_path}"
             ;;
     esac
-    if grep -aEiq 'BUG:|Oops:|kernel panic|NULL pointer dereference|refcount.*(underflow|saturated)|SIT.*(corrupt|inconsistent)|EUCLEAN|nvme.*(timeout|reset controller)|I/O error' \
+    if grep -aEiq 'BUG:|Oops:|kernel panic|NULL pointer dereference|refcount.*(underflow|saturated)|SIT.*(corrupt|inconsistent)|Inconsistent segment.*SSA and SIT|EUCLEAN|nvme.*(timeout|reset controller)|I/O error' \
         "${output_path}/dmesg.log"; then
         die "kernel or device anomaly detected in ${output_path}/dmesg.log"
     fi

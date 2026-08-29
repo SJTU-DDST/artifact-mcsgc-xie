@@ -49,6 +49,12 @@ else
     filebench -f "${tmp_workload_path}" \
     2>&1 | tee -a "${output_path}/${workload_type}.log" || filebench_status=$?
 fi
+
+# Filebench can return zero after a flowop abort, so reject its fatal markers.
+if grep -Eq 'NO VALID RESULTS|Failed to open file|flowop .* failed|Input/output error' \
+        "${output_path}/${workload_type}.log"; then
+    filebench_status=1
+fi
 echo "======================================================="
 
 umount_and_get_stat "${devpath}" "${gc_mode}" "${output_path}/stat.log"
@@ -70,4 +76,3 @@ if ! grep -q 'IO Summary:' "${output_path}/${workload_type}.log"; then
     echo "ERROR: filebench log has no IO Summary" >&2
     exit 1
 fi
-
