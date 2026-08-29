@@ -258,7 +258,8 @@ ensure_exact_host_worktree() {
 
     [ "$(git -C "${path}" rev-parse HEAD)" = "${commit}" ] \
         || die "Host worktree is not pinned: ${path}"
-    [ "$(git -C "${path}" rev-parse "${commit}^")" = "${HOST_BASE_COMMITS[${configuration}]}" ] \
+    git -C "${path}" merge-base --is-ancestor \
+        "${HOST_BASE_COMMITS[${configuration}]}" "${commit}" \
         || die "Host repair is not based on the expected quiet revision"
     while IFS= read -r status_line; do
         [ -z "${status_line}" ] && continue
