@@ -24,20 +24,20 @@ MINIMUM_FREE_BYTES=$((5 * 1024 * 1024 * 1024))
 
 declare -a CONFIGURATIONS=(conflict-aware rolling-final)
 declare -A HOST_BRANCHES=(
-    [conflict-aware]=exp/formal-mcsgc8t-conflict-aware-lifecycle-quiet-20260825
-    [rolling-final]=exp/formal-mcsgc8t-rolling-lifecycle-quiet-20260825
+    [conflict-aware]=exp/formal-mcsgc8t-conflict-aware-lifecycle-quiet-lowspace-20260829
+    [rolling-final]=exp/formal-mcsgc8t-rolling-lifecycle-quiet-lowspace-20260829
 )
 declare -A HOST_COMMITS=(
+    [conflict-aware]=e60af7ae4ff35ec58fe786d27662ceaa68655753
+    [rolling-final]=b0bc9e4ed5b77367acbc8e0ba75f7145913074fe
+)
+declare -A HOST_BASE_COMMITS=(
     [conflict-aware]=9f432d2fa2a4a665f99e55562b903a74008da873
     [rolling-final]=e94392029fbdabca386b0b2be3300be84ea90324
 )
-declare -A HOST_BASE_COMMITS=(
-    [conflict-aware]=25bd2e365a37c0ec159e1b9a0aab6f94c1d8df26
-    [rolling-final]=ed3f5afadd70c4a3a35d5eb15f1a39fb8058f58f
-)
 declare -A PREFERRED_WORKTREES=(
-    [conflict-aware]=/tmp/linux-cs-europar-conflict-quiet-20260829
-    [rolling-final]=/tmp/linux-cs-europar-rolling-quiet-20260829
+    [conflict-aware]=/home/xin/work-xie/mcsgc-real/linux-cs-conflict-lowspace-20260829
+    [rolling-final]=/home/xin/work-xie/mcsgc-real/linux-cs-rolling-lowspace-20260829
 )
 declare -A HOST_TREES=()
 declare -A MODULE_PATHS=()
