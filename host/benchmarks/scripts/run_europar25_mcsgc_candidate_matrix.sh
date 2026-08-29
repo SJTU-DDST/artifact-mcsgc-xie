@@ -49,6 +49,13 @@ CASE_RESULTS=""
 OUTER_START_TICKS=""
 STARTED_AT=""
 
+# Keep every descendant benchmark non-interactive. A detached tmux session
+# cannot answer a sudo prompt, so fail immediately instead of stalling a case.
+sudo() {
+    command /usr/bin/sudo -n "$@"
+}
+export -f sudo
+
 # Print the destructive one-command interface and recovery commands.
 usage() {
     cat <<EOF
@@ -515,7 +522,7 @@ done
 completed_before=$(awk -F '\t' 'NR > 1 && $11 == 0 {n++} END {print n + 0}' "${CASE_RESULTS}")
 echo "Starting matrix with ${completed_before}/${EXPECTED_CASES} successful cases already recorded."
 
-while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribution prefill_ratio segs_per_sec fio_timebased; do
+while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribution prefill_ratio segs_per_sec fio_timebased <&8; do
     [ "${case_id}" = case_id ] && continue
     if case_succeeded "${case_id}"; then
         echo "Skipping completed case ${case_id}"
@@ -541,7 +548,7 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
     validate_case "${workload_type}" "${output_path}"
     successful=$(awk -F '\t' 'NR > 1 && $11 == 0 {n++} END {print n + 0}' "${CASE_RESULTS}")
     echo "MATRIX_CASE_END id=${case_id} progress=${successful}/${EXPECTED_CASES} at=$(date --iso-8601=seconds)"
-done < "${BATCH_DIR}/schedule.tsv"
+done 8< "${BATCH_DIR}/schedule.tsv"
 
 successful=$(awk -F '\t' 'NR > 1 && $11 == 0 {n++} END {print n + 0}' "${CASE_RESULTS}")
 [ "${successful}" -eq "${EXPECTED_CASES}" ] \
