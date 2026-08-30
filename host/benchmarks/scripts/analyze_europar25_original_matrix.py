@@ -120,8 +120,10 @@ def parse_case(row: Dict[str, str]) -> Dict[str, object]:
     stat_path = output / "stat.log"
     if stat_path.exists():
         stat = read_text(stat_path)
+        basic_stats = last_match(r"openssd_perf:.*?basic_stats=(\d+)", stat)
         waf = last_match(r"physical WAF:\s+(\d+)", stat)
-        metrics["waf"] = float(waf) / 1000.0 if waf is not None else None
+        if basic_stats != "0" and waf is not None:
+            metrics["waf"] = float(waf) / 1000.0
         stat_tag = "CSGC" if row["mode"] == "cs" else "ORIGC"
         migration = last_match(
             rf"<{stat_tag} STAT>.*?block migration:\s+(\d+)\s+ns", stat

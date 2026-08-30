@@ -188,10 +188,15 @@ def plot_sweep(
     fig, (left, right) = plt.subplots(1, 2, figsize=(8.0, 3.2))
     for system in SYSTEMS:
         throughput = [metric(cases, system, suffix, "throughput_ops_s") / 1000 for suffix in suffixes]
-        waf = [metric(cases, system, suffix, "waf") for suffix in suffixes]
         style = dict(label=LABELS[system], color=COLORS[system], marker=MARKERS[system])
         left.plot(x_values, throughput, **style)
-        right.plot(x_values, waf, **style)
+        waf = [cases[system][suffix].get("waf") for suffix in suffixes]
+        if any(value is not None for value in waf):
+            right.plot(
+                x_values,
+                [float(value) if value is not None else math.nan for value in waf],
+                **style,
+            )
     left.set_xlabel(x_label)
     left.set_ylabel("Throughput (kop/s)")
     left.grid(alpha=0.3)
@@ -199,6 +204,14 @@ def plot_sweep(
     right.set_ylabel("Write amplification")
     right.grid(alpha=0.3)
     right.legend(ncol=2)
+    right.text(
+        0.02,
+        0.04,
+        "Candidate WAF: N/A",
+        transform=right.transAxes,
+        fontsize=8,
+        color="#555555",
+    )
     save_figure(fig, figures / name)
 
 
@@ -293,6 +306,13 @@ def build_report(
             f"相对 ORI 分别为 **{geometric_mean(conflict_ori):.3f}x** 和 "
             f"**{geometric_mean(rolling_ori):.3f}x**。",
             "",
+            "分开看负载类型更准确：两个 Filebench 点的几何平均仅为 "
+            f"**{geometric_mean(conflict_ratios[:2]):.3f}x** 和 "
+            f"**{geometric_mean(rolling_ratios[:2]):.3f}x**；后四个 YCSB/fio 点则为 "
+            f"**{geometric_mean(conflict_ratios[2:]):.3f}x** 和 "
+            f"**{geometric_mean(rolling_ratios[2:]):.3f}x**。因此六项总几何平均主要反映 "
+            "Filebench 严重退化与其余负载稳定加速的混合结果，不能把它解释为候选版本在所有负载上都更慢。",
+            "",
             "## 输出文件",
             "",
             "- `comparison.csv`：22 个 case 的四系统吞吐、WAF 和配对倍率。",
@@ -303,7 +323,8 @@ def build_report(
             "",
             "- 每个候选每个 case 只运行一次，因此可用于整体趋势和论文图，不足以单独给出置信区间。",
             "- Host 候选代码移除了专有诊断开销；通用 `F2FS_STAT_FS` 与原始系统基线一致地启用。",
-            "- WAF 来自设备统计，不依赖候选专有的 Host breakdown。",
+            "- 原版 ORI/CSGC 的 WAF 来自设备统计；候选固件记录 "
+            "`basic_stats=0`，其占位零已按缺失值处理，不能用于 WAF 对比。",
             "- OpenSSD 源码提交和 Vitis 输入哈希会被记录，但 Host 无法证明当前运行 ELF 的逐字节身份。",
         ]
     )
