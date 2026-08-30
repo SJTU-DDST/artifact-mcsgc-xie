@@ -28,8 +28,8 @@ declare -A HOST_BRANCHES=(
     [rolling-final]=exp/formal-mcsgc8t-rolling-lifecycle-quiet-lowspace-20260829
 )
 declare -A HOST_COMMITS=(
-    [conflict-aware]=009fd4e19ffc5d6ee390537536e011e53be6674c
-    [rolling-final]=3cb0963f2a588fae0890f9e7872320073e4da3b2
+    [conflict-aware]=1c2464823942465099d259e47919c3219ed005e5
+    [rolling-final]=2ca5029d8e89755c46cd6b3c9ba2b22822d81361
 )
 declare -A HOST_BASE_COMMITS=(
     [conflict-aware]=9f432d2fa2a4a665f99e55562b903a74008da873
