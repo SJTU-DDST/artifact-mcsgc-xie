@@ -19,7 +19,12 @@ DEVICE=/dev/nvme0n1
 RESULT_BASE=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-mcsgc-candidate-reproduction
 DEFAULT_BASELINE_BATCH=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-original-reproduction/20260828_185514
 BASELINE_BATCH=${EUROPAR_BASELINE_BATCH:-${DEFAULT_BASELINE_BATCH}}
-EXPECTED_CASES=44
+RUN_PROFILE=${EUROPAR_MATRIX_PROFILE:-full}
+case "${RUN_PROFILE}" in
+    full) EXPECTED_CASES=44 ;;
+    fileserver-validation) EXPECTED_CASES=2 ;;
+    *) echo "ERROR: unsupported EUROPAR_MATRIX_PROFILE=${RUN_PROFILE}" >&2; exit 2 ;;
+esac
 MINIMUM_FREE_BYTES=$((5 * 1024 * 1024 * 1024))
 
 declare -a CONFIGURATIONS=(conflict-aware rolling-final)
@@ -79,6 +84,9 @@ Expected OpenSSD source:
 
 Default original-system baseline:
   ${DEFAULT_BASELINE_BATCH}
+
+Set EUROPAR_MATRIX_PROFILE=fileserver-validation to run only the two
+Filebench fileserver cases that stress low-space sync and unmount.
 EOF
 }
 
@@ -128,6 +136,10 @@ write_schedule() {
 
     printf 'case_id\tconfiguration\tmode\tworkload_type\tbmname\tdistribution\tprefill_ratio\tsegs_per_sec\tfio_timebased\n' > "${path}"
     while IFS=$'\t' read -r base_id workload_type bmname distribution prefill_ratio segs_per_sec fio_timebased; do
+        if [ "${RUN_PROFILE}" = fileserver-validation ] &&
+                [ "${base_id}" != filebench-fileserver ]; then
+            continue
+        fi
         if ((index % 2 == 0)); then
             order=(conflict-aware rolling-final)
         else
@@ -152,6 +164,7 @@ write_state() {
         printf 'outer_pid=%q\n' "$$"
         printf 'outer_start_ticks=%q\n' "${OUTER_START_TICKS}"
         printf 'expected_cases=%q\n' "${EXPECTED_CASES}"
+        printf 'run_profile=%q\n' "${RUN_PROFILE}"
         printf 'batch_dir=%q\n' "${BATCH_DIR}"
     } > "${BATCH_DIR}/state.env"
 }
@@ -402,7 +415,8 @@ write_provenance() {
         "find /home/xin/vitis_workspaces/xie_csgc_withjin -path '*/src/config.h' -type f -print0 | sort -z | xargs -0 sha256sum; find /home/xin/vitis_workspaces/xie_csgc_withjin -path '*/src/shared_mem.h' -type f -print0 | sort -z | xargs -0 sha256sum")
     {
         printf 'operator=%s\n' "${USER}"
-        printf 'outer_script=%s\nstarted_at=%s\n' "${SCRIPT_PATH}" "${STARTED_AT}"
+        printf 'outer_script=%s\nrun_profile=%s\nstarted_at=%s\n' \
+            "${SCRIPT_PATH}" "${RUN_PROFILE}" "${STARTED_AT}"
         printf 'artifact_branch=%s\nartifact_commit=%s\nsource_commit=%s\n' \
             "$(git -C "${REPRO_TREE}" branch --show-current)" \
             "$(git -C "${REPRO_TREE}" rev-parse HEAD)" "${SOURCE_COMMIT}"
@@ -587,8 +601,10 @@ successful=$(awk -F '\t' 'NR > 1 && $11 == 0 {n++} END {print n + 0}' "${CASE_RE
 [ "${successful}" -eq "${EXPECTED_CASES}" ] \
     || die "expected ${EXPECTED_CASES} successful cases, found ${successful}"
 
-"${SCRIPT_DIR}/analyze_europar25_mcsgc_candidate_matrix.py" \
-    "${BATCH_DIR}" --baseline-batch "${BASELINE_BATCH}"
+if [ "${RUN_PROFILE}" = full ]; then
+    "${SCRIPT_DIR}/analyze_europar25_mcsgc_candidate_matrix.py" \
+        "${BATCH_DIR}" --baseline-batch "${BASELINE_BATCH}"
+fi
 COMPLETED_AT=$(date --iso-8601=seconds)
 printf 'started_at=%s\ncompleted_at=%s\nsuccessful_cases=%s\n' \
     "${STARTED_AT}" "${COMPLETED_AT}" "${successful}" > "${BATCH_DIR}/completed.env"
