@@ -202,16 +202,9 @@ def plot_sweep(
     left.grid(alpha=0.3)
     right.set_xlabel(x_label)
     right.set_ylabel("Write amplification")
+    right.set_title("Candidate WAF unavailable", fontsize=9)
     right.grid(alpha=0.3)
     right.legend(ncol=2)
-    right.text(
-        0.02,
-        0.04,
-        "Candidate WAF: N/A",
-        transform=right.transAxes,
-        fontsize=8,
-        color="#555555",
-    )
     save_figure(fig, figures / name)
 
 
