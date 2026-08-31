@@ -69,6 +69,7 @@ def geometric_mean(values: List[float]) -> float:
 def write_report(
     batch: Path,
     stats: Mapping[str, Mapping[str, Mapping[str, float]]],
+    workloads: List[str],
 ) -> str:
     """Build a concise report with explicit A/B denominators."""
     configurations = sorted(
@@ -78,6 +79,8 @@ def write_report(
             list(LABELS).index(item) if item in LABELS else 99,
         ),
     )
+    has_control = "control" in stats
+    ratio_heading = "Mean vs A" if has_control else "Mean vs A (not available)"
     lines = [
         "# mCSGC Filebench Single-Variable A/B Results",
         "",
@@ -89,35 +92,47 @@ def write_report(
         "",
         "## Throughput",
         "",
-        "| Configuration | Workload | Samples | Mean ops/s | Median | Min | Max | Stddev | Mean vs A |",
+        f"| Configuration | Workload | Samples | Mean ops/s | Median | Min | Max | Stddev | {ratio_heading} |",
         "|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for configuration in configurations:
-        for workload in WORKLOAD_LABELS:
+        for workload in workloads:
             item = stats[configuration][workload]
-            control = stats["control"][workload]["mean_ops_s"]
+            ratio = "-"
+            if has_control:
+                control = stats["control"][workload]["mean_ops_s"]
+                ratio = f"{item['mean_ops_s'] / control:.3f}x"
             lines.append(
                 f"| {LABELS.get(configuration, configuration)} "
                 f"| {WORKLOAD_LABELS[workload]} | {int(item['count'])} "
                 f"| {item['mean_ops_s']:.3f} | {item['median_ops_s']:.3f} "
                 f"| {item['min_ops_s']:.3f} | {item['max_ops_s']:.3f} "
-                f"| {item['stdev_ops_s']:.3f} "
-                f"| {item['mean_ops_s'] / control:.3f}x |"
+                f"| {item['stdev_ops_s']:.3f} | {ratio} |"
             )
 
     lines.extend(["", "## Single-Variable Comparisons", ""])
-    for configuration in configurations:
-        if configuration == "control":
-            continue
-        ratios = [
-            stats[configuration][workload]["mean_ops_s"]
-            / stats["control"][workload]["mean_ops_s"]
-            for workload in WORKLOAD_LABELS
-        ]
+    if has_control:
+        for configuration in configurations:
+            if configuration == "control":
+                continue
+            ratios = [
+                stats[configuration][workload]["mean_ops_s"]
+                / stats["control"][workload]["mean_ops_s"]
+                for workload in workloads
+            ]
+            details = ", ".join(
+                f"{WORKLOAD_LABELS[workload]} {ratio:.3f}x"
+                for workload, ratio in zip(workloads, ratios)
+            )
+            lines.append(
+                f"- **{LABELS.get(configuration, configuration)}**: "
+                f"{details}, selected-workload geometric mean "
+                f"{geometric_mean(ratios):.3f}x."
+            )
+    else:
         lines.append(
-            f"- **{LABELS.get(configuration, configuration)}**: "
-            f"fileserver {ratios[0]:.3f}x, varmail {ratios[1]:.3f}x, "
-            f"two-workload geometric mean {geometric_mean(ratios):.3f}x."
+            "- This batch has no A/control cases. Absolute results are valid, "
+            "but relative A/B ratios require a separate matching control batch."
         )
 
     lines.extend(
@@ -173,12 +188,16 @@ def main() -> None:
             }
         )
 
-    required_workloads = set(WORKLOAD_LABELS)
+    required_workloads = {
+        next(suffix for suffix in WORKLOAD_LABELS if f"-{suffix}-" in case_id)
+        for case_id in schedule
+    }
     for configuration, workloads in grouped.items():
         if set(workloads) != required_workloads:
             raise SystemExit(f"Incomplete workloads for {configuration}")
-    if "control" not in grouped:
-        raise SystemExit("The batch must include the control configuration")
+    ordered_workloads = [
+        workload for workload in WORKLOAD_LABELS if workload in required_workloads
+    ]
 
     stats = {
         configuration: {
@@ -208,6 +227,8 @@ def main() -> None:
 
     payload = {
         "batch": str(batch),
+        "control_available": "control" in grouped,
+        "workloads": ordered_workloads,
         "samples": samples,
         "statistics": stats,
     }
@@ -215,7 +236,7 @@ def main() -> None:
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    report = write_report(batch, stats)
+    report = write_report(batch, stats, ordered_workloads)
     (analysis / "filebench-mcsgc-ab-report.md").write_text(
         report, encoding="utf-8"
     )

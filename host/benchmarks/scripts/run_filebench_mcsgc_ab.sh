@@ -20,6 +20,24 @@ RESULT_BASE=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-filebench-mc
 RUN_PROFILE=${FILEBENCH_AB_PROFILE:-screen}
 REPETITIONS=${FILEBENCH_AB_REPETITIONS:-3}
 REPEAT_CONFIGS=${FILEBENCH_AB_CONFIGS:-control,standard-prefree}
+WORKLOAD_FILTER=${FILEBENCH_AB_WORKLOADS:-filebench-fileserver,filebench-varmail}
+IFS=',' read -r -a WORKLOADS <<< "${WORKLOAD_FILTER}"
+[ "${#WORKLOADS[@]}" -ge 1 ] || {
+    echo "ERROR: FILEBENCH_AB_WORKLOADS must not be empty" >&2
+    exit 2
+}
+declare -A SEEN_WORKLOADS=()
+for workload in "${WORKLOADS[@]}"; do
+    case "${workload}" in
+        filebench-fileserver|filebench-varmail) ;;
+        *) echo "ERROR: unsupported Filebench workload: ${workload}" >&2; exit 2 ;;
+    esac
+    [ -z "${SEEN_WORKLOADS[${workload}]:-}" ] || {
+        echo "ERROR: duplicate Filebench workload: ${workload}" >&2
+        exit 2
+    }
+    SEEN_WORKLOADS[${workload}]=1
+done
 case "${RUN_PROFILE}" in
     screen)
         declare -a CONFIGURATIONS=(control standard-prefree pre-sync single-section)
@@ -32,7 +50,7 @@ case "${RUN_PROFILE}" in
         ;;
     *) echo "ERROR: unsupported FILEBENCH_AB_PROFILE=${RUN_PROFILE}" >&2; exit 2 ;;
 esac
-EXPECTED_CASES=$((${#CONFIGURATIONS[@]} * 2 * REPETITIONS))
+EXPECTED_CASES=$((${#CONFIGURATIONS[@]} * ${#WORKLOADS[@]} * REPETITIONS))
 MINIMUM_FREE_BYTES=$((5 * 1024 * 1024 * 1024))
 
 declare -A HOST_BRANCHES=(
@@ -100,6 +118,7 @@ Expected OpenSSD source:
 After screening, repeat selected configurations with:
   FILEBENCH_AB_PROFILE=repeat
   FILEBENCH_AB_CONFIGS=control,CONFIGURATION
+  FILEBENCH_AB_WORKLOADS=filebench-fileserver,filebench-varmail
   FILEBENCH_AB_REPETITIONS=3
 EOF
 }
@@ -112,8 +131,18 @@ die() {
 
 # Emit the two exact Euro-Par Filebench workloads.
 write_base_cases() {
-    printf 'filebench-fileserver\tfilebench\tfileserver_4t_60G_1M_54k\trandom\t0.86\t8\t0\n'
-    printf 'filebench-varmail\tfilebench\tvarmail_4t_60G_1M_54k\trandom\t0.86\t8\t0\n'
+    local workload
+
+    for workload in "${WORKLOADS[@]}"; do
+        case "${workload}" in
+            filebench-fileserver)
+                printf 'filebench-fileserver\tfilebench\tfileserver_4t_60G_1M_54k\trandom\t0.86\t8\t0\n'
+                ;;
+            filebench-varmail)
+                printf 'filebench-varmail\tfilebench\tvarmail_4t_60G_1M_54k\trandom\t0.86\t8\t0\n'
+                ;;
+        esac
+    done
 }
 
 # Alternate configuration order across workloads and repetitions.
@@ -154,6 +183,7 @@ write_state() {
         printf 'outer_start_ticks=%q\n' "${OUTER_START_TICKS}"
         printf 'expected_cases=%q\n' "${EXPECTED_CASES}"
         printf 'run_profile=%q\n' "${RUN_PROFILE}"
+        printf 'workloads=%q\n' "${WORKLOADS[*]}"
         printf 'batch_dir=%q\n' "${BATCH_DIR}"
     } > "${BATCH_DIR}/state.env"
 }
@@ -405,8 +435,9 @@ write_provenance() {
         printf 'artifact_branch=%s\nartifact_commit=%s\nsource_commit=%s\n' \
             "$(git -C "${REPRO_TREE}" branch --show-current)" \
             "$(git -C "${REPRO_TREE}" rev-parse HEAD)" "${SOURCE_COMMIT}"
-        printf 'filebench_ab_profile=%s\nrepetitions=%s\nconfigurations=%s\n' \
-            "${RUN_PROFILE}" "${REPETITIONS}" "${CONFIGURATIONS[*]}"
+        printf 'filebench_ab_profile=%s\nrepetitions=%s\nconfigurations=%s\nworkloads=%s\n' \
+            "${RUN_PROFILE}" "${REPETITIONS}" "${CONFIGURATIONS[*]}" \
+            "${WORKLOADS[*]}"
         printf 'openssd_expected_branch=%s\nopenssd_expected_commit=%s\n' \
             "${OPENSSD_BRANCH}" "${OPENSSD_COMMIT}"
         printf 'firmware_identity_limit=source and Vitis hashes do not prove running ELF identity\n'
