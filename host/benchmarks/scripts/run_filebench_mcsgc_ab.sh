@@ -45,7 +45,7 @@ declare -A HOST_COMMITS=(
     [control]=5262b5a3979cc55302ae0300cbd8f24b51c60c24
     [standard-prefree]=d6544c2140c3f3cf3f22eec9285a1ba801f629bf
     [pre-sync]=1c75f3d499c03b3a81a337090ff543de7e493b13
-    [single-section]=a49208ead593f315b7047cc40cce293d4a29494b
+    [single-section]=01e74974489c6d72555d70909541ec22ec887acd
 )
 declare -A HOST_BASE_COMMITS=(
     [control]=5262b5a3979cc55302ae0300cbd8f24b51c60c24
