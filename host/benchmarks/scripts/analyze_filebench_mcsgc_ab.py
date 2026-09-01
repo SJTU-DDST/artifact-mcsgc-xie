@@ -20,6 +20,9 @@ LABELS = {
     "standard-prefree": "B: standard prefree checkpoint",
     "pre-sync": "C: B plus pre-CSGC sync",
     "single-section": "D: sequential sections",
+    "segment-window1": "E1: one active segment",
+    "segment-window2": "E2: two active segments",
+    "segment-window4": "E4: four active segments",
 }
 WORKLOAD_LABELS = {
     "filebench-fileserver": "fileserver",
@@ -80,7 +83,10 @@ def write_report(
         ),
     )
     has_control = "control" in stats
-    ratio_heading = "Mean vs A" if has_control else "Mean vs A (not available)"
+    mean_ratio_heading = "Mean vs A" if has_control else "Mean vs A (not available)"
+    median_ratio_heading = (
+        "Median vs A" if has_control else "Median vs A (not available)"
+    )
     lines = [
         "# mCSGC Filebench Single-Variable A/B Results",
         "",
@@ -88,26 +94,30 @@ def write_report(
         "- Firmware is fixed to SSD1t; all configurations use identical workloads.",
         "- A is the current Conflict-aware candidate; B restores only standard",
         "  prefree checkpoints; C adds pre-CSGC sync to B; D retains unsafe",
-        "  reclaim but processes sections sequentially.",
+        "  reclaim but processes sections sequentially. E1/E2/E4 additionally",
+        "  limit active segment collectors within each section.",
         "",
         "## Throughput",
         "",
-        f"| Configuration | Workload | Samples | Mean ops/s | Median | Min | Max | Stddev | {ratio_heading} |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        f"| Configuration | Workload | Samples | Mean ops/s | Median | Min | Max | Stddev | {mean_ratio_heading} | {median_ratio_heading} |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for configuration in configurations:
         for workload in workloads:
             item = stats[configuration][workload]
-            ratio = "-"
+            mean_ratio = "-"
+            median_ratio = "-"
             if has_control:
-                control = stats["control"][workload]["mean_ops_s"]
-                ratio = f"{item['mean_ops_s'] / control:.3f}x"
+                control_mean = stats["control"][workload]["mean_ops_s"]
+                control_median = stats["control"][workload]["median_ops_s"]
+                mean_ratio = f"{item['mean_ops_s'] / control_mean:.3f}x"
+                median_ratio = f"{item['median_ops_s'] / control_median:.3f}x"
             lines.append(
                 f"| {LABELS.get(configuration, configuration)} "
                 f"| {WORKLOAD_LABELS[workload]} | {int(item['count'])} "
                 f"| {item['mean_ops_s']:.3f} | {item['median_ops_s']:.3f} "
                 f"| {item['min_ops_s']:.3f} | {item['max_ops_s']:.3f} "
-                f"| {item['stdev_ops_s']:.3f} | {ratio} |"
+                f"| {item['stdev_ops_s']:.3f} | {mean_ratio} | {median_ratio} |"
             )
 
     lines.extend(["", "## Single-Variable Comparisons", ""])
@@ -115,19 +125,28 @@ def write_report(
         for configuration in configurations:
             if configuration == "control":
                 continue
-            ratios = [
+            mean_ratios = [
                 stats[configuration][workload]["mean_ops_s"]
                 / stats["control"][workload]["mean_ops_s"]
                 for workload in workloads
             ]
+            median_ratios = [
+                stats[configuration][workload]["median_ops_s"]
+                / stats["control"][workload]["median_ops_s"]
+                for workload in workloads
+            ]
             details = ", ".join(
-                f"{WORKLOAD_LABELS[workload]} {ratio:.3f}x"
-                for workload, ratio in zip(workloads, ratios)
+                f"{WORKLOAD_LABELS[workload]} mean {mean_ratio:.3f}x, "
+                f"median {median_ratio:.3f}x"
+                for workload, mean_ratio, median_ratio in zip(
+                    workloads, mean_ratios, median_ratios
+                )
             )
             lines.append(
                 f"- **{LABELS.get(configuration, configuration)}**: "
-                f"{details}, selected-workload geometric mean "
-                f"{geometric_mean(ratios):.3f}x."
+                f"{details}; geometric mean of mean ratios "
+                f"{geometric_mean(mean_ratios):.3f}x, geometric mean of "
+                f"median ratios {geometric_mean(median_ratios):.3f}x."
             )
     else:
         lines.append(
