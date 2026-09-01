@@ -63,13 +63,13 @@ declare -A HOST_BRANCHES=(
     [segment-window4]=exp/diagnostic-mcsgc8t-filebench-segment-window4-20260901
 )
 declare -A HOST_COMMITS=(
-    [control]=05c92ace40c4e2eb42dc158e04ead177cd6c1561
+    [control]=b6fb9bccbbbe4c3bf7dd666f808fb6f2e1e1c145
     [standard-prefree]=d6544c2140c3f3cf3f22eec9285a1ba801f629bf
     [pre-sync]=1c75f3d499c03b3a81a337090ff543de7e493b13
-    [single-section]=5bfd2518d9fc359681670752ddb6d643c61c58a8
-    [segment-window1]=584540dfc63f6a4dfe6e5018375d16aba7f5b4d7
-    [segment-window2]=55b3e39beca3e385be2879170ac3da43390982ff
-    [segment-window4]=063679870b8555e913133b610415674afc5e3793
+    [single-section]=d38d3355588d22bb8c17ecb53ca60a79ad6879f0
+    [segment-window1]=d46a18679aa81f84885d5950ff2de812af7dcac5
+    [segment-window2]=5035e83f40644295c0d99fd777ad6011174444f9
+    [segment-window4]=0064d7c870952166e9203d6bc16fee8a947a2508
 )
 declare -A HOST_BASE_COMMITS=(
     [control]=5262b5a3979cc55302ae0300cbd8f24b51c60c24
