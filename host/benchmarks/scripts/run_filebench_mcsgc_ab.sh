@@ -64,8 +64,8 @@ declare -A HOST_BRANCHES=(
 )
 declare -A HOST_COMMITS=(
     [control]=b6fb9bccbbbe4c3bf7dd666f808fb6f2e1e1c145
-    [standard-prefree]=878d0cd3fc1e1e7d1ed91bbef162b9d4b2d5efab
-    [pre-sync]=f5decf82daf23e8116ac5647828342a35bc18d75
+    [standard-prefree]=7ce6137ea85e4c0d1b514666b6e64bbbabff8573
+    [pre-sync]=191d1133d38caeba7d95bb1bafb50b84b528901f
     [single-section]=d38d3355588d22bb8c17ecb53ca60a79ad6879f0
     [segment-window1]=d46a18679aa81f84885d5950ff2de812af7dcac5
     [segment-window2]=5035e83f40644295c0d99fd777ad6011174444f9
