@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import bisect
 import csv
 import json
 import math
@@ -55,10 +56,14 @@ def parse_filebench_details(path: Path) -> Tuple[Dict[str, object], List[Dict[st
     if not summaries:
         return {}, []
 
+    running = re.search(r"^([\d.]+):\s+Running\.\.\.$", text, flags=re.MULTILINE)
+    run_start_s = float(running.group(1)) if running else None
     first_timestamp = summaries[0]["timestamp_s"]
     for index, item in enumerate(summaries):
         item["sample_index"] = float(index)
         item["elapsed_s"] = item["timestamp_s"] - first_timestamp
+        if run_start_s is not None:
+            item["run_elapsed_s"] = item["timestamp_s"] - run_start_s
 
     result: Dict[str, object] = {
         "filebench_summary_count": len(summaries),
@@ -67,6 +72,8 @@ def parse_filebench_details(path: Path) -> Tuple[Dict[str, object], List[Dict[st
             / sum(item["operations"] for item in summaries)
         ),
     }
+    if run_start_s is not None:
+        result["filebench_run_start_s"] = run_start_s
     if len(summaries) > 1:
         width = max(1, len(summaries) // 4)
         early = [item["throughput_ops_s"] for item in summaries[:width]]
@@ -235,6 +242,131 @@ def parse_phase_times(path: Path) -> Dict[str, float]:
     ):
         if start in phases and end in phases:
             result[name] = (phases[end] - phases[start]) / 1e9
+    return result
+
+
+def parse_phase_markers(path: Path) -> Dict[str, int]:
+    """Read absolute phase timestamps for cross-source timeline alignment."""
+    if not path.exists():
+        return {}
+    with path.open(newline="", encoding="utf-8") as handle:
+        return {
+            row["phase"]: int(row["realtime_ns"])
+            for row in csv.DictReader(handle, delimiter="\t")
+        }
+
+
+def align_filebench_status(
+    summaries: List[Dict[str, float]],
+    status_records: List[Dict[str, object]],
+    filebench_start_ns: int,
+) -> List[Dict[str, object]]:
+    """Match each periodic Filebench report to the nearest F2FS snapshot."""
+    if not summaries or not status_records:
+        return []
+
+    status_times = [int(record["realtime_ns"]) for record in status_records]
+    aligned: List[Dict[str, object]] = []
+    previous_status_index: int | None = None
+    for summary in summaries:
+        target_ns = filebench_start_ns + int(summary["timestamp_s"] * 1e9)
+        insertion = bisect.bisect_left(status_times, target_ns)
+        candidates = [
+            index
+            for index in (insertion - 1, insertion)
+            if 0 <= index < len(status_records)
+        ]
+        if not candidates:
+            continue
+        status_index = min(
+            candidates,
+            key=lambda index: abs(status_times[index] - target_ns),
+        )
+        status = status_records[status_index]
+        item: Dict[str, object] = {
+            **summary,
+            "status_offset_s": (status_times[status_index] - target_ns) / 1e9,
+        }
+        for name in (
+            "utilization_pct",
+            "valid_segments",
+            "dirty_segments",
+            "prefree_segments",
+            "free_segments",
+            "free_sections",
+            "cp_calls",
+            "gc_calls",
+        ):
+            if name in status:
+                item[name] = status[name]
+        if previous_status_index is not None and status_index != previous_status_index:
+            previous = status_records[previous_status_index]
+            for name in ("cp_calls", "gc_calls"):
+                if name in item and name in previous:
+                    item[f"{name}_interval_delta"] = (
+                        int(item[name]) - int(previous[name])
+                    )
+        previous_status_index = status_index
+        aligned.append(item)
+    return aligned
+
+
+def summarize_collapse(
+    timeline: List[Dict[str, object]],
+) -> Dict[str, object]:
+    """Locate the first transient and sustained half-throughput collapse."""
+    if len(timeline) < 3:
+        return {}
+    baseline_width = min(3, len(timeline))
+    baseline = statistics.median(
+        float(item["throughput_ops_s"])
+        for item in timeline[:baseline_width]
+    )
+    threshold = baseline * 0.5
+    first_index = next(
+        (
+            index
+            for index, item in enumerate(timeline)
+            if float(item["throughput_ops_s"]) < threshold
+        ),
+        None,
+    )
+    sustained_index = next(
+        (
+            index
+            for index in range(len(timeline) - 2)
+            if all(
+                float(timeline[offset]["throughput_ops_s"]) < threshold
+                for offset in range(index, index + 3)
+            )
+        ),
+        None,
+    )
+    result: Dict[str, object] = {
+        "collapse_baseline_ops_s": baseline,
+        "collapse_threshold_ops_s": threshold,
+    }
+    for prefix, index in (
+        ("first_half", first_index),
+        ("sustained_half", sustained_index),
+    ):
+        if index is None:
+            continue
+        item = timeline[index]
+        result[f"{prefix}_elapsed_s"] = float(
+            item.get("run_elapsed_s", item["timestamp_s"])
+        )
+        result[f"{prefix}_ops_s"] = float(item["throughput_ops_s"])
+        for name in (
+            "free_sections",
+            "free_segments",
+            "prefree_segments",
+            "dirty_segments",
+            "cp_calls",
+            "gc_calls",
+        ):
+            if name in item:
+                result[f"{prefix}_{name}"] = item[name]
     return result
 
 
@@ -441,6 +573,50 @@ def write_report(
             ]
         )
 
+    collapse_samples = [
+        item for item in samples if "collapse_baseline_ops_s" in item
+    ]
+    if collapse_samples:
+        lines.extend(
+            [
+                "## Throughput Collapse And Space State",
+                "",
+                "| Case | Early baseline | First below 50% (s) | "
+                "Sustained below 50% (s) | Free sections | Prefree segments | "
+                "Dirty segments | CP calls | GC calls |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for item in sorted(
+            collapse_samples, key=lambda value: str(value["case_id"])
+        ):
+            state_prefix = (
+                "sustained_half"
+                if "sustained_half_elapsed_s" in item
+                else "first_half"
+            )
+            lines.append(
+                f"| {item['case_id']} "
+                f"| {format_metric(item, 'collapse_baseline_ops_s')} "
+                f"| {format_metric(item, 'first_half_elapsed_s')} "
+                f"| {format_metric(item, 'sustained_half_elapsed_s')} "
+                f"| {format_metric(item, f'{state_prefix}_free_sections')} "
+                f"| {format_metric(item, f'{state_prefix}_prefree_segments')} "
+                f"| {format_metric(item, f'{state_prefix}_dirty_segments')} "
+                f"| {format_metric(item, f'{state_prefix}_cp_calls')} "
+                f"| {format_metric(item, f'{state_prefix}_gc_calls')} |"
+            )
+        lines.extend(
+            [
+                "",
+                "The early baseline is the median of the first three complete",
+                "reporting intervals. Sustained collapse requires three consecutive",
+                "intervals below half that baseline. Space state is matched from the",
+                "nearest low-frequency F2FS snapshot and is diagnostic only.",
+                "",
+            ]
+        )
+
     kernel_samples = [
         item
         for item in samples
@@ -543,6 +719,7 @@ def main() -> None:
     status_records: List[Dict[str, object]] = []
     status_summaries: List[Dict[str, object]] = []
     timeline_records: List[Dict[str, object]] = []
+    space_timeline_records: List[Dict[str, object]] = []
     grouped: Dict[str, Dict[str, List[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
@@ -565,12 +742,33 @@ def main() -> None:
             "case_id": case_id,
             **summarize_status_samples(case_status_records),
         }
-        phase_times = parse_phase_times(
-            Path(row["output_path"]) / "filebench-phase-times.tsv"
-        )
+        phase_path = Path(row["output_path"]) / "filebench-phase-times.tsv"
+        phase_times = parse_phase_times(phase_path)
+        phase_markers = parse_phase_markers(phase_path)
         filebench_details, case_timeline = parse_filebench_details(
             Path(row["output_path"]) / "filebench.log"
         )
+        case_space_timeline: List[Dict[str, object]] = []
+        if "filebench_start" in phase_markers:
+            filebench_start_ns = phase_markers["filebench_start"]
+            for record in case_status_records:
+                record["filebench_elapsed_s"] = (
+                    int(record["realtime_ns"]) - filebench_start_ns
+                ) / 1e9
+            case_space_timeline = align_filebench_status(
+                case_timeline, case_status_records, filebench_start_ns
+            )
+            for record in case_space_timeline:
+                space_timeline_records.append(
+                    {
+                        "case_id": case_id,
+                        "configuration": configuration,
+                        "workload": workload,
+                        "repetition": repetition,
+                        **record,
+                    }
+                )
+        collapse = summarize_collapse(case_space_timeline or case_timeline)
         kernel_lifecycle = parse_kernel_lifecycle(Path(row["output_path"]))
         if case_status_records:
             status_summaries.append(status_summary)
@@ -606,6 +804,7 @@ def main() -> None:
                 "output_path": row["output_path"],
                 **phase_times,
                 **filebench_details,
+                **collapse,
                 **kernel_lifecycle,
                 **{key: value for key, value in status_summary.items() if key != "case_id"},
             }
@@ -642,6 +841,7 @@ def main() -> None:
         "filebench_wall_s",
         "post_filebench_teardown_s",
         "filebench_summary_count",
+        "filebench_run_start_s",
         "filebench_summary_latency_ms",
         "wrtfile1_latency_ms",
         "wrtfile1_max_ms",
@@ -668,6 +868,24 @@ def main() -> None:
         "max_dirty_segments",
         "cp_calls_delta",
         "gc_calls_delta",
+        "collapse_baseline_ops_s",
+        "collapse_threshold_ops_s",
+        "first_half_elapsed_s",
+        "first_half_ops_s",
+        "first_half_free_sections",
+        "first_half_free_segments",
+        "first_half_prefree_segments",
+        "first_half_dirty_segments",
+        "first_half_cp_calls",
+        "first_half_gc_calls",
+        "sustained_half_elapsed_s",
+        "sustained_half_ops_s",
+        "sustained_half_free_sections",
+        "sustained_half_free_segments",
+        "sustained_half_prefree_segments",
+        "sustained_half_dirty_segments",
+        "sustained_half_cp_calls",
+        "sustained_half_gc_calls",
     ]
     with (analysis / "samples.csv").open(
         "w", newline="", encoding="utf-8"
@@ -685,6 +903,7 @@ def main() -> None:
             "wall_time",
             "realtime_ns",
             "elapsed_s",
+            "filebench_elapsed_s",
             "utilization_pct",
             "valid_segments",
             "dirty_segments",
@@ -711,6 +930,7 @@ def main() -> None:
             "repetition",
             "sample_index",
             "elapsed_s",
+            "run_elapsed_s",
             "timestamp_s",
             "operations",
             "throughput_ops_s",
@@ -724,6 +944,43 @@ def main() -> None:
             )
             writer.writeheader()
             writer.writerows(timeline_records)
+
+    if space_timeline_records:
+        space_timeline_fields = [
+            "case_id",
+            "configuration",
+            "workload",
+            "repetition",
+            "sample_index",
+            "elapsed_s",
+            "run_elapsed_s",
+            "timestamp_s",
+            "operations",
+            "throughput_ops_s",
+            "latency_ms",
+            "status_offset_s",
+            "utilization_pct",
+            "valid_segments",
+            "dirty_segments",
+            "prefree_segments",
+            "free_segments",
+            "free_sections",
+            "cp_calls",
+            "gc_calls",
+            "cp_calls_interval_delta",
+            "gc_calls_interval_delta",
+        ]
+        with (analysis / "filebench-space-timeline.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=space_timeline_fields,
+                extrasaction="ignore",
+                lineterminator="\n",
+            )
+            writer.writeheader()
+            writer.writerows(space_timeline_records)
 
     payload = {
         "batch": str(batch),

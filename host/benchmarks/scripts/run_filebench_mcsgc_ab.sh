@@ -21,7 +21,7 @@ RUN_PROFILE=${FILEBENCH_AB_PROFILE:-screen}
 REPETITIONS=${FILEBENCH_AB_REPETITIONS:-3}
 REPEAT_CONFIGS=${FILEBENCH_AB_CONFIGS:-control,standard-prefree}
 WORKLOAD_FILTER=${FILEBENCH_AB_WORKLOADS:-filebench-fileserver,filebench-varmail}
-REPORT_INTERVAL=${FILEBENCH_AB_REPORT_INTERVAL:-0}
+REPORT_INTERVAL=${FILEBENCH_AB_REPORT_INTERVAL:-5}
 STATUS_SAMPLE_INTERVAL=${FILEBENCH_AB_STATUS_SAMPLE_INTERVAL:-5}
 for diagnostic_interval in "${REPORT_INTERVAL}" "${STATUS_SAMPLE_INTERVAL}"; do
     case "${diagnostic_interval}" in
@@ -79,7 +79,7 @@ declare -A HOST_COMMITS=(
     [standard-prefree]=7ce6137ea85e4c0d1b514666b6e64bbbabff8573
     [pre-sync]=191d1133d38caeba7d95bb1bafb50b84b528901f
     [single-section]=d38d3355588d22bb8c17ecb53ca60a79ad6879f0
-    [node-checkpoint]=d7351410366aa91d87114d2c8f8da17a0b17740e
+    [node-checkpoint]=af64f2ee7bc66d48528b382c14c78919590ddad3
     [allocator-first]=7fb6548b802d2408c586040d90f8bbdb5a4ed679
     [segment-window1]=d46a18679aa81f84885d5950ff2de812af7dcac5
     [segment-window2]=5035e83f40644295c0d99fd777ad6011174444f9
@@ -151,10 +151,9 @@ After screening, repeat selected configurations with:
   FILEBENCH_AB_WORKLOADS=filebench-fileserver,filebench-varmail
   FILEBENCH_AB_REPETITIONS=3
 
-Low-overhead F2FS status sampling defaults to 5 seconds. Set
-FILEBENCH_AB_STATUS_SAMPLE_INTERVAL=0 to disable it. Periodic Filebench output
-is disabled by default; set FILEBENCH_AB_REPORT_INTERVAL=5 to enable a true
-five-second timeline over the full configured runtime.
+Low-overhead F2FS status sampling and periodic Filebench output both default to
+5 seconds. Set FILEBENCH_AB_STATUS_SAMPLE_INTERVAL=0 or
+FILEBENCH_AB_REPORT_INTERVAL=0 to disable the corresponding timeline.
 EOF
 }
 
