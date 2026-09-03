@@ -105,6 +105,25 @@ def summarize_status_samples(records: List[Dict[str, object]]) -> Dict[str, floa
     return result
 
 
+def parse_phase_times(path: Path) -> Dict[str, float]:
+    """Calculate the measured command and post-command teardown durations."""
+    if not path.exists():
+        return {}
+    with path.open(newline="", encoding="utf-8") as handle:
+        phases = {
+            row["phase"]: int(row["realtime_ns"])
+            for row in csv.DictReader(handle, delimiter="\t")
+        }
+    result: Dict[str, float] = {}
+    for start, end, name in (
+        ("filebench_start", "filebench_end", "filebench_wall_s"),
+        ("teardown_start", "teardown_end", "post_filebench_teardown_s"),
+    ):
+        if start in phases and end in phases:
+            result[name] = (phases[end] - phases[start]) / 1e9
+    return result
+
+
 def read_rows(path: Path) -> List[Dict[str, str]]:
     """Read the latest successful result row for each scheduled case."""
     with path.open(newline="", encoding="utf-8") as handle:
@@ -149,6 +168,7 @@ def write_report(
     stats: Mapping[str, Mapping[str, Mapping[str, float]]],
     workloads: List[str],
     status_summaries: List[Mapping[str, object]],
+    samples: List[Mapping[str, object]],
 ) -> str:
     """Build a concise report with explicit A/B denominators."""
     configurations = sorted(
@@ -265,6 +285,31 @@ def write_report(
                 "",
             ]
         )
+    timed_samples = [
+        item for item in samples if "post_filebench_teardown_s" in item
+    ]
+    if timed_samples:
+        lines.extend(
+            [
+                "## Lifecycle Tail",
+                "",
+                "| Case | Filebench wall time (s) | Post-Filebench teardown (s) |",
+                "|---|---:|---:|",
+            ]
+        )
+        for item in sorted(timed_samples, key=lambda value: str(value["case_id"])):
+            lines.append(
+                f"| {item['case_id']} | {item.get('filebench_wall_s', '-')} "
+                f"| {item['post_filebench_teardown_s']:.3f} |"
+            )
+        lines.extend(
+            [
+                "",
+                "The teardown interval starts after Filebench exits and includes the fixed",
+                "five-second delay, filesystem sync, unmount, and statistics collection.",
+                "",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -305,6 +350,9 @@ def main() -> None:
             "case_id": case_id,
             **summarize_status_samples(case_status_records),
         }
+        phase_times = parse_phase_times(
+            Path(row["output_path"]) / "filebench-phase-times.tsv"
+        )
         if case_status_records:
             status_summaries.append(status_summary)
             for record in case_status_records:
@@ -327,6 +375,7 @@ def main() -> None:
                 "throughput_ops_s": throughput,
                 "duration_s": float(row["duration_s"]),
                 "output_path": row["output_path"],
+                **phase_times,
                 **{key: value for key, value in status_summary.items() if key != "case_id"},
             }
         )
@@ -359,6 +408,8 @@ def main() -> None:
         "repetition",
         "throughput_ops_s",
         "duration_s",
+        "filebench_wall_s",
+        "post_filebench_teardown_s",
         "output_path",
         "status_samples",
         "min_free_sections",
@@ -413,7 +464,7 @@ def main() -> None:
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    report = write_report(batch, stats, ordered_workloads, status_summaries)
+    report = write_report(batch, stats, ordered_workloads, status_summaries, samples)
     (analysis / "filebench-mcsgc-ab-report.md").write_text(
         report, encoding="utf-8"
     )

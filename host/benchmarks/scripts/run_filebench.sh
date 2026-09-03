@@ -7,6 +7,15 @@ mntpoint=${MNTPOINT}
 filebench_report_interval=${FILEBENCH_REPORT_INTERVAL:-0}
 f2fs_status_sample_interval=${F2FS_STATUS_SAMPLE_INTERVAL:-0}
 status_sampler_pid=""
+phase_timing_file=""
+
+# Record coarse benchmark boundaries outside the measured request path.
+record_phase_time() {
+    local phase=$1
+
+    printf '%s\t%s\t%s\n' "${phase}" "$(date +%s%N)" \
+        "$(date --iso-8601=ns)" >> "${phase_timing_file}"
+}
 
 # Stop only the sampler started by this invocation.
 stop_f2fs_status_sampler() {
@@ -66,6 +75,8 @@ fi
 workload_path="${WORKLOAD_PATH_BASE}/${workload_type}/${bmname}.f"
 output_path=${output_path_base}/${workload_type}_${bmname}_s${segs_per_sec}
 mkdir -p ${output_path}
+phase_timing_file="${output_path}/filebench-phase-times.tsv"
+printf 'phase\trealtime_ns\twall_time\n' > "${phase_timing_file}"
 
 echo 0 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
 echo 20 | sudo tee /proc/sys/kernel/panic > /dev/null
@@ -111,6 +122,7 @@ if [ "${f2fs_status_sample_interval}" -gt 0 ]; then
     status_sampler_pid=$!
 fi
 filebench_status=0
+record_phase_time filebench_start
 if [ ${use_cgroup} -eq 1 ]; then
     sudo cgexec -g memory:${CGROUP_NAME} filebench -f "${tmp_workload_path}" \
     2>&1 | tee -a "${output_path}/${workload_type}.log" || filebench_status=$?
@@ -118,16 +130,19 @@ else
     filebench -f "${tmp_workload_path}" \
     2>&1 | tee -a "${output_path}/${workload_type}.log" || filebench_status=$?
 fi
-stop_f2fs_status_sampler
 
 # Filebench can return zero after a flowop abort, so reject its fatal markers.
 if grep -Eq 'NO VALID RESULTS|Failed to open file|flowop .* failed|Input/output error' \
         "${output_path}/${workload_type}.log"; then
     filebench_status=1
 fi
+record_phase_time filebench_end
 echo "======================================================="
 
+record_phase_time teardown_start
 umount_and_get_stat "${devpath}" "${gc_mode}" "${output_path}/stat.log"
+record_phase_time teardown_end
+stop_f2fs_status_sampler
 
 if [ ${fsck_after_run} -ne 0 ]; then
     echo "run fsck"

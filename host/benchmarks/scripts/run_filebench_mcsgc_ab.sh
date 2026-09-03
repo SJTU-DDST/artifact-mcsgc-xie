@@ -504,7 +504,7 @@ validate_case() {
             ! grep -q 'Return=ERROR' "${log_path}"
             ;;
     esac
-    if grep -aEiq 'BUG:|Oops:|kernel panic|NULL pointer dereference|refcount.*(underflow|saturated)|SIT.*(corrupt|inconsistent)|Inconsistent segment.*SSA and SIT|EUCLEAN|nvme.*(timeout|reset controller)|I/O error' \
+    if grep -aEiq 'BUG:|Oops:|kernel panic|NULL pointer dereference|blocked for more than|refcount.*(underflow|saturated)|SIT.*(corrupt|inconsistent)|Inconsistent segment.*SSA and SIT|EUCLEAN|nvme.*(timeout|reset controller)|I/O error' \
         "${output_path}/dmesg.log"; then
         die "kernel or device anomaly detected in ${output_path}/dmesg.log"
     fi
