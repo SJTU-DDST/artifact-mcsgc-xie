@@ -4,6 +4,51 @@ set -uo pipefail
 
 source ./common.sh
 mntpoint=${MNTPOINT}
+filebench_report_interval=${FILEBENCH_REPORT_INTERVAL:-0}
+f2fs_status_sample_interval=${F2FS_STATUS_SAMPLE_INTERVAL:-0}
+status_sampler_pid=""
+
+# Stop only the sampler started by this invocation.
+stop_f2fs_status_sampler() {
+    if [ -n "${status_sampler_pid}" ] && kill -0 "${status_sampler_pid}" 2>/dev/null; then
+        kill "${status_sampler_pid}" 2>/dev/null || true
+        wait "${status_sampler_pid}" 2>/dev/null || true
+    fi
+    status_sampler_pid=""
+}
+
+# Save low-frequency F2FS state snapshots without adding kernel instrumentation.
+sample_f2fs_status() {
+    local output_file=$1
+    local interval=$2
+
+    while findmnt -rn -S "${devpath}" >/dev/null; do
+        printf '=== F2FS_STATUS_SAMPLE wall=%s realtime_ns=%s ===\n' \
+            "$(date --iso-8601=ns)" "$(date +%s%N)" >> "${output_file}"
+        if /usr/bin/sudo -n test -r "${DEBUGFS_PATH}/status"; then
+            /usr/bin/sudo -n cat "${DEBUGFS_PATH}/status" >> "${output_file}" || true
+        else
+            printf 'status_unavailable=1\n' >> "${output_file}"
+        fi
+        printf '=== F2FS_STATUS_SAMPLE_END ===\n' >> "${output_file}"
+        sleep "${interval}"
+    done
+}
+
+trap stop_f2fs_status_sampler EXIT
+
+case "${filebench_report_interval}" in
+    ''|*[!0-9]*)
+        echo "ERROR: FILEBENCH_REPORT_INTERVAL must be a non-negative integer" >&2
+        exit 2
+        ;;
+esac
+case "${f2fs_status_sample_interval}" in
+    ''|*[!0-9]*)
+        echo "ERROR: F2FS_STATUS_SAMPLE_INTERVAL must be a non-negative integer" >&2
+        exit 2
+        ;;
+esac
 
 if [ $light_evaluation -eq 1 ]; then
     runtime=60
@@ -40,7 +85,31 @@ cp "${workload_path}" "${tmp_workload_path}"
 sed -i "s|__DATA_PATH_PLACEHOLDER__|${mntpoint}|g" "${tmp_workload_path}"
 sed -i "s|__RUNTIME_PLACEHOLDER__|${runtime}|g" "${tmp_workload_path}"
 
+if [ "${filebench_report_interval}" -gt 0 ]; then
+    tmp_periodic_path="${tmp_workload_path}.periodic"
+    awk -v interval="${filebench_report_interval}" -v runtime="${runtime}" '
+        ($1 == "run" && $2 == "$runtime") ||
+        ($1 == "psrun" && $3 == "$runtime") {
+            print "psrun -" interval " " runtime
+            converted++
+            next
+        }
+        { print }
+        END { if (converted != 1) exit 42 }
+    ' "${tmp_workload_path}" > "${tmp_periodic_path}" || {
+        echo "ERROR: failed to convert Filebench workload to periodic output" >&2
+        echo "Failed generated workload retained at ${tmp_periodic_path}" >&2
+        exit 1
+    }
+    mv "${tmp_periodic_path}" "${tmp_workload_path}"
+fi
+
 reset_ssd_stat "${devpath}"
+if [ "${f2fs_status_sample_interval}" -gt 0 ]; then
+    sample_f2fs_status "${output_path}/f2fs-status-timeline.log" \
+        "${f2fs_status_sample_interval}" &
+    status_sampler_pid=$!
+fi
 filebench_status=0
 if [ ${use_cgroup} -eq 1 ]; then
     sudo cgexec -g memory:${CGROUP_NAME} filebench -f "${tmp_workload_path}" \
@@ -49,6 +118,7 @@ else
     filebench -f "${tmp_workload_path}" \
     2>&1 | tee -a "${output_path}/${workload_type}.log" || filebench_status=$?
 fi
+stop_f2fs_status_sampler
 
 # Filebench can return zero after a flowop abort, so reject its fatal markers.
 if grep -Eq 'NO VALID RESULTS|Failed to open file|flowop .* failed|Input/output error' \

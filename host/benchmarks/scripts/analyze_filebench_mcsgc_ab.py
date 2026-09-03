@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 import statistics
 import sys
 from collections import defaultdict
@@ -28,6 +29,80 @@ WORKLOAD_LABELS = {
     "filebench-fileserver": "fileserver",
     "filebench-varmail": "varmail",
 }
+
+
+def parse_status_samples(path: Path) -> List[Dict[str, object]]:
+    """Parse low-frequency snapshots emitted by run_filebench.sh."""
+    if not path.exists():
+        return []
+    records: List[Dict[str, object]] = []
+    current: Dict[str, object] | None = None
+    patterns = {
+        "utilization_pct": re.compile(r"^Utilization:\s+(\d+)%"),
+        "valid_segments": re.compile(r"^\s+- Valid:\s+(\d+)"),
+        "dirty_segments": re.compile(r"^\s+- Dirty:\s+(\d+)"),
+        "prefree_segments": re.compile(r"^\s+- Prefree:\s+(\d+)"),
+        "free_segments": re.compile(r"^\s+- Free:\s+(\d+)\s+\((\d+)\)"),
+        "cp_calls": re.compile(r"^CP calls:\s+(\d+)"),
+        "gc_calls": re.compile(r"^GC calls:\s+(\d+)"),
+    }
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        marker = re.match(
+            r"^=== F2FS_STATUS_SAMPLE wall=(\S+) realtime_ns=(\d+) ===$", line
+        )
+        if marker:
+            current = {
+                "wall_time": marker.group(1),
+                "realtime_ns": int(marker.group(2)),
+            }
+            continue
+        if line == "=== F2FS_STATUS_SAMPLE_END ===":
+            if current and "free_sections" in current:
+                records.append(current)
+            current = None
+            continue
+        if current is None:
+            continue
+        for name, pattern in patterns.items():
+            match = pattern.match(line)
+            if not match:
+                continue
+            if name == "free_segments":
+                current[name] = int(match.group(1))
+                current["free_sections"] = int(match.group(2))
+            else:
+                current[name] = int(match.group(1))
+            break
+    if records:
+        first_ns = int(records[0]["realtime_ns"])
+        for record in records:
+            record["elapsed_s"] = (int(record["realtime_ns"]) - first_ns) / 1e9
+    return records
+
+
+def summarize_status_samples(records: List[Dict[str, object]]) -> Dict[str, float]:
+    """Summarize allocator pressure and GC activity for one benchmark case."""
+    if not records:
+        return {}
+
+    def values(name: str) -> List[int]:
+        return [int(record[name]) for record in records if name in record]
+
+    result: Dict[str, float] = {"status_samples": float(len(records))}
+    for name, reducer, output_name in (
+        ("free_sections", min, "min_free_sections"),
+        ("free_segments", min, "min_free_segments"),
+        ("prefree_segments", max, "max_prefree_segments"),
+        ("dirty_segments", max, "max_dirty_segments"),
+    ):
+        items = values(name)
+        if items:
+            result[output_name] = float(reducer(items))
+    for name, output_name in (("cp_calls", "cp_calls_delta"), ("gc_calls", "gc_calls_delta")):
+        items = values(name)
+        if len(items) >= 2:
+            result[output_name] = float(items[-1] - items[0])
+    return result
 
 
 def read_rows(path: Path) -> List[Dict[str, str]]:
@@ -73,6 +148,7 @@ def write_report(
     batch: Path,
     stats: Mapping[str, Mapping[str, Mapping[str, float]]],
     workloads: List[str],
+    status_summaries: List[Mapping[str, object]],
 ) -> str:
     """Build a concise report with explicit A/B denominators."""
     configurations = sorted(
@@ -163,6 +239,32 @@ def write_report(
             "",
         ]
     )
+    if status_summaries:
+        lines.extend(
+            [
+                "## Low-Space Timeline",
+                "",
+                "| Case | Samples | Min free sections | Max prefree segments | Max dirty segments | CP delta | GC delta |",
+                "|---|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for item in sorted(status_summaries, key=lambda value: str(value["case_id"])):
+            lines.append(
+                f"| {item['case_id']} | {int(item.get('status_samples', 0))} "
+                f"| {item.get('min_free_sections', '-')} "
+                f"| {item.get('max_prefree_segments', '-')} "
+                f"| {item.get('max_dirty_segments', '-')} "
+                f"| {item.get('cp_calls_delta', '-')} "
+                f"| {item.get('gc_calls_delta', '-')} |"
+            )
+        lines.extend(
+            [
+                "",
+                "The raw five-second snapshots are preserved beside each Filebench log;",
+                "this table is diagnostic and is not part of the throughput denominator.",
+                "",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -179,6 +281,8 @@ def main() -> None:
         )
 
     samples: List[Dict[str, object]] = []
+    status_records: List[Dict[str, object]] = []
+    status_summaries: List[Dict[str, object]] = []
     grouped: Dict[str, Dict[str, List[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
@@ -194,6 +298,25 @@ def main() -> None:
             if f"-{suffix}-" in case_id
         )
         repetition = int(case_id.rsplit("-r", 1)[1])
+        case_status_records = parse_status_samples(
+            Path(row["output_path"]) / "f2fs-status-timeline.log"
+        )
+        status_summary: Dict[str, object] = {
+            "case_id": case_id,
+            **summarize_status_samples(case_status_records),
+        }
+        if case_status_records:
+            status_summaries.append(status_summary)
+            for record in case_status_records:
+                status_records.append(
+                    {
+                        "case_id": case_id,
+                        "configuration": configuration,
+                        "workload": workload,
+                        "repetition": repetition,
+                        **record,
+                    }
+                )
         grouped[configuration][workload].append(throughput)
         samples.append(
             {
@@ -204,6 +327,7 @@ def main() -> None:
                 "throughput_ops_s": throughput,
                 "duration_s": float(row["duration_s"]),
                 "output_path": row["output_path"],
+                **{key: value for key, value in status_summary.items() if key != "case_id"},
             }
         )
 
@@ -236,6 +360,13 @@ def main() -> None:
         "throughput_ops_s",
         "duration_s",
         "output_path",
+        "status_samples",
+        "min_free_sections",
+        "min_free_segments",
+        "max_prefree_segments",
+        "max_dirty_segments",
+        "cp_calls_delta",
+        "gc_calls_delta",
     ]
     with (analysis / "samples.csv").open(
         "w", newline="", encoding="utf-8"
@@ -243,6 +374,33 @@ def main() -> None:
         writer = csv.DictWriter(handle, fieldnames=sample_fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(sorted(samples, key=lambda item: item["case_id"]))
+
+    if status_records:
+        status_fields = [
+            "case_id",
+            "configuration",
+            "workload",
+            "repetition",
+            "wall_time",
+            "realtime_ns",
+            "elapsed_s",
+            "utilization_pct",
+            "valid_segments",
+            "dirty_segments",
+            "prefree_segments",
+            "free_segments",
+            "free_sections",
+            "cp_calls",
+            "gc_calls",
+        ]
+        with (analysis / "f2fs-status-samples.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as handle:
+            writer = csv.DictWriter(
+                handle, fieldnames=status_fields, extrasaction="ignore", lineterminator="\n"
+            )
+            writer.writeheader()
+            writer.writerows(status_records)
 
     payload = {
         "batch": str(batch),
@@ -255,7 +413,7 @@ def main() -> None:
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    report = write_report(batch, stats, ordered_workloads)
+    report = write_report(batch, stats, ordered_workloads, status_summaries)
     (analysis / "filebench-mcsgc-ab-report.md").write_text(
         report, encoding="utf-8"
     )

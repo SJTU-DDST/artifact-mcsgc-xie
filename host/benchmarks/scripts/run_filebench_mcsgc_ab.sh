@@ -21,6 +21,16 @@ RUN_PROFILE=${FILEBENCH_AB_PROFILE:-screen}
 REPETITIONS=${FILEBENCH_AB_REPETITIONS:-3}
 REPEAT_CONFIGS=${FILEBENCH_AB_CONFIGS:-control,standard-prefree}
 WORKLOAD_FILTER=${FILEBENCH_AB_WORKLOADS:-filebench-fileserver,filebench-varmail}
+REPORT_INTERVAL=${FILEBENCH_AB_REPORT_INTERVAL:-0}
+STATUS_SAMPLE_INTERVAL=${FILEBENCH_AB_STATUS_SAMPLE_INTERVAL:-5}
+for diagnostic_interval in "${REPORT_INTERVAL}" "${STATUS_SAMPLE_INTERVAL}"; do
+    case "${diagnostic_interval}" in
+        ''|*[!0-9]*)
+            echo "ERROR: diagnostic intervals must be non-negative integers" >&2
+            exit 2
+            ;;
+    esac
+done
 IFS=',' read -r -a WORKLOADS <<< "${WORKLOAD_FILTER}"
 [ "${#WORKLOADS[@]}" -ge 1 ] || {
     echo "ERROR: FILEBENCH_AB_WORKLOADS must not be empty" >&2
@@ -132,6 +142,11 @@ After screening, repeat selected configurations with:
   FILEBENCH_AB_CONFIGS=control,CONFIGURATION
   FILEBENCH_AB_WORKLOADS=filebench-fileserver,filebench-varmail
   FILEBENCH_AB_REPETITIONS=3
+
+Low-overhead F2FS status sampling defaults to 5 seconds. Set
+FILEBENCH_AB_STATUS_SAMPLE_INTERVAL=0 to disable it. Periodic Filebench output
+is disabled by default; set FILEBENCH_AB_REPORT_INTERVAL=5 to enable a true
+five-second timeline over the full configured runtime.
 EOF
 }
 
@@ -196,6 +211,8 @@ write_state() {
         printf 'expected_cases=%q\n' "${EXPECTED_CASES}"
         printf 'run_profile=%q\n' "${RUN_PROFILE}"
         printf 'workloads=%q\n' "${WORKLOADS[*]}"
+        printf 'filebench_report_interval_s=%q\n' "${REPORT_INTERVAL}"
+        printf 'f2fs_status_sample_interval_s=%q\n' "${STATUS_SAMPLE_INTERVAL}"
         printf 'batch_dir=%q\n' "${BATCH_DIR}"
     } > "${BATCH_DIR}/state.env"
 }
@@ -450,6 +467,8 @@ write_provenance() {
         printf 'filebench_ab_profile=%s\nrepetitions=%s\nconfigurations=%s\nworkloads=%s\n' \
             "${RUN_PROFILE}" "${REPETITIONS}" "${CONFIGURATIONS[*]}" \
             "${WORKLOADS[*]}"
+        printf 'filebench_report_interval_s=%s\nf2fs_status_sample_interval_s=%s\n' \
+            "${REPORT_INTERVAL}" "${STATUS_SAMPLE_INTERVAL}"
         printf 'openssd_expected_branch=%s\nopenssd_expected_commit=%s\n' \
             "${OPENSSD_BRANCH}" "${OPENSSD_COMMIT}"
         printf 'firmware_identity_limit=source and Vitis hashes do not prove running ELF identity\n'
@@ -621,6 +640,8 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
     EUROPAR_OUTPUT_ROOT="${BATCH_DIR}/raw/${configuration}" \
     EUROPAR_CASE_RESULTS="${CASE_RESULTS}" \
     EUROPAR_CASE_ID="${case_id}" \
+    FILEBENCH_REPORT_INTERVAL="${REPORT_INTERVAL}" \
+    F2FS_STATUS_SAMPLE_INTERVAL="${STATUS_SAMPLE_INTERVAL}" \
         "${SCRIPT_DIR}/test.sh" "${mode}" "${config_path}"
 
     output_path=$(awk -F '\t' -v id="${case_id}" \

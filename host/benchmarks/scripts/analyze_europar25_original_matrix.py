@@ -8,6 +8,7 @@ import csv
 import json
 import math
 import re
+import statistics
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -73,16 +74,30 @@ def parse_case(row: Dict[str, str]) -> Dict[str, object]:
 
     if workload_type == "filebench":
         text = read_text(output / "filebench.log")
-        value = last_match(r"IO Summary:\s+[\d.]+\s+ops\s+([\d.]+)\s+ops/s", text)
-        if value is None:
+        summaries = [
+            (float(stamp), float(ops), float(ops_s))
+            for stamp, ops, ops_s in re.findall(
+                r"([\d.]+):\s+IO Summary:\s+([\d.]+)\s+ops\s+([\d.]+)\s+ops/s",
+                text,
+            )
+        ]
+        if not summaries:
             raise ValueError(f"No filebench throughput in {output}")
-        metrics["throughput_ops_s"] = float(value)
-        timeline: List[Tuple[float, float]] = []
-        for stamp, _ops, ops_s in re.findall(
-            r"([\d.]+):\s+IO Summary:\s+([\d.]+)\s+ops\s+([\d.]+)\s+ops/s", text
-        ):
-            timeline.append((float(stamp), float(ops_s)))
-        metrics["timeline"] = timeline
+        metrics["timeline"] = [(stamp, ops_s) for stamp, _ops, ops_s in summaries]
+        if len(summaries) == 1:
+            metrics["throughput_ops_s"] = summaries[0][2]
+        else:
+            intervals = [
+                current[0] - previous[0]
+                for previous, current in zip(summaries, summaries[1:])
+            ]
+            interval = statistics.median(intervals)
+            covered_seconds = summaries[-1][0] - summaries[0][0] + interval
+            if covered_seconds <= 0:
+                raise ValueError(f"Invalid Filebench timeline in {output}")
+            metrics["throughput_ops_s"] = (
+                sum(item[1] for item in summaries) / covered_seconds
+            )
     elif workload_type == "ycsb":
         text = read_text(output / "ycsb.log")
         value = last_match(r"\[OVERALL\], Throughput\(ops/sec\),\s*([\d.]+)", text)
