@@ -21,6 +21,7 @@ LABELS = {
     "standard-prefree": "B: standard prefree checkpoint",
     "pre-sync": "C: B plus pre-CSGC sync",
     "single-section": "D: sequential sections",
+    "node-checkpoint": "E: checkpoint node victim prefree space",
     "segment-window1": "E1: one active segment",
     "segment-window2": "E2: two active segments",
     "segment-window4": "E4: four active segments",
