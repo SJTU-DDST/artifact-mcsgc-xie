@@ -11,9 +11,9 @@ import statistics
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Mapping
+from typing import Dict, List, Mapping, Tuple
 
-from analyze_europar25_original_matrix import parse_case
+from analyze_europar25_original_matrix import parse_case, read_text
 
 
 LABELS = {
@@ -29,6 +29,118 @@ WORKLOAD_LABELS = {
     "filebench-fileserver": "fileserver",
     "filebench-varmail": "varmail",
 }
+
+
+def parse_filebench_details(path: Path) -> Tuple[Dict[str, object], List[Dict[str, float]]]:
+    """Extract operation latency and periodic throughput from Filebench output."""
+    if not path.exists():
+        return {}, []
+    text = read_text(path)
+    summaries = [
+        {
+            "timestamp_s": float(stamp),
+            "operations": float(operations),
+            "throughput_ops_s": float(throughput),
+            "latency_ms": float(latency),
+        }
+        for stamp, operations, throughput, latency in re.findall(
+            r"^([\d.]+):\s+IO Summary:\s+([\d.]+)\s+ops\s+"
+            r"([\d.]+)\s+ops/s.*?([\d.]+)ms/op$",
+            text,
+            flags=re.MULTILINE,
+        )
+    ]
+    if not summaries:
+        return {}, []
+
+    first_timestamp = summaries[0]["timestamp_s"]
+    for index, item in enumerate(summaries):
+        item["sample_index"] = float(index)
+        item["elapsed_s"] = item["timestamp_s"] - first_timestamp
+
+    result: Dict[str, object] = {
+        "filebench_summary_count": len(summaries),
+        "filebench_summary_latency_ms": (
+            sum(item["latency_ms"] * item["operations"] for item in summaries)
+            / sum(item["operations"] for item in summaries)
+        ),
+    }
+    if len(summaries) > 1:
+        width = max(1, len(summaries) // 4)
+        early = [item["throughput_ops_s"] for item in summaries[:width]]
+        late = [item["throughput_ops_s"] for item in summaries[-width:]]
+        early_mean = statistics.fmean(early)
+        late_mean = statistics.fmean(late)
+        result.update(
+            timeline_early_mean_ops_s=early_mean,
+            timeline_late_mean_ops_s=late_mean,
+            timeline_late_to_early_ratio=(
+                late_mean / early_mean if early_mean else float("nan")
+            ),
+            timeline_min_ops_s=min(
+                item["throughput_ops_s"] for item in summaries
+            ),
+            timeline_max_ops_s=max(
+                item["throughput_ops_s"] for item in summaries
+            ),
+        )
+
+    operations: Dict[str, Dict[str, float]] = defaultdict(
+        lambda: {"operations": 0.0, "latency_weighted_ms": 0.0, "max_ms": 0.0}
+    )
+    for name, count, latency, maximum in re.findall(
+        r"^(\S+)\s+(\d+)ops\s+[\d.]+ops/s\s+[\d.]+mb/s\s+"
+        r"([\d.]+)ms/op\s+\[[\d.]+ms\s+-\s+([\d.]+)ms\]$",
+        text,
+        flags=re.MULTILINE,
+    ):
+        count_value = float(count)
+        latency_value = float(latency)
+        operation = operations[name]
+        operation["operations"] += count_value
+        operation["latency_weighted_ms"] += latency_value * count_value
+        operation["max_ms"] = max(operation["max_ms"], float(maximum))
+    for name in ("wrtfile1", "writefile2", "readfile1", "deletefile1"):
+        operation = operations.get(name)
+        if not operation or not operation["operations"]:
+            continue
+        result[f"{name}_latency_ms"] = (
+            operation["latency_weighted_ms"] / operation["operations"]
+        )
+        result[f"{name}_max_ms"] = operation["max_ms"]
+    return result, summaries
+
+
+def parse_kernel_lifecycle(output: Path) -> Dict[str, object]:
+    """Count writeback stalls and fatal signatures in one saved kernel log."""
+    candidates = [output / "dmesg.log", output / "dmesg.old"]
+    texts = [read_text(path) for path in candidates if path.exists()]
+    if not texts:
+        return {}
+    text = texts[0]
+    if "blocked for more than" not in text and len(texts) > 1:
+        text = texts[1]
+    blocked = re.findall(
+        r"INFO: task\s+([^:\s]+):\d+\s+blocked for more than", text
+    )
+    fatal_patterns = (
+        r"\bOops:",
+        r"\bBUG:",
+        r"kernel NULL pointer dereference",
+        r"F2FS-fs.*(?:EUCLEAN|inconsisten)",
+        r"nvme.*(?:timeout|I/O error)",
+    )
+    return {
+        "kernel_hung_task_reports": len(blocked),
+        "kernel_hung_sync_reports": sum(command == "sync" for command in blocked),
+        "kernel_hung_umount_reports": sum(
+            command in {"umount", "umount2"} for command in blocked
+        ),
+        "kernel_fatal_signature_count": sum(
+            len(re.findall(pattern, text, flags=re.IGNORECASE))
+            for pattern in fatal_patterns
+        ),
+    }
 
 
 def parse_status_samples(path: Path) -> List[Dict[str, object]]:
@@ -163,6 +275,12 @@ def geometric_mean(values: List[float]) -> float:
     return math.exp(statistics.fmean([math.log(value) for value in values]))
 
 
+def format_metric(item: Mapping[str, object], name: str) -> str:
+    """Format an optional numeric metric for Markdown tables."""
+    value = item.get(name)
+    return "-" if value is None else f"{float(value):.3f}"
+
+
 def write_report(
     batch: Path,
     stats: Mapping[str, Mapping[str, Mapping[str, float]]],
@@ -259,6 +377,100 @@ def write_report(
             "",
         ]
     )
+    detail_samples = [
+        item for item in samples if "filebench_summary_latency_ms" in item
+    ]
+    if detail_samples:
+        lines.extend(
+            [
+                "## Application Latency",
+                "",
+                "| Case | Throughput (ops/s) | IO latency (ms) | "
+                "wrtfile1 mean (ms) | wrtfile1 max (ms) | readfile1 mean (ms) |",
+                "|---|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for item in sorted(detail_samples, key=lambda value: str(value["case_id"])):
+            lines.append(
+                f"| {item['case_id']} | {item['throughput_ops_s']:.3f} "
+                f"| {item['filebench_summary_latency_ms']:.3f} "
+                f"| {format_metric(item, 'wrtfile1_latency_ms')} "
+                f"| {format_metric(item, 'wrtfile1_max_ms')} "
+                f"| {format_metric(item, 'readfile1_latency_ms')} |"
+            )
+        lines.extend(
+            [
+                "",
+                "Operation means are weighted by operation count when Filebench emits",
+                "periodic summaries. They cover application-visible buffered operations,",
+                "not the later filesystem sync and unmount.",
+                "",
+            ]
+        )
+
+    timeline_samples = [
+        item for item in samples if "timeline_late_to_early_ratio" in item
+    ]
+    if timeline_samples:
+        lines.extend(
+            [
+                "## Throughput Evolution",
+                "",
+                "| Case | Intervals | Early mean | Late mean | Late/Early | Min | Max |",
+                "|---|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for item in sorted(timeline_samples, key=lambda value: str(value["case_id"])):
+            lines.append(
+                f"| {item['case_id']} | {item['filebench_summary_count']} "
+                f"| {item['timeline_early_mean_ops_s']:.3f} "
+                f"| {item['timeline_late_mean_ops_s']:.3f} "
+                f"| {item['timeline_late_to_early_ratio']:.3f}x "
+                f"| {item['timeline_min_ops_s']:.3f} "
+                f"| {item['timeline_max_ops_s']:.3f} |"
+            )
+        lines.extend(
+            [
+                "",
+                "Early and late means use the first and last quarter of complete",
+                "Filebench reporting intervals. A single final summary cannot establish",
+                "when throughput changed.",
+                "",
+            ]
+        )
+
+    kernel_samples = [
+        item
+        for item in samples
+        if int(item.get("kernel_hung_task_reports", 0))
+        or int(item.get("kernel_fatal_signature_count", 0))
+    ]
+    if kernel_samples:
+        lines.extend(
+            [
+                "## Kernel Lifecycle Warnings",
+                "",
+                "| Case | Hung-task reports | sync | umount | Fatal signatures |",
+                "|---|---:|---:|---:|---:|",
+            ]
+        )
+        for item in sorted(kernel_samples, key=lambda value: str(value["case_id"])):
+            lines.append(
+                f"| {item['case_id']} | {item['kernel_hung_task_reports']} "
+                f"| {item['kernel_hung_sync_reports']} "
+                f"| {item['kernel_hung_umount_reports']} "
+                f"| {item['kernel_fatal_signature_count']} |"
+            )
+        lines.extend(
+            [
+                "",
+                "A zero process exit status does not make a case healthy when sync or",
+                "unmount exceeds the kernel hung-task threshold. Such cases must not be",
+                "used as correctness evidence.",
+                "",
+            ]
+        )
+
     if status_summaries:
         lines.extend(
             [
@@ -328,6 +540,7 @@ def main() -> None:
     samples: List[Dict[str, object]] = []
     status_records: List[Dict[str, object]] = []
     status_summaries: List[Dict[str, object]] = []
+    timeline_records: List[Dict[str, object]] = []
     grouped: Dict[str, Dict[str, List[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
@@ -353,6 +566,10 @@ def main() -> None:
         phase_times = parse_phase_times(
             Path(row["output_path"]) / "filebench-phase-times.tsv"
         )
+        filebench_details, case_timeline = parse_filebench_details(
+            Path(row["output_path"]) / "filebench.log"
+        )
+        kernel_lifecycle = parse_kernel_lifecycle(Path(row["output_path"]))
         if case_status_records:
             status_summaries.append(status_summary)
             for record in case_status_records:
@@ -365,6 +582,16 @@ def main() -> None:
                         **record,
                     }
                 )
+        for record in case_timeline:
+            timeline_records.append(
+                {
+                    "case_id": case_id,
+                    "configuration": configuration,
+                    "workload": workload,
+                    "repetition": repetition,
+                    **record,
+                }
+            )
         grouped[configuration][workload].append(throughput)
         samples.append(
             {
@@ -376,6 +603,8 @@ def main() -> None:
                 "duration_s": float(row["duration_s"]),
                 "output_path": row["output_path"],
                 **phase_times,
+                **filebench_details,
+                **kernel_lifecycle,
                 **{key: value for key, value in status_summary.items() if key != "case_id"},
             }
         )
@@ -410,6 +639,25 @@ def main() -> None:
         "duration_s",
         "filebench_wall_s",
         "post_filebench_teardown_s",
+        "filebench_summary_count",
+        "filebench_summary_latency_ms",
+        "wrtfile1_latency_ms",
+        "wrtfile1_max_ms",
+        "writefile2_latency_ms",
+        "writefile2_max_ms",
+        "readfile1_latency_ms",
+        "readfile1_max_ms",
+        "deletefile1_latency_ms",
+        "deletefile1_max_ms",
+        "timeline_early_mean_ops_s",
+        "timeline_late_mean_ops_s",
+        "timeline_late_to_early_ratio",
+        "timeline_min_ops_s",
+        "timeline_max_ops_s",
+        "kernel_hung_task_reports",
+        "kernel_hung_sync_reports",
+        "kernel_hung_umount_reports",
+        "kernel_fatal_signature_count",
         "output_path",
         "status_samples",
         "min_free_sections",
@@ -452,6 +700,28 @@ def main() -> None:
             )
             writer.writeheader()
             writer.writerows(status_records)
+
+    if timeline_records:
+        timeline_fields = [
+            "case_id",
+            "configuration",
+            "workload",
+            "repetition",
+            "sample_index",
+            "elapsed_s",
+            "timestamp_s",
+            "operations",
+            "throughput_ops_s",
+            "latency_ms",
+        ]
+        with (analysis / "filebench-timeline.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as handle:
+            writer = csv.DictWriter(
+                handle, fieldnames=timeline_fields, lineterminator="\n"
+            )
+            writer.writeheader()
+            writer.writerows(timeline_records)
 
     payload = {
         "batch": str(batch),
