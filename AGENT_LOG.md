@@ -37,3 +37,16 @@
 - Forced or Magic SysRq reboot requests issued for this incident: `0`.
 - On task recovery, compare the current boot ID and boot time before any further action. Never infer failure from the interrupted command transport, and do not automatically retry or escalate this reboot request.
 - Reboot completion verified at `2026-09-05T04:36:30+08:00`: boot ID changed to `e9a837c3-a97c-459c-8082-eb7aec1c9682`, boot time advanced to `2026-09-05 01:52:21`, and uptime was `9849.59` seconds. No additional reboot command was issued.
+
+## 2026-09-05 Standard-prefree reserve-boundary livelock
+
+- Failed batch: `/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-filebench-mcsgc-ab/20260905_043754`.
+- The repaired Filebench fileserver measurement completed all 300 seconds with sustained operations; the run then hung in `sync -f /mnt/openssd_f2fs`.
+- `sync` remained in `wb_wait_for_completion()` while `flush-259:0` continuously executed `f2fs_gc()` and `do_garbage_collect_cs_pipeline()` under `gc_lock`.
+- No allocator warning or Oops occurred. F2FS remained `CP: Good`, but the stable state was `free_segments=39`, `free_sections=1`, `prefree_segments=0`, while the configured writeback reserve was `40` segments.
+- Root cause: the reserve correctly rejected additional CSGC curseg rollovers, but victim dispatch still selected CSGC when no prefree segment existed for a checkpoint to release. The foreground GC call repeatedly retried work that could not allocate a CSGC destination, so writeback never completed.
+- Fixes:
+  - standard-prefree: `971116fea3a93af94592b84c060fc0bd9cc71850`
+  - pre-sync: `7dba52d06a4596a13b66a04432055e42d7e792d3`
+- At or below the reserve boundary, data victims now use the original in-kernel collector. This consumes the reserved headroom to reclaim a section, after which CSGC can resume. The normal path adds one unlikely counter comparison and no lock or log operation.
+- Both branches passed `git diff --check`, `gc.o` compilation, and full `f2fs.ko` compilation.
