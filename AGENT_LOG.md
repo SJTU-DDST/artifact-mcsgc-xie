@@ -27,3 +27,12 @@
 - Both branches passed `git diff --check`, target-object compilation, and full `f2fs.ko` compilation.
 - Reboot pre-state recorded at `2026-09-05T01:41:05+08:00`: boot ID `85e0c5f7-e9ea-435c-9626-131d898f68a1`, boot time `2026-09-04 16:19:23`, uptime `33702.44` seconds.
 - Runtime validation requires a reboot because the failed mount remains active and `SBI_NEED_FSCK` is set.
+
+### Reboot handoff
+
+- Pre-command state at `2026-09-05T01:42:27+08:00`: boot ID `85e0c5f7-e9ea-435c-9626-131d898f68a1`, boot time `2026-09-04 16:19:23`, uptime `33785.09` seconds.
+- `/dev/nvme0n1` remained mounted at `/mnt/openssd_f2fs`; writeback worker `50233` remained in the no-progress GC loop.
+- Planned action: one graceful `systemctl reboot` request.
+- Graceful reboot requests issued for this incident: `1` after the command below is submitted.
+- Forced or Magic SysRq reboot requests issued for this incident: `0`.
+- On task recovery, compare the current boot ID and boot time before any further action. Never infer failure from the interrupted command transport, and do not automatically retry or escalate this reboot request.
