@@ -50,3 +50,12 @@
   - pre-sync: `7dba52d06a4596a13b66a04432055e42d7e792d3`
 - At or below the reserve boundary, data victims now use the original in-kernel collector. This consumes the reserved headroom to reclaim a section, after which CSGC can resume. The normal path adds one unlikely counter comparison and no lock or log operation.
 - Both branches passed `git diff --check`, `gc.o` compilation, and full `f2fs.ko` compilation.
+
+### Reboot handoff
+
+- Pre-command state at `2026-09-05T04:58:50+08:00`: boot ID `e9a837c3-a97c-459c-8082-eb7aec1c9682`, boot time `2026-09-05 01:52:21`, uptime `11189.37` seconds.
+- Three tasks were in uninterruptible sleep; writeback worker `11307` remained blocked in the failed F2FS run. The namespace was no longer listed as mounted, but the old F2FS module could not be reused safely.
+- Planned action: one graceful `systemctl reboot` request.
+- Graceful reboot requests issued for this incident: `1` after the command below is submitted.
+- Forced or Magic SysRq reboot requests issued for this incident: `0`.
+- On task recovery, compare boot identity first. Do not retry or escalate this reboot request based on an interrupted tool call.
