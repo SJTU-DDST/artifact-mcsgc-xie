@@ -36,3 +36,4 @@
 - Graceful reboot requests issued for this incident: `1` after the command below is submitted.
 - Forced or Magic SysRq reboot requests issued for this incident: `0`.
 - On task recovery, compare the current boot ID and boot time before any further action. Never infer failure from the interrupted command transport, and do not automatically retry or escalate this reboot request.
+- Reboot completion verified at `2026-09-05T04:36:30+08:00`: boot ID changed to `e9a837c3-a97c-459c-8082-eb7aec1c9682`, boot time advanced to `2026-09-05 01:52:21`, and uptime was `9849.59` seconds. No additional reboot command was issued.
