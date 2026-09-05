@@ -61,6 +61,8 @@ CP_DIAG_FIELDS = (
     "cp_diag_csgc_collector_calls",
     "cp_diag_csgc_sections",
     "cp_diag_csgc_candidate_valid_blocks",
+    "cp_diag_csgc_primary_segment_valid_blocks",
+    "cp_diag_csgc_candidate_valid_mismatches",
     "cp_diag_csgc_ret_ok",
     "cp_diag_csgc_ret_eagain",
     "cp_diag_csgc_ret_error",
@@ -86,6 +88,15 @@ CP_DIAG_FIELDS = (
     "cp_diag_pre_fail_finalize",
     "cp_diag_pre_fail_request",
     "cp_diag_pre_fail_result",
+    "cp_diag_node_page_cache_miss",
+    "cp_diag_node_page_trylock",
+    "cp_diag_node_page_mapping",
+    "cp_diag_node_page_not_uptodate",
+    "cp_diag_node_page_writeback",
+    "cp_diag_node_page_checksum",
+    "cp_diag_node_page_nid_mismatch",
+    "cp_diag_node_page_data_page_alloc",
+    "cp_diag_node_page_local_cache_incomplete",
     "cp_diag_origc_data_collectors",
     "cp_diag_origc_node_collectors",
 )
@@ -96,6 +107,7 @@ CP_DIAG_LINE_PREFIXES = {
     "CSGC GC source:": "cp_diag_",
     "CSGC attempt result:": "cp_diag_csgc_",
     "CSGC pre failure:": "cp_diag_pre_fail_",
+    "CSGC node page failure:": "cp_diag_node_page_",
 }
 
 
@@ -825,8 +837,8 @@ def write_report(
                     "",
                     "### CSGC Attempt Results",
                     "",
-                    "| Case | Collector attempts | Candidate valid blocks | Return ok/EAGAIN/error | Progress/no-progress | Committed/already-free segments | Migrated blocks |",
-                    "|---|---:|---:|---:|---:|---:|---:|",
+                    "| Case | Collector attempts | Section-reported valid blocks | Primary per-segment sum | Count mismatch | Return ok/EAGAIN/error | Progress/no-progress | Committed/already-free segments | Migrated blocks |",
+                    "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
                 ]
             )
             for item in sorted(
@@ -849,6 +861,8 @@ def write_report(
                     f"| {item['case_id']} "
                     f"| {int(item.get('cp_diag_csgc_collector_calls_delta', 0.0))} "
                     f"| {int(item.get('cp_diag_csgc_candidate_valid_blocks_delta', 0.0))} "
+                    f"| {int(item.get('cp_diag_csgc_primary_segment_valid_blocks_delta', 0.0))} "
+                    f"| {int(item.get('cp_diag_csgc_candidate_valid_mismatches_delta', 0.0))} "
                     f"| {returns} | {progress} | {segments} "
                     f"| {int(item.get('cp_diag_csgc_migrated_blocks_delta', 0.0))} |"
                 )
@@ -905,6 +919,41 @@ def write_report(
                         for field in fields
                     )
                     lines.append(f"| {item['case_id']} | {values} |")
+
+            node_page_fields = (
+                "cache_miss",
+                "trylock",
+                "mapping",
+                "not_uptodate",
+                "writeback",
+                "checksum",
+                "nid_mismatch",
+                "data_page_alloc",
+                "local_cache_incomplete",
+            )
+            lines.extend(
+                [
+                    "",
+                    "### CSGC Node/Data Page Failure Detail",
+                    "",
+                    "| Case | " + " | ".join(node_page_fields) + " |",
+                    "|---|" + "---:|" * len(node_page_fields),
+                ]
+            )
+            for item in sorted(
+                result_summaries, key=lambda value: str(value["case_id"])
+            ):
+                values = " | ".join(
+                    str(
+                        int(
+                            item.get(
+                                f"cp_diag_node_page_{field}_delta", 0.0
+                            )
+                        )
+                    )
+                    for field in node_page_fields
+                )
+                lines.append(f"| {item['case_id']} | {values} |")
         lines.extend(
             [
                 "",

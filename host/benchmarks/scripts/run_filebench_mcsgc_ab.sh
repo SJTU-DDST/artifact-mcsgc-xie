@@ -93,7 +93,7 @@ declare -A HOST_COMMITS=(
     [segment-window1]=d46a18679aa81f84885d5950ff2de812af7dcac5
     [segment-window2]=5035e83f40644295c0d99fd777ad6011174444f9
     [segment-window4]=0064d7c870952166e9203d6bc16fee8a947a2508
-    [cp-source]=9e9e84e8f10d1502678ebb71a403f3b40649da37
+    [cp-source]=3b53ecbc89404fc8f002ea288d5fec1a59fe5cdf
 )
 declare -A HOST_BASE_COMMITS=(
     [control]=5262b5a3979cc55302ae0300cbd8f24b51c60c24
