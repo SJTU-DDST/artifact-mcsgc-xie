@@ -96,3 +96,17 @@
 - Forced or Magic SysRq reboot requests issued for this incident: 0.
 - On recovery, compare the current boot ID and boot time first. If either proves that reboot completed, do not issue another reboot command. If the result is unknown, do not retry or escalate automatically.
 - Reboot completion verified at 2026-09-05T13:50:31+08:00: boot ID changed to 553f25ef-b0dd-4be0-940e-2aab7d3742eb, boot time advanced to 2026-09-05 12:24:16, and uptime was 5175.65 seconds. No additional reboot or force command was issued.
+
+## 2026-09-05 Curseg exhaustion during ORIGC writeback
+
+- Failed batch: `/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-filebench-mcsgc-ab/20260905_135234`.
+- The `standard-prefree` Filebench fileserver measurement completed with `479.875 ops/s`; its early and late means were `1738.499` and `104.612 ops/s` respectively. The result is invalid because teardown subsequently corrupted SIT state.
+- At `2026-09-05 14:01:01`, ordinary ORIGC nested under writeback reached a full curseg with no complete free section. `get_new_segment()` could not allocate a successor, but the legacy void normal-allocation interface continued and crossed the curseg boundary. The kernel then reported `Fail to preallocate blocks, ret = -11`, `Bitmap was wrongly set`, and `something went wrong during csgc, need fsck`.
+- The common repair converts curseg allocation and normal data/node write paths to return errors. A failed rollover now exits before summary or SIT mutation; an allocation that validly consumed the old curseg's final block still succeeds, while the next caller retries rollover. CSGC preallocation uses the existing rollback path on a retryable rollover failure.
+- Corrected Host commits:
+  - standard-prefree: `bd5cee3e696c1636879e2529e2cc8aa553d681d4`
+  - pre-sync: `e339ef84feac6ec37ad283a6e94abb7bf76a8233`
+  - node-checkpoint: `d0f3ffafba2ac1e8e54ae3f7d33abd5344d7c4b2`
+  - allocator-first: `fd0e8dbb546d69115fc82420286971181983cdb2`
+- All four branches were pushed. The node-checkpoint and allocator-first branches passed full `f2fs.ko` builds; standard-prefree and pre-sync had already passed the same build before this record was added.
+- The current boot emitted allocator and SIT warnings and must not be reused for another benchmark. A single graceful reboot will be requested only after recording boot identity; task recovery must verify that identity before taking any further reboot action.
