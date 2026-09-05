@@ -82,3 +82,16 @@
 - Both branches passed git diff --check, target-object compilation, and full f2fs.ko compilation. The normal build initially encountered root-owned generated .cmd files from the existing sudo build workflow; verification then used the same sudo build ownership model and completed successfully.
 - The experiment validator and analyzer now treat generic kernel WARN reports, incorrect SIT bitmaps, and "need fsck" as fatal signatures. A zero shell status can no longer classify this failure as successful.
 - A reboot is required before the corrected standard-prefree branch can be tested because the running kernel emitted allocator and SIT warnings.
+
+### Reboot handoff for allocator/SIT warning
+
+- Pre-command state recorded at 2026-09-05T12:20:51+08:00.
+- Boot ID: 99ba46f5-e30c-4cd7-a6ab-d8127e35c170.
+- Boot time: 2026-09-05 05:07:27.
+- Uptime: 26004.80 seconds.
+- /dev/nvme0n1 was not mounted, no task was in uninterruptible sleep, no shutdown job was active, and the tainted F2FS module remained loaded with zero users.
+- The allocator/SIT warnings occurred at 2026-09-05 11:59:56, after this boot began. This boot has therefore not yet cleared the incident.
+- Planned action: issue one graceful systemctl reboot request after a final boot-identity check.
+- Graceful reboot requests issued for this incident: 0 at the time of this record.
+- Forced or Magic SysRq reboot requests issued for this incident: 0.
+- On recovery, compare the current boot ID and boot time first. If either proves that reboot completed, do not issue another reboot command. If the result is unknown, do not retry or escalate automatically.
