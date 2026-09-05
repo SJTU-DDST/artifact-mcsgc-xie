@@ -24,6 +24,8 @@ WORKLOAD_FILTER=${FILEBENCH_AB_WORKLOADS:-filebench-fileserver,filebench-varmail
 REPORT_INTERVAL=${FILEBENCH_AB_REPORT_INTERVAL:-5}
 STATUS_SAMPLE_INTERVAL=${FILEBENCH_AB_STATUS_SAMPLE_INTERVAL:-5}
 RUNTIME_OVERRIDE=${FILEBENCH_AB_RUNTIME:-}
+KERNEL_PANIC_TIMEOUT_VALUE=${KERNEL_PANIC_TIMEOUT:-20}
+TEARDOWN_DIAGNOSTICS=${FILEBENCH_TEARDOWN_DIAGNOSTICS:-0}
 for diagnostic_interval in "${REPORT_INTERVAL}" "${STATUS_SAMPLE_INTERVAL}"; do
     case "${diagnostic_interval}" in
         ''|*[!0-9]*)
@@ -242,6 +244,8 @@ write_state() {
         printf 'filebench_report_interval_s=%q\n' "${REPORT_INTERVAL}"
         printf 'f2fs_status_sample_interval_s=%q\n' "${STATUS_SAMPLE_INTERVAL}"
         printf 'filebench_runtime_override_s=%q\n' "${RUNTIME_OVERRIDE}"
+        printf 'kernel_panic_timeout_s=%q\n' "${KERNEL_PANIC_TIMEOUT_VALUE}"
+        printf 'teardown_diagnostics=%q\n' "${TEARDOWN_DIAGNOSTICS}"
         printf 'batch_dir=%q\n' "${BATCH_DIR}"
     } > "${BATCH_DIR}/state.env"
 }
@@ -499,6 +503,8 @@ write_provenance() {
         printf 'filebench_report_interval_s=%s\nf2fs_status_sample_interval_s=%s\n' \
             "${REPORT_INTERVAL}" "${STATUS_SAMPLE_INTERVAL}"
         printf 'filebench_runtime_override_s=%s\n' "${RUNTIME_OVERRIDE}"
+        printf 'kernel_panic_timeout_s=%s\nteardown_diagnostics=%s\n' \
+            "${KERNEL_PANIC_TIMEOUT_VALUE}" "${TEARDOWN_DIAGNOSTICS}"
         printf 'openssd_expected_branch=%s\nopenssd_expected_commit=%s\n' \
             "${OPENSSD_BRANCH}" "${OPENSSD_COMMIT}"
         printf 'firmware_identity_limit=source and Vitis hashes do not prove running ELF identity\n'

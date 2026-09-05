@@ -7,8 +7,11 @@ mntpoint=${MNTPOINT}
 filebench_report_interval=${FILEBENCH_REPORT_INTERVAL:-0}
 f2fs_status_sample_interval=${F2FS_STATUS_SAMPLE_INTERVAL:-0}
 filebench_runtime_override=${FILEBENCH_RUNTIME_OVERRIDE:-}
+kernel_panic_timeout=${KERNEL_PANIC_TIMEOUT:-20}
+teardown_diagnostics=${FILEBENCH_TEARDOWN_DIAGNOSTICS:-0}
 status_sampler_pid=""
 phase_timing_file=""
+original_kernel_panic_timeout=""
 
 # Record coarse benchmark boundaries outside the measured request path.
 record_phase_time() {
@@ -25,6 +28,24 @@ stop_f2fs_status_sampler() {
         wait "${status_sampler_pid}" 2>/dev/null || true
     fi
     status_sampler_pid=""
+}
+
+# Restore the host-wide panic timeout changed for this benchmark invocation.
+restore_kernel_panic_timeout() {
+    if [ -n "${original_kernel_panic_timeout}" ]; then
+        printf '%s\n' "${original_kernel_panic_timeout}" | \
+            sudo tee /proc/sys/kernel/panic >/dev/null || true
+        original_kernel_panic_timeout=""
+    fi
+}
+
+# Release benchmark-only helpers while preserving the original exit status.
+cleanup_filebench_run() {
+    local status=$?
+
+    stop_f2fs_status_sampler
+    restore_kernel_panic_timeout
+    return "${status}"
 }
 
 # Save low-frequency F2FS state snapshots without adding kernel instrumentation.
@@ -45,7 +66,7 @@ sample_f2fs_status() {
     done
 }
 
-trap stop_f2fs_status_sampler EXIT
+trap cleanup_filebench_run EXIT
 
 case "${filebench_report_interval}" in
     ''|*[!0-9]*)
@@ -63,6 +84,19 @@ case "${filebench_runtime_override}" in
     '') ;;
     *[!0-9]*|0)
         echo "ERROR: FILEBENCH_RUNTIME_OVERRIDE must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+case "${kernel_panic_timeout}" in
+    ''|*[!0-9]*)
+        echo "ERROR: KERNEL_PANIC_TIMEOUT must be a non-negative integer" >&2
+        exit 2
+        ;;
+esac
+case "${teardown_diagnostics}" in
+    0|1) ;;
+    *)
+        echo "ERROR: FILEBENCH_TEARDOWN_DIAGNOSTICS must be 0 or 1" >&2
         exit 2
         ;;
 esac
@@ -89,7 +123,9 @@ phase_timing_file="${output_path}/filebench-phase-times.tsv"
 printf 'phase\trealtime_ns\twall_time\n' > "${phase_timing_file}"
 
 echo 0 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
-echo 20 | sudo tee /proc/sys/kernel/panic > /dev/null
+original_kernel_panic_timeout=$(< /proc/sys/kernel/panic)
+printf '%s\n' "${kernel_panic_timeout}" | \
+    sudo tee /proc/sys/kernel/panic >/dev/null
 
 # load_f2fs_module $gc_mode
 install_f2fs_tools $gc_mode
@@ -150,7 +186,8 @@ record_phase_time filebench_end
 echo "======================================================="
 
 record_phase_time teardown_start
-umount_and_get_stat "${devpath}" "${gc_mode}" "${output_path}/stat.log"
+FILEBENCH_TEARDOWN_DIAGNOSTICS="${teardown_diagnostics}" \
+    umount_and_get_stat "${devpath}" "${gc_mode}" "${output_path}/stat.log"
 record_phase_time teardown_end
 stop_f2fs_status_sampler
 

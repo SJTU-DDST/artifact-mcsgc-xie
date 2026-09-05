@@ -115,11 +115,47 @@ get_ssd_stat() {
     sudo "${NVME_PATH}" read "${devpath}" -s 123 -c 1 -z 4096 -t -L | tee -a "${output_path}"
 }
 
+# Persist low-frequency task state while a target-filesystem sync is blocked.
+monitor_filebench_sync() {
+    local output_file=$1
+    local interval=${FILEBENCH_TEARDOWN_DIAGNOSTIC_INTERVAL:-5}
+    local pid
+
+    while true; do
+        {
+            printf '=== SYNC_WAIT_SAMPLE wall=%s uptime_s=%s ===\n' \
+                "$(date --iso-8601=ns)" "$(cut -d' ' -f1 /proc/uptime)"
+            ps -eo pid,ppid,stat,wchan:32,comm,args | \
+                awk 'NR == 1 || substr($3, 1, 1) == "D"'
+            for pid in $(ps -eo pid=,stat= | \
+                    awk 'substr($2, 1, 1) == "D" { print $1 }'); do
+                printf '%s\n' "--- /proc/${pid}/stack ---"
+                sudo -n cat "/proc/${pid}/stack" 2>&1 || true
+            done
+            printf '=== SYNC_WAIT_SAMPLE_END ===\n'
+        } >> "${output_file}"
+        sync -f "${output_file}" 2>/dev/null || true
+        sleep "${interval}"
+    done
+}
+
+# Stop only the sync monitor started by the current teardown.
+stop_filebench_sync_monitor() {
+    local monitor_pid=$1
+
+    if [ -n "${monitor_pid}" ] && kill -0 "${monitor_pid}" 2>/dev/null; then
+        kill "${monitor_pid}" 2>/dev/null || true
+        wait "${monitor_pid}" 2>/dev/null || true
+    fi
+}
+
 umount_and_get_stat() {
     local devpath=$1
     local gc_mode=$2
     local output_path=$3
     local wait_time=5
+    local sync_monitor_pid=""
+    local sync_diagnostic_file
     
     echo "sleep ${wait_time} seconds before umount and dmesg"
     sleep ${wait_time}
@@ -128,7 +164,23 @@ umount_and_get_stat() {
     # fully registered. This runs after the benchmark's measured interval.
     if findmnt -rn -S "${devpath}" >/dev/null; then
         echo "sync mounted filesystem before umount"
+        if declare -F record_phase_time >/dev/null; then
+            record_phase_time teardown_sync_start
+        fi
+        if [ "${FILEBENCH_TEARDOWN_DIAGNOSTICS:-0}" -eq 1 ]; then
+            sync_diagnostic_file="$(dirname "${output_path}")/teardown-sync-diagnostics.log"
+            printf 'kernel_panic_timeout=%s\nhung_task_timeout_s=%s\n' \
+                "$(cat /proc/sys/kernel/panic)" \
+                "$(cat /proc/sys/kernel/hung_task_timeout_secs)" \
+                > "${sync_diagnostic_file}"
+            monitor_filebench_sync "${sync_diagnostic_file}" &
+            sync_monitor_pid=$!
+        fi
         sudo sync -f "${MNTPOINT}"
+        stop_filebench_sync_monitor "${sync_monitor_pid}"
+        if declare -F record_phase_time >/dev/null; then
+            record_phase_time teardown_sync_end
+        fi
     fi
     
     if [ "$gc_mode" != "iplfs" ]; then
