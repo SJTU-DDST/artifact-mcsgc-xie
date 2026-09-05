@@ -35,4 +35,8 @@ recorded without assigning an unproven cause.
 - Post-reboot boot ID: `75fb2011-1195-4a1d-bbc2-f42167c689e4`
 - Post-reboot boot time: `2026-09-05 17:40:44`
 - Forced reboot attempts by this agent: 0
-- Notes: the previous boot has no persistent journal and pstore is empty. The reboot is proven, but its trigger is not currently attributable from retained host logs. The interrupted allocator-first case is incomplete and must not be treated as a result.
+- Forensic update: `2026-09-05T17:52:00+08:00`
+- Last retained audit action: the benchmark teardown invoked `sudo -n umount /dev/nvme0n1` at `2026-09-05T17:39:06+08:00`; the audit stream then stopped.
+- Codex state at failure: the active agent entered a read-only 300-second wait at `2026-09-05T17:37:32+08:00`; no reboot, shutdown, SysRq, or power-control call was persisted before the host disappeared.
+- BMC evidence: the SEL records an OEM boot event at `2026-09-05T09:40:28` (BMC clock, corresponding to the `17:40` local boot), but no preceding watchdog, PCIe fatal-error, or normal shutdown event. The current watchdog is stopped and has no expiration flag.
+- Notes: the previous boot has no persistent journal and pstore is empty. Evidence supports an abrupt OEM-level reset after teardown became unresponsive, but does not identify who or what initiated that reset. The interrupted allocator-first case is incomplete and must not be treated as a result.
