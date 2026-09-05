@@ -122,3 +122,5 @@
 - Graceful reboot requests issued for this incident: `0` before dispatch and `1` after the command is submitted.
 - Forced or Magic SysRq reboot requests issued for this incident: `0`; none are authorized as an automatic fallback.
 - On recovery, compare the current boot ID and boot time before any other action. If either proves that reboot completed, mark this handoff complete and never issue another reboot command. If the outcome is unknown, inspect only and wait for the user rather than retrying or escalating.
+- Reboot completion verified at `2026-09-05T16:48:11+08:00`: boot ID changed to `95284f28-5d3f-4fcf-b8ff-48dd5b3ff93a`, boot time advanced to `2026-09-05 16:07:43`, and uptime was `2428.31` seconds.
+- The post-reboot audit found `/dev/nvme0n1` present, no F2FS mount, no loaded F2FS module, no uninterruptible task, and no new F2FS, SIT, NVMe timeout, or kernel Oops report. No additional reboot or force command was issued.
