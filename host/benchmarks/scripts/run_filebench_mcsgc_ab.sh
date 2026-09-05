@@ -83,6 +83,7 @@ declare -A HOST_BRANCHES=(
     [segment-window4]=exp/diagnostic-mcsgc8t-filebench-segment-window4-20260901
     [cp-source]=exp/diagnostic-mcsgc8t-filebench-cp-source-20260905
     [node-readahead]=exp/diagnostic-mcsgc8t-filebench-node-readahead-20260905
+    [node-readahead-nowait]=exp/diagnostic-mcsgc8t-filebench-node-readahead-nowait-20260905
 )
 declare -A HOST_COMMITS=(
     [control]=b6fb9bccbbbe4c3bf7dd666f808fb6f2e1e1c145
@@ -96,6 +97,7 @@ declare -A HOST_COMMITS=(
     [segment-window4]=0064d7c870952166e9203d6bc16fee8a947a2508
     [cp-source]=3b53ecbc89404fc8f002ea288d5fec1a59fe5cdf
     [node-readahead]=0b0d37c0d7966f49f247ed52ebe9f8a3e754b1b9
+    [node-readahead-nowait]=9d53051cd06af3773a8d47d7adb21d7e089568fb
 )
 declare -A HOST_BASE_COMMITS=(
     [control]=5262b5a3979cc55302ae0300cbd8f24b51c60c24
@@ -109,6 +111,7 @@ declare -A HOST_BASE_COMMITS=(
     [segment-window4]=01e74974489c6d72555d70909541ec22ec887acd
     [cp-source]=fd0e8dbb546d69115fc82420286971181983cdb2
     [node-readahead]=3b53ecbc89404fc8f002ea288d5fec1a59fe5cdf
+    [node-readahead-nowait]=0b0d37c0d7966f49f247ed52ebe9f8a3e754b1b9
 )
 declare -A PREFERRED_WORKTREES=(
     [control]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-control-20260831
@@ -122,6 +125,7 @@ declare -A PREFERRED_WORKTREES=(
     [segment-window4]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-window4-20260901
     [cp-source]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-cp-source-20260905
     [node-readahead]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-node-readahead-20260905
+    [node-readahead-nowait]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-node-readahead-nowait-20260905
 )
 declare -A HOST_TREES=()
 declare -A MODULE_PATHS=()

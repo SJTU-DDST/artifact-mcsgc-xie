@@ -29,6 +29,7 @@ LABELS = {
     "segment-window4": "E4: four active segments",
     "cp-source": "G: checkpoint-source diagnosis",
     "node-readahead": "H: asynchronous node-page readahead",
+    "node-readahead-nowait": "I: shadow-safe NOWAIT node-page readahead",
 }
 WORKLOAD_LABELS = {
     "filebench-fileserver": "fileserver",
@@ -96,6 +97,10 @@ CP_DIAG_FIELDS = (
     "cp_diag_node_page_writeback",
     "cp_diag_node_page_checksum",
     "cp_diag_node_page_nid_mismatch",
+    "cp_diag_node_page_ra_submitted",
+    "cp_diag_node_page_ra_present",
+    "cp_diag_node_page_ra_busy",
+    "cp_diag_node_page_ra_errors",
     "cp_diag_node_page_data_page_alloc",
     "cp_diag_node_page_local_cache_incomplete",
     "cp_diag_origc_data_collectors",
@@ -929,6 +934,10 @@ def write_report(
                 "writeback",
                 "checksum",
                 "nid_mismatch",
+                "ra_submitted",
+                "ra_present",
+                "ra_busy",
+                "ra_errors",
                 "data_page_alloc",
                 "local_cache_incomplete",
             )
