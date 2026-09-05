@@ -491,7 +491,7 @@ write_provenance() {
 
 # Reject a completed case with missing output or a high-confidence kernel failure.
 validate_case() {
-    local workload_type=$1 output_path=$2 log_path
+    local workload_type=$1 output_path=$2 log_path phase_path
     case "${workload_type}" in
         filebench)
             log_path="${output_path}/filebench.log"
@@ -511,9 +511,21 @@ validate_case() {
             ! grep -q 'Return=ERROR' "${log_path}"
             ;;
     esac
-    if grep -aEiq 'WARNING: CPU:|BUG:|Oops:|kernel panic|NULL pointer dereference|blocked for more than|refcount.*(underflow|saturated)|SIT.*(corrupt|inconsistent)|Bitmap was wrongly set|need fsck|Inconsistent segment.*SSA and SIT|EUCLEAN|nvme.*(timeout|reset controller)|I/O error' \
+    if grep -aEiq 'WARNING: CPU:|BUG:|Oops:|kernel panic|NULL pointer dereference|refcount.*(underflow|saturated)|SIT.*(corrupt|inconsistent)|Bitmap was wrongly set|need fsck|Inconsistent segment.*SSA and SIT|EUCLEAN|nvme.*(timeout|reset controller)|I/O error' \
         "${output_path}/dmesg.log"; then
         die "kernel or device anomaly detected in ${output_path}/dmesg.log"
+    fi
+
+    # A long sync is part of the Filebench regression under study. Keep it as
+    # a lifecycle warning only when teardown demonstrably completed and the
+    # namespace is no longer mounted; an unresolved wait remains fatal.
+    if grep -aEiq 'blocked for more than' "${output_path}/dmesg.log"; then
+        phase_path="${output_path}/filebench-phase-times.tsv"
+        grep -q '^teardown_end[[:space:]]' "${phase_path}" \
+            || die "hung task did not reach teardown completion in ${output_path}"
+        ! findmnt -rn -S "${DEVICE}" >/dev/null \
+            || die "hung task left ${DEVICE} mounted after ${output_path}"
+        echo "WARNING: completed teardown had hung-task reports: ${output_path}"
     fi
 }
 

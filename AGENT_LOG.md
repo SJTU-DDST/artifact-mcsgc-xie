@@ -124,3 +124,11 @@
 - On recovery, compare the current boot ID and boot time before any other action. If either proves that reboot completed, mark this handoff complete and never issue another reboot command. If the outcome is unknown, inspect only and wait for the user rather than retrying or escalating.
 - Reboot completion verified at `2026-09-05T16:48:11+08:00`: boot ID changed to `95284f28-5d3f-4fcf-b8ff-48dd5b3ff93a`, boot time advanced to `2026-09-05 16:07:43`, and uptime was `2428.31` seconds.
 - The post-reboot audit found `/dev/nvme0n1` present, no F2FS mount, no loaded F2FS module, no uninterruptible task, and no new F2FS, SIT, NVMe timeout, or kernel Oops report. No additional reboot or force command was issued.
+
+## 2026-09-05 Post-reboot standard-prefree validation
+
+- Batch: `/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-filebench-mcsgc-ab/20260905_165104`.
+- Host commit: `bd5cee3e696c1636879e2529e2cc8aa553d681d4`.
+- Filebench completed at `493.080 ops/s`; the early and late interval means were `1835.087` and `28.890 ops/s`. Sustained collapse began near 55 seconds while 65 complete free sections remained.
+- The common curseg repair prevented the earlier allocator/SIT corruption. There was no Oops, SIT warning, NVMe timeout, or residual mount, and sync eventually completed.
+- Teardown took `471.574` seconds and emitted three hung-sync reports. The runner now records a completed slow sync as a lifecycle warning when teardown reached `teardown_end` and the namespace is unmounted; unresolved waits and all correctness signatures remain fatal.
