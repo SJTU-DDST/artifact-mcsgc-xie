@@ -92,6 +92,6 @@
 - /dev/nvme0n1 was not mounted, no task was in uninterruptible sleep, no shutdown job was active, and the tainted F2FS module remained loaded with zero users.
 - The allocator/SIT warnings occurred at 2026-09-05 11:59:56, after this boot began. This boot has therefore not yet cleared the incident.
 - Planned action: issue one graceful systemctl reboot request after a final boot-identity check.
-- Graceful reboot requests issued for this incident: 0 at the time of this record.
+- Graceful reboot requests issued for this incident: 1 after the command below is submitted.
 - Forced or Magic SysRq reboot requests issued for this incident: 0.
 - On recovery, compare the current boot ID and boot time first. If either proves that reboot completed, do not issue another reboot command. If the result is unknown, do not retry or escalate automatically.
