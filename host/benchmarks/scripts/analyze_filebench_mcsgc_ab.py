@@ -28,6 +28,7 @@ LABELS = {
     "segment-window2": "E2: two active segments",
     "segment-window4": "E4: four active segments",
     "cp-source": "G: checkpoint-source diagnosis",
+    "node-readahead": "H: asynchronous node-page readahead",
 }
 WORKLOAD_LABELS = {
     "filebench-fileserver": "fileserver",
