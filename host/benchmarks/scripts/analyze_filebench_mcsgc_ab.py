@@ -122,21 +122,22 @@ def parse_filebench_details(path: Path) -> Tuple[Dict[str, object], List[Dict[st
 
 def parse_kernel_lifecycle(output: Path) -> Dict[str, object]:
     """Count writeback stalls and fatal signatures in one saved kernel log."""
-    candidates = [output / "dmesg.log", output / "dmesg.old"]
-    texts = [read_text(path) for path in candidates if path.exists()]
-    if not texts:
+    current_log = output / "dmesg.log"
+    if not current_log.exists():
         return {}
-    text = texts[0]
-    if "blocked for more than" not in text and len(texts) > 1:
-        text = texts[1]
+    # dmesg.old contains the preceding case and must never be attributed here.
+    text = read_text(current_log)
     blocked = re.findall(
         r"INFO: task\s+([^:\s]+):\d+\s+blocked for more than", text
     )
     fatal_patterns = (
+        r"WARNING: CPU:",
         r"\bOops:",
         r"\bBUG:",
         r"kernel NULL pointer dereference",
         r"F2FS-fs.*(?:EUCLEAN|inconsisten)",
+        r"Bitmap was wrongly set",
+        r"need fsck",
         r"nvme.*(?:timeout|I/O error)",
     )
     return {

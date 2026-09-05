@@ -61,3 +61,24 @@
 - On task recovery, compare boot identity first. Do not retry or escalate this reboot request based on an interrupted tool call.
 - Final dispatch check at `2026-09-05T05:00:49+08:00`: boot ID remained `e9a837c3-a97c-459c-8082-eb7aec1c9682`, boot time remained `2026-09-05 01:52:21`, uptime was `11308.33` seconds, and no shutdown or reboot job was active.
 - Reboot completion verified at `2026-09-05T11:33:45+08:00`: boot ID changed to `99ba46f5-e30c-4cd7-a6ab-d8127e35c170`, boot time advanced to `2026-09-05 05:07:27`, and uptime was `23178.60` seconds. No additional reboot command was issued.
+
+## 2026-09-05 Reserve-fallback validation
+
+- Standard-prefree batch: /home/xin/artifact-csgc/host/benchmarks/scripts/outputs-filebench-mcsgc-ab/20260905_113521.
+- Host commit: 971116fea3a93af94592b84c060fc0bd9cc71850.
+- Filebench completed with 462.191 ops/s, but throughput collapsed at approximately 65 seconds from an early mean of 1778.082 ops/s to a late mean of 27.675 ops/s.
+- The filesystem eventually synced and unmounted, proving that low-reserve ORIGC fallback removed the permanent livelock. Teardown still took 256.342 seconds and generated one hung-sync report, so the case is not lifecycle-clean.
+- The collapse began while 63 free sections remained. The five-section emergency reserve therefore cannot explain the application-window regression.
+
+## 2026-09-05 Pre-sync allocator corruption
+
+- Pre-sync batch: /home/xin/artifact-csgc/host/benchmarks/scripts/outputs-filebench-mcsgc-ab/20260905_115100.
+- Host commit: 7dba52d06a4596a13b66a04432055e42d7e792d3.
+- The outer runner returned zero and reported 476.899 ops/s, but the saved dmesg contains f2fs_allocate_data_block() warnings, "Bitmap was wrongly set", and "something went wrong during csgc, need fsck". This result is invalid.
+- The low-reserve ORIGC path reached free_sections <= 2 while raw free segments still existed in partially occupied sections. new_curseg() returned -ENOSPC, but the legacy void normal-allocation call chain continued using the full curseg and corrupted SIT accounting.
+- The reserve predicate now checks both raw free-segment headroom and complete free sections. Corrected commits:
+  - standard-prefree: 9f268788af4a1eb2bb6ca0deb23213f85bd45a11
+  - pre-sync: 965a68ebd07bd5c4ac32b8144de8f8e05ee76dcc
+- Both branches passed git diff --check, target-object compilation, and full f2fs.ko compilation. The normal build initially encountered root-owned generated .cmd files from the existing sudo build workflow; verification then used the same sudo build ownership model and completed successfully.
+- The experiment validator and analyzer now treat generic kernel WARN reports, incorrect SIT bitmaps, and "need fsck" as fatal signatures. A zero shell status can no longer classify this failure as successful.
+- A reboot is required before the corrected standard-prefree branch can be tested because the running kernel emitted allocator and SIT warnings.

@@ -76,8 +76,8 @@ declare -A HOST_BRANCHES=(
 )
 declare -A HOST_COMMITS=(
     [control]=b6fb9bccbbbe4c3bf7dd666f808fb6f2e1e1c145
-    [standard-prefree]=971116fea3a93af94592b84c060fc0bd9cc71850
-    [pre-sync]=7dba52d06a4596a13b66a04432055e42d7e792d3
+    [standard-prefree]=9f268788af4a1eb2bb6ca0deb23213f85bd45a11
+    [pre-sync]=965a68ebd07bd5c4ac32b8144de8f8e05ee76dcc
     [single-section]=d38d3355588d22bb8c17ecb53ca60a79ad6879f0
     [node-checkpoint]=af64f2ee7bc66d48528b382c14c78919590ddad3
     [allocator-first]=7fb6548b802d2408c586040d90f8bbdb5a4ed679
@@ -511,7 +511,7 @@ validate_case() {
             ! grep -q 'Return=ERROR' "${log_path}"
             ;;
     esac
-    if grep -aEiq 'BUG:|Oops:|kernel panic|NULL pointer dereference|blocked for more than|refcount.*(underflow|saturated)|SIT.*(corrupt|inconsistent)|Inconsistent segment.*SSA and SIT|EUCLEAN|nvme.*(timeout|reset controller)|I/O error' \
+    if grep -aEiq 'WARNING: CPU:|BUG:|Oops:|kernel panic|NULL pointer dereference|blocked for more than|refcount.*(underflow|saturated)|SIT.*(corrupt|inconsistent)|Bitmap was wrongly set|need fsck|Inconsistent segment.*SSA and SIT|EUCLEAN|nvme.*(timeout|reset controller)|I/O error' \
         "${output_path}/dmesg.log"; then
         die "kernel or device anomaly detected in ${output_path}/dmesg.log"
     fi
