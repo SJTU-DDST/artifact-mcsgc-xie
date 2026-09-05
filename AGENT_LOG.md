@@ -110,3 +110,15 @@
   - allocator-first: `fd0e8dbb546d69115fc82420286971181983cdb2`
 - All four branches were pushed. The node-checkpoint and allocator-first branches passed full `f2fs.ko` builds; standard-prefree and pre-sync had already passed the same build before this record was added.
 - The current boot emitted allocator and SIT warnings and must not be reused for another benchmark. A single graceful reboot will be requested only after recording boot identity; task recovery must verify that identity before taking any further reboot action.
+
+### Reboot handoff for the ORIGC curseg incident
+
+- Pre-command state recorded at `2026-09-05T16:05:37+08:00`.
+- Boot ID: `553f25ef-b0dd-4be0-940e-2aab7d3742eb`.
+- Boot time: `2026-09-05 12:24:16`.
+- Uptime: `13281.50` seconds.
+- `/dev/nvme0n1` was not mounted, no task was in uninterruptible sleep, and no shutdown or reboot job was active.
+- Planned action: issue one graceful `systemctl reboot` request after one final boot-identity check.
+- Graceful reboot requests issued for this incident: `0` before dispatch and `1` after the command is submitted.
+- Forced or Magic SysRq reboot requests issued for this incident: `0`; none are authorized as an automatic fallback.
+- On recovery, compare the current boot ID and boot time before any other action. If either proves that reboot completed, mark this handoff complete and never issue another reboot command. If the outcome is unknown, inspect only and wait for the user rather than retrying or escalating.
