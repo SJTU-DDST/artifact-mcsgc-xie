@@ -95,3 +95,4 @@
 - Graceful reboot requests issued for this incident: 1 after the command below is submitted.
 - Forced or Magic SysRq reboot requests issued for this incident: 0.
 - On recovery, compare the current boot ID and boot time first. If either proves that reboot completed, do not issue another reboot command. If the result is unknown, do not retry or escalate automatically.
+- Reboot completion verified at 2026-09-05T13:50:31+08:00: boot ID changed to 553f25ef-b0dd-4be0-940e-2aab7d3742eb, boot time advanced to 2026-09-05 12:24:16, and uptime was 5175.65 seconds. No additional reboot or force command was issued.
