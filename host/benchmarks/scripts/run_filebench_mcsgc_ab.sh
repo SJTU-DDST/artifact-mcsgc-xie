@@ -23,6 +23,7 @@ REPEAT_CONFIGS=${FILEBENCH_AB_CONFIGS:-control,standard-prefree}
 WORKLOAD_FILTER=${FILEBENCH_AB_WORKLOADS:-filebench-fileserver,filebench-varmail}
 REPORT_INTERVAL=${FILEBENCH_AB_REPORT_INTERVAL:-5}
 STATUS_SAMPLE_INTERVAL=${FILEBENCH_AB_STATUS_SAMPLE_INTERVAL:-5}
+RUNTIME_OVERRIDE=${FILEBENCH_AB_RUNTIME:-}
 for diagnostic_interval in "${REPORT_INTERVAL}" "${STATUS_SAMPLE_INTERVAL}"; do
     case "${diagnostic_interval}" in
         ''|*[!0-9]*)
@@ -31,6 +32,13 @@ for diagnostic_interval in "${REPORT_INTERVAL}" "${STATUS_SAMPLE_INTERVAL}"; do
             ;;
     esac
 done
+case "${RUNTIME_OVERRIDE}" in
+    '') ;;
+    *[!0-9]*|0)
+        echo "ERROR: FILEBENCH_AB_RUNTIME must be a positive integer" >&2
+        exit 2
+        ;;
+esac
 IFS=',' read -r -a WORKLOADS <<< "${WORKLOAD_FILTER}"
 [ "${#WORKLOADS[@]}" -ge 1 ] || {
     echo "ERROR: FILEBENCH_AB_WORKLOADS must not be empty" >&2
@@ -73,6 +81,7 @@ declare -A HOST_BRANCHES=(
     [segment-window1]=exp/diagnostic-mcsgc8t-filebench-segment-window1-20260901
     [segment-window2]=exp/diagnostic-mcsgc8t-filebench-segment-window2-20260901
     [segment-window4]=exp/diagnostic-mcsgc8t-filebench-segment-window4-20260901
+    [cp-source]=exp/diagnostic-mcsgc8t-filebench-cp-source-20260905
 )
 declare -A HOST_COMMITS=(
     [control]=b6fb9bccbbbe4c3bf7dd666f808fb6f2e1e1c145
@@ -84,6 +93,7 @@ declare -A HOST_COMMITS=(
     [segment-window1]=d46a18679aa81f84885d5950ff2de812af7dcac5
     [segment-window2]=5035e83f40644295c0d99fd777ad6011174444f9
     [segment-window4]=0064d7c870952166e9203d6bc16fee8a947a2508
+    [cp-source]=aa24c4afe96a1d6af60a50f4abf6771b0e85d51c
 )
 declare -A HOST_BASE_COMMITS=(
     [control]=5262b5a3979cc55302ae0300cbd8f24b51c60c24
@@ -95,6 +105,7 @@ declare -A HOST_BASE_COMMITS=(
     [segment-window1]=01e74974489c6d72555d70909541ec22ec887acd
     [segment-window2]=01e74974489c6d72555d70909541ec22ec887acd
     [segment-window4]=01e74974489c6d72555d70909541ec22ec887acd
+    [cp-source]=fd0e8dbb546d69115fc82420286971181983cdb2
 )
 declare -A PREFERRED_WORKTREES=(
     [control]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-control-20260831
@@ -106,6 +117,7 @@ declare -A PREFERRED_WORKTREES=(
     [segment-window1]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-window1-20260901
     [segment-window2]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-window2-20260901
     [segment-window4]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-window4-20260901
+    [cp-source]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-cp-source-20260905
 )
 declare -A HOST_TREES=()
 declare -A MODULE_PATHS=()
@@ -154,6 +166,7 @@ After screening, repeat selected configurations with:
 Low-overhead F2FS status sampling and periodic Filebench output both default to
 5 seconds. Set FILEBENCH_AB_STATUS_SAMPLE_INTERVAL=0 or
 FILEBENCH_AB_REPORT_INTERVAL=0 to disable the corresponding timeline.
+Set FILEBENCH_AB_RUNTIME to a positive number of seconds for a diagnostic run.
 EOF
 }
 
@@ -220,6 +233,7 @@ write_state() {
         printf 'workloads=%q\n' "${WORKLOADS[*]}"
         printf 'filebench_report_interval_s=%q\n' "${REPORT_INTERVAL}"
         printf 'f2fs_status_sample_interval_s=%q\n' "${STATUS_SAMPLE_INTERVAL}"
+        printf 'filebench_runtime_override_s=%q\n' "${RUNTIME_OVERRIDE}"
         printf 'batch_dir=%q\n' "${BATCH_DIR}"
     } > "${BATCH_DIR}/state.env"
 }
@@ -476,6 +490,7 @@ write_provenance() {
             "${WORKLOADS[*]}"
         printf 'filebench_report_interval_s=%s\nf2fs_status_sample_interval_s=%s\n' \
             "${REPORT_INTERVAL}" "${STATUS_SAMPLE_INTERVAL}"
+        printf 'filebench_runtime_override_s=%s\n' "${RUNTIME_OVERRIDE}"
         printf 'openssd_expected_branch=%s\nopenssd_expected_commit=%s\n' \
             "${OPENSSD_BRANCH}" "${OPENSSD_COMMIT}"
         printf 'firmware_identity_limit=source and Vitis hashes do not prove running ELF identity\n'
@@ -661,6 +676,7 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
     EUROPAR_CASE_ID="${case_id}" \
     FILEBENCH_REPORT_INTERVAL="${REPORT_INTERVAL}" \
     F2FS_STATUS_SAMPLE_INTERVAL="${STATUS_SAMPLE_INTERVAL}" \
+    FILEBENCH_RUNTIME_OVERRIDE="${RUNTIME_OVERRIDE}" \
         "${SCRIPT_DIR}/test.sh" "${mode}" "${config_path}"
 
     output_path=$(awk -F '\t' -v id="${case_id}" \

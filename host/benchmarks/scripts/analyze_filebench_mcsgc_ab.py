@@ -27,10 +27,47 @@ LABELS = {
     "segment-window1": "E1: one active segment",
     "segment-window2": "E2: two active segments",
     "segment-window4": "E4: four active segments",
+    "cp-source": "G: checkpoint-source diagnosis",
 }
 WORKLOAD_LABELS = {
     "filebench-fileserver": "fileserver",
     "filebench-varmail": "varmail",
+}
+
+CP_DIAG_FIELDS = (
+    "cp_diag_actual_calls",
+    "cp_diag_actual_time_ns",
+    "cp_diag_gc1_requests",
+    "cp_diag_gc1_time_ns",
+    "cp_diag_gc2_requests",
+    "cp_diag_gc2_time_ns",
+    "cp_diag_gc3_requests",
+    "cp_diag_gc3_time_ns",
+    "cp_diag_gc4_requests",
+    "cp_diag_gc4_time_ns",
+    "cp_diag_balance_bg_requests",
+    "cp_diag_balance_bg_time_ns",
+    "cp_diag_pre_sync_requests",
+    "cp_diag_pre_sync_time_ns",
+    "cp_diag_balance_dirty_nat",
+    "cp_diag_balance_dirty_pages",
+    "cp_diag_balance_prefree",
+    "cp_diag_balance_roll_forward",
+    "cp_diag_balance_periodic",
+    "cp_diag_balance_cache_pressure",
+    "cp_diag_gc_calls",
+    "cp_diag_gc_completed",
+    "cp_diag_gc_time_ns",
+    "cp_diag_csgc_collector_calls",
+    "cp_diag_csgc_sections",
+    "cp_diag_origc_data_collectors",
+    "cp_diag_origc_node_collectors",
+)
+
+CP_DIAG_LINE_PREFIXES = {
+    "CSGC CP source:": "cp_diag_",
+    "CSGC CP balance:": "cp_diag_balance_",
+    "CSGC GC source:": "cp_diag_",
 }
 
 
@@ -185,6 +222,21 @@ def parse_status_samples(path: Path) -> List[Dict[str, object]]:
             continue
         if current is None:
             continue
+        diagnostic_line = next(
+            (
+                (prefix, field_prefix)
+                for prefix, field_prefix in CP_DIAG_LINE_PREFIXES.items()
+                if line.startswith(prefix)
+            ),
+            None,
+        )
+        if diagnostic_line:
+            prefix, field_prefix = diagnostic_line
+            for key, value in re.findall(
+                r"([a-z0-9_]+)=(\d+)", line[len(prefix) :]
+            ):
+                current[f"{field_prefix}{key}"] = int(value)
+            continue
         for name, pattern in patterns.items():
             match = pattern.match(line)
             if not match:
@@ -224,6 +276,10 @@ def summarize_status_samples(records: List[Dict[str, object]]) -> Dict[str, floa
         items = values(name)
         if len(items) >= 2:
             result[output_name] = float(items[-1] - items[0])
+    for name in CP_DIAG_FIELDS:
+        items = values(name)
+        if len(items) >= 2:
+            result[f"{name}_delta"] = float(items[-1] - items[0])
     return result
 
 
@@ -297,12 +353,13 @@ def align_filebench_status(
             "free_sections",
             "cp_calls",
             "gc_calls",
+            *CP_DIAG_FIELDS,
         ):
             if name in status:
                 item[name] = status[name]
         if previous_status_index is not None and status_index != previous_status_index:
             previous = status_records[previous_status_index]
-            for name in ("cp_calls", "gc_calls"):
+            for name in ("cp_calls", "gc_calls", *CP_DIAG_FIELDS):
                 if name in item and name in previous:
                     item[f"{name}_interval_delta"] = (
                         int(item[name]) - int(previous[name])
@@ -584,7 +641,7 @@ def write_report(
                 "",
                 "| Case | Early baseline | First below 50% (s) | "
                 "Sustained below 50% (s) | Free sections | Prefree segments | "
-                "Dirty segments | CP calls | GC calls |",
+                "Dirty segments | CP calls | Legacy ORIGC calls |",
                 "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
             ]
         )
@@ -612,8 +669,10 @@ def write_report(
                 "",
                 "The early baseline is the median of the first three complete",
                 "reporting intervals. Sustained collapse requires three consecutive",
-                "intervals below half that baseline. Space state is matched from the",
-                "nearest low-frequency F2FS snapshot and is diagnostic only.",
+                "intervals below half that baseline. The legacy GC-call field counts",
+                "completed original do_garbage_collect() collectors, not top-level",
+                "f2fs_gc() calls. Space state is matched from the nearest low-frequency",
+                "F2FS snapshot and is diagnostic only.",
                 "",
             ]
         )
@@ -655,7 +714,7 @@ def write_report(
             [
                 "## Low-Space Timeline",
                 "",
-                "| Case | Samples | Min free sections | Max prefree segments | Max dirty segments | CP delta | GC delta |",
+                "| Case | Samples | Min free sections | Max prefree segments | Max dirty segments | CP delta | Legacy ORIGC delta |",
                 "|---|---:|---:|---:|---:|---:|---:|",
             ]
         )
@@ -673,6 +732,68 @@ def write_report(
                 "",
                 "The raw five-second snapshots are preserved beside each Filebench log;",
                 "this table is diagnostic and is not part of the throughput denominator.",
+                "",
+            ]
+        )
+    cp_diag_summaries = [
+        item
+        for item in status_summaries
+        if "cp_diag_actual_calls_delta" in item
+    ]
+    if cp_diag_summaries:
+        lines.extend(
+            [
+                "## Checkpoint Source Diagnosis",
+                "",
+                "| Case | Actual CP | Actual CP wall (s) | GC loc1/2/3/4 requests | Balance-bg requests | Pre-sync requests | Top-level GC calls | CSGC sections | ORIGC data/node |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for item in sorted(cp_diag_summaries, key=lambda value: str(value["case_id"])):
+            actual_ns = float(item.get("cp_diag_actual_time_ns_delta", 0.0))
+            gc_requests = "/".join(
+                str(int(item.get(f"cp_diag_gc{location}_requests_delta", 0.0)))
+                for location in range(1, 5)
+            )
+            origc = (
+                f"{int(item.get('cp_diag_origc_data_collectors_delta', 0.0))}/"
+                f"{int(item.get('cp_diag_origc_node_collectors_delta', 0.0))}"
+            )
+            lines.append(
+                f"| {item['case_id']} "
+                f"| {int(item.get('cp_diag_actual_calls_delta', 0.0))} "
+                f"| {actual_ns / 1e9:.3f} | {gc_requests} "
+                f"| {int(item.get('cp_diag_balance_bg_requests_delta', 0.0))} "
+                f"| {int(item.get('cp_diag_pre_sync_requests_delta', 0.0))} "
+                f"| {int(item.get('cp_diag_gc_calls_delta', 0.0))} "
+                f"| {int(item.get('cp_diag_csgc_sections_delta', 0.0))} "
+                f"| {origc} |"
+            )
+        lines.extend(
+            [
+                "",
+                "| Case | Dirty NAT | Dirty pages | Prefree | No roll-forward space | Periodic | Cache pressure |",
+                "|---|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for item in sorted(cp_diag_summaries, key=lambda value: str(value["case_id"])):
+            lines.append(
+                f"| {item['case_id']} "
+                f"| {int(item.get('cp_diag_balance_dirty_nat_delta', 0.0))} "
+                f"| {int(item.get('cp_diag_balance_dirty_pages_delta', 0.0))} "
+                f"| {int(item.get('cp_diag_balance_prefree_delta', 0.0))} "
+                f"| {int(item.get('cp_diag_balance_roll_forward_delta', 0.0))} "
+                f"| {int(item.get('cp_diag_balance_periodic_delta', 0.0))} "
+                f"| {int(item.get('cp_diag_balance_cache_pressure_delta', 0.0))} |"
+            )
+        lines.extend(
+            [
+                "",
+                "Actual CP counts checkpoints that reached the checkpoint body. Source",
+                "requests count callers and therefore need not sum to actual CP when",
+                "checkpoint merging serves several requests with one checkpoint. Balance",
+                "trigger columns are inclusive because several pressure predicates may be",
+                "true for one request.",
                 "",
             ]
         )
@@ -869,6 +990,7 @@ def main() -> None:
         "max_dirty_segments",
         "cp_calls_delta",
         "gc_calls_delta",
+        *[f"{name}_delta" for name in CP_DIAG_FIELDS],
         "collapse_baseline_ops_s",
         "collapse_threshold_ops_s",
         "first_half_elapsed_s",
@@ -913,6 +1035,7 @@ def main() -> None:
             "free_sections",
             "cp_calls",
             "gc_calls",
+            *CP_DIAG_FIELDS,
         ]
         with (analysis / "f2fs-status-samples.csv").open(
             "w", newline="", encoding="utf-8"
@@ -970,6 +1093,8 @@ def main() -> None:
             "gc_calls",
             "cp_calls_interval_delta",
             "gc_calls_interval_delta",
+            *CP_DIAG_FIELDS,
+            *[f"{name}_interval_delta" for name in CP_DIAG_FIELDS],
         ]
         with (analysis / "filebench-space-timeline.csv").open(
             "w", newline="", encoding="utf-8"

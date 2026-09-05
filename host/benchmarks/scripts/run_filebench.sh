@@ -6,6 +6,7 @@ source ./common.sh
 mntpoint=${MNTPOINT}
 filebench_report_interval=${FILEBENCH_REPORT_INTERVAL:-0}
 f2fs_status_sample_interval=${F2FS_STATUS_SAMPLE_INTERVAL:-0}
+filebench_runtime_override=${FILEBENCH_RUNTIME_OVERRIDE:-}
 status_sampler_pid=""
 phase_timing_file=""
 
@@ -58,8 +59,17 @@ case "${f2fs_status_sample_interval}" in
         exit 2
         ;;
 esac
+case "${filebench_runtime_override}" in
+    '') ;;
+    *[!0-9]*|0)
+        echo "ERROR: FILEBENCH_RUNTIME_OVERRIDE must be a positive integer" >&2
+        exit 2
+        ;;
+esac
 
-if [ $light_evaluation -eq 1 ]; then
+if [ -n "${filebench_runtime_override}" ]; then
+    runtime=${filebench_runtime_override}
+elif [ $light_evaluation -eq 1 ]; then
     runtime=60
 else
     runtime=300
