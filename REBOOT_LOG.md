@@ -40,3 +40,22 @@ recorded without assigning an unproven cause.
 - Codex state at failure: the active agent entered a read-only 300-second wait at `2026-09-05T17:37:32+08:00`; no reboot, shutdown, SysRq, or power-control call was persisted before the host disappeared.
 - BMC evidence: the SEL records an OEM boot event at `2026-09-05T09:40:28` (BMC clock, corresponding to the `17:40` local boot), but no preceding watchdog, PCIe fatal-error, or normal shutdown event. The current watchdog is stopped and has no expiration flag.
 - Notes: the previous boot has no persistent journal and pstore is empty. Evidence supports an abrupt OEM-level reset after teardown became unresponsive, but does not identify who or what initiated that reset. The interrupted allocator-first case is incomplete and must not be treated as a result.
+
+## 2026-09-05 19:30 CST
+
+- Status: completed, cause under investigation
+- Initiator: unknown; the active Codex agent did not issue a reboot command
+- Reason: unexpected reboot while the Filebench node-page readahead diagnostic was in post-workload `sync -f /mnt/openssd_f2fs`
+- Command: unknown
+- Last confirmed pre-reboot observation: `2026-09-05T19:28:10+08:00`
+- Pre-reboot boot ID: `75fb2011-1195-4a1d-bbc2-f42167c689e4`
+- Pre-reboot boot time: `2026-09-05 17:40:44`
+- Reboot time reported by the current system: approximately `2026-09-05 19:30:31`
+- Discovery time: `2026-09-05T20:02:41+08:00`
+- Post-reboot boot ID: `fbe749be-287c-4af1-b481-5ca65fae62aa`
+- Post-reboot boot time: `2026-09-05 19:30:31`
+- Forced reboot attempts by this agent: 0
+- Initial evidence: `last -x` marks the benchmark tmux session as `crash` and shows no normal shutdown; pstore is empty. The interrupted case has no successful result row and must not be treated as a valid experiment.
+- Forensic update: `2026-09-05T20:24:12+08:00`
+- The benchmark set `kernel.panic=20` before Filebench. Its target-filesystem `sync -f` began at approximately `19:27:58`; the new boot began at `19:30:31`. This interval is close to the configured 120-second hung-task threshold plus the 20-second panic reboot timeout.
+- This timing supports, but does not prove, an automatic reboot following a fatal kernel path during blocked teardown. The retained audit log has a coverage gap from `17:36:42` until the new boot, pstore is empty, and no previous-boot journal survives, so the panic trigger and initiator remain unproven.
