@@ -27,6 +27,7 @@ RUNTIME_OVERRIDE=${FILEBENCH_AB_RUNTIME:-}
 KERNEL_PANIC_TIMEOUT_VALUE=${KERNEL_PANIC_TIMEOUT:-20}
 TEARDOWN_DIAGNOSTICS=${FILEBENCH_TEARDOWN_DIAGNOSTICS:-0}
 FSCK_AFTER_CASE=${FILEBENCH_AB_FSCK_AFTER_CASE:-0}
+CONTINUE_ON_FSCK_FAILURE=${FILEBENCH_AB_CONTINUE_ON_FSCK_FAILURE:-0}
 for diagnostic_interval in "${REPORT_INTERVAL}" "${STATUS_SAMPLE_INTERVAL}"; do
     case "${diagnostic_interval}" in
         ''|*[!0-9]*)
@@ -45,6 +46,10 @@ esac
 case "${FSCK_AFTER_CASE}" in
     0|1) ;;
     *) echo "ERROR: FILEBENCH_AB_FSCK_AFTER_CASE must be 0 or 1" >&2; exit 2 ;;
+esac
+case "${CONTINUE_ON_FSCK_FAILURE}" in
+    0|1) ;;
+    *) echo "ERROR: FILEBENCH_AB_CONTINUE_ON_FSCK_FAILURE must be 0 or 1" >&2; exit 2 ;;
 esac
 IFS=',' read -r -a WORKLOADS <<< "${WORKLOAD_FILTER}"
 [ "${#WORKLOADS[@]}" -ge 1 ] || {
@@ -156,6 +161,7 @@ OUTER_START_TICKS=""
 STARTED_AT=""
 NVME_CLI_SHA256=""
 LOADED_NODE_READAHEAD_MODE=unchanged
+FSCK_LAST_RESULT=skipped
 
 # Keep every descendant benchmark non-interactive. A detached tmux session
 # cannot answer a sudo prompt, so fail immediately instead of stalling a case.
@@ -193,6 +199,7 @@ Low-overhead F2FS status sampling and periodic Filebench output both default to
 FILEBENCH_AB_REPORT_INTERVAL=0 to disable the corresponding timeline.
 Set FILEBENCH_AB_RUNTIME to a positive number of seconds for a diagnostic run.
 Set FILEBENCH_AB_FSCK_AFTER_CASE=1 to run an offline check after every case.
+Set FILEBENCH_AB_CONTINUE_ON_FSCK_FAILURE=1 only for fault-isolation matrices.
 EOF
 }
 
@@ -263,6 +270,7 @@ write_state() {
         printf 'kernel_panic_timeout_s=%q\n' "${KERNEL_PANIC_TIMEOUT_VALUE}"
         printf 'teardown_diagnostics=%q\n' "${TEARDOWN_DIAGNOSTICS}"
         printf 'fsck_after_case=%q\n' "${FSCK_AFTER_CASE}"
+        printf 'continue_on_fsck_failure=%q\n' "${CONTINUE_ON_FSCK_FAILURE}"
         printf 'batch_dir=%q\n' "${BATCH_DIR}"
     } > "${BATCH_DIR}/state.env"
 }
@@ -577,6 +585,7 @@ write_provenance() {
         printf 'kernel_panic_timeout_s=%s\nteardown_diagnostics=%s\n' \
             "${KERNEL_PANIC_TIMEOUT_VALUE}" "${TEARDOWN_DIAGNOSTICS}"
         printf 'fsck_after_case=%s\n' "${FSCK_AFTER_CASE}"
+        printf 'continue_on_fsck_failure=%s\n' "${CONTINUE_ON_FSCK_FAILURE}"
         printf 'openssd_expected_branch=%s\nopenssd_expected_commit=%s\n' \
             "${OPENSSD_BRANCH}" "${OPENSSD_COMMIT}"
         printf 'firmware_identity_limit=source and Vitis hashes do not prove running ELF identity\n'
@@ -592,20 +601,39 @@ write_provenance() {
 
 # Run a full offline consistency check after a successful, unmounted case.
 run_offline_fsck() {
-    local output_path=$1 log_path="${output_path}/fsck.log"
+    local case_id=$1 output_path=$2 log_path="${output_path}/fsck.log"
+    local status=0 reason=ok
 
+    FSCK_LAST_RESULT=skipped
     [ "${FSCK_AFTER_CASE}" -eq 1 ] || return
     ! findmnt -rn -S "${DEVICE}" >/dev/null \
         || die "cannot run fsck while ${DEVICE} is mounted"
     echo "Running offline fsck for ${output_path}"
     # The invoking user owns the output directory; only fsck needs privilege.
     # shellcheck disable=SC2024
-    sudo fsck.f2fs "${DEVICE}" > "${log_path}" 2>&1 \
-        || die "offline fsck failed for ${output_path}"
-    grep -q '^Done:' "${log_path}" \
-        || die "offline fsck did not finish for ${output_path}"
-    ! grep -aEiq '\[ASSERT\]|\[ERROR\]|Segmentation fault|failed to fix' "${log_path}" \
-        || die "offline fsck reported an anomaly for ${output_path}"
+    sudo fsck.f2fs "${DEVICE}" > "${log_path}" 2>&1 || status=$?
+    if [ "${status}" -ne 0 ]; then
+        reason=nonzero-exit
+    elif ! grep -q '^Done:' "${log_path}"; then
+        status=254
+        reason=missing-completion
+    elif grep -aEiq '\[ASSERT\]|\[ERROR\]|Segmentation fault|failed to fix' "${log_path}"; then
+        status=253
+        reason=reported-anomaly
+    fi
+    if [ "${status}" -eq 0 ]; then
+        FSCK_LAST_RESULT=pass
+    else
+        FSCK_LAST_RESULT=fail
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+        "${case_id}" "${FSCK_LAST_RESULT}" "${status}" "${reason}" "${log_path}" \
+        >> "${BATCH_DIR}/fsck-results.tsv"
+    if [ "${status}" -ne 0 ]; then
+        echo "WARNING: offline fsck failed for ${case_id}: status=${status} reason=${reason}"
+        [ "${CONTINUE_ON_FSCK_FAILURE}" -eq 1 ] \
+            || die "offline fsck failed for ${output_path}"
+    fi
 }
 
 # Reject a completed case with missing output or a high-confidence kernel failure.
@@ -710,6 +738,8 @@ if [ "${MODE}" = start ]; then
         > "${BATCH_DIR}/case-results.tsv"
     printf 'case_id\tconfiguration\tmodule_parameter\tmodule_sha256\n' \
         > "${BATCH_DIR}/runtime-modes.tsv"
+    printf 'case_id\tresult\texit_status\treason\tlog_path\n' \
+        > "${BATCH_DIR}/fsck-results.tsv"
 else
     [ -f "${BATCH_DIR}/schedule.tsv" ] || die "resume batch has no schedule.tsv"
     [ -f "${BATCH_DIR}/case-results.tsv" ] || die "resume batch has no case-results.tsv"
@@ -717,6 +747,10 @@ else
     if [ ! -f "${BATCH_DIR}/runtime-modes.tsv" ]; then
         printf 'case_id\tconfiguration\tmodule_parameter\tmodule_sha256\n' \
             > "${BATCH_DIR}/runtime-modes.tsv"
+    fi
+    if [ ! -f "${BATCH_DIR}/fsck-results.tsv" ]; then
+        printf 'case_id\tresult\texit_status\treason\tlog_path\n' \
+            > "${BATCH_DIR}/fsck-results.tsv"
     fi
 fi
 
@@ -778,9 +812,9 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
             '$1 == id && $11 == 0 {path=$12} END {print path}' "${CASE_RESULTS}")
         echo "Recovering validation for completed test ${case_id}"
         validate_case "${workload_type}" "${output_path}"
-        run_offline_fsck "${output_path}"
-        printf 'validated_at=%s\noutput_path=%s\n' \
-            "$(date --iso-8601=seconds)" "${output_path}" \
+        run_offline_fsck "${case_id}" "${output_path}"
+        printf 'validated_at=%s\noutput_path=%s\nfsck_result=%s\n' \
+            "$(date --iso-8601=seconds)" "${output_path}" "${FSCK_LAST_RESULT}" \
             > "${BATCH_DIR}/validated/${case_id}.ok"
         continue
     fi
@@ -810,9 +844,9 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
         '$1 == id && $11 == 0 {path=$12} END {print path}' "${CASE_RESULTS}")
     [ -n "${output_path}" ] || die "no successful result row for ${case_id}"
     validate_case "${workload_type}" "${output_path}"
-    run_offline_fsck "${output_path}"
-    printf 'validated_at=%s\noutput_path=%s\n' \
-        "$(date --iso-8601=seconds)" "${output_path}" \
+    run_offline_fsck "${case_id}" "${output_path}"
+    printf 'validated_at=%s\noutput_path=%s\nfsck_result=%s\n' \
+        "$(date --iso-8601=seconds)" "${output_path}" "${FSCK_LAST_RESULT}" \
         > "${BATCH_DIR}/validated/${case_id}.ok"
     successful=$(awk -F '\t' 'NR > 1 && $11 == 0 {n++} END {print n + 0}' "${CASE_RESULTS}")
     echo "MATRIX_CASE_END id=${case_id} progress=${successful}/${EXPECTED_CASES} at=$(date --iso-8601=seconds)"
@@ -824,12 +858,19 @@ successful=$(awk -F '\t' 'NR > 1 && $11 == 0 {n++} END {print n + 0}' "${CASE_RE
 validated=$(find "${BATCH_DIR}/validated" -maxdepth 1 -type f -name '*.ok' | wc -l)
 [ "${validated}" -eq "${EXPECTED_CASES}" ] \
     || die "expected ${EXPECTED_CASES} validated cases, found ${validated}"
+fsck_failures=$(awk -F '\t' 'NR > 1 && $2 == "fail" {n++} END {print n + 0}' \
+    "${BATCH_DIR}/fsck-results.tsv")
 
 "${SCRIPT_DIR}/analyze_filebench_mcsgc_ab.py" "${BATCH_DIR}"
 COMPLETED_AT=$(date --iso-8601=seconds)
-printf 'started_at=%s\ncompleted_at=%s\nsuccessful_cases=%s\n' \
-    "${STARTED_AT}" "${COMPLETED_AT}" "${successful}" > "${BATCH_DIR}/completed.env"
-write_state success
+printf 'started_at=%s\ncompleted_at=%s\nsuccessful_cases=%s\nfsck_failures=%s\n' \
+    "${STARTED_AT}" "${COMPLETED_AT}" "${successful}" "${fsck_failures}" \
+    > "${BATCH_DIR}/completed.env"
+if [ "${fsck_failures}" -eq 0 ]; then
+    write_state success
+else
+    write_state completed_with_fsck_failures
+fi
 stop_sudo_keepalive
 trap - EXIT
-echo "EUROPAR_MCSGC_CANDIDATE_MATRIX_COMPLETE status=success cases=${successful} completed_at=${COMPLETED_AT}"
+echo "EUROPAR_MCSGC_CANDIDATE_MATRIX_COMPLETE status=success cases=${successful} fsck_failures=${fsck_failures} completed_at=${COMPLETED_AT}"

@@ -516,6 +516,43 @@ def geometric_mean(values: List[float]) -> float:
     return math.exp(statistics.fmean([math.log(value) for value in values]))
 
 
+def read_fsck_results(path: Path) -> List[Dict[str, str]]:
+    """Read per-case offline consistency-check outcomes when available."""
+    if not path.exists():
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle, delimiter="\t"))
+
+
+def append_fsck_report(report: str, rows: List[Dict[str, str]]) -> str:
+    """Append explicit correctness outcomes without hiding failed checks."""
+    if not rows:
+        return report
+    lines = [
+        report.rstrip(),
+        "",
+        "## Offline Filesystem Check",
+        "",
+        "| Case | Result | Exit status | Reason |",
+        "|---|---|---:|---|",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row['case_id']} | {row['result']} | {row['exit_status']} "
+            f"| {row['reason']} |"
+        )
+    failed = sum(row["result"] == "fail" for row in rows)
+    lines.extend(
+        [
+            "",
+            f"Offline fsck failures: **{failed}/{len(rows)}**. A failed check is a",
+            "correctness result and is never reclassified as a successful filesystem.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def format_metric(item: Mapping[str, object], name: str) -> str:
     """Format an optional numeric metric for Markdown tables."""
     value = item.get(name)
@@ -1301,6 +1338,7 @@ def main() -> None:
             writer.writeheader()
             writer.writerows(space_timeline_records)
 
+    fsck_results = read_fsck_results(batch / "fsck-results.tsv")
     payload = {
         "batch": str(batch),
         "control_available": any(
@@ -1310,12 +1348,14 @@ def main() -> None:
         "workloads": ordered_workloads,
         "samples": samples,
         "statistics": stats,
+        "fsck_results": fsck_results,
     }
     (analysis / "summary.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     report = write_report(batch, stats, ordered_workloads, status_summaries, samples)
+    report = append_fsck_report(report, fsck_results)
     (analysis / "filebench-mcsgc-ab-report.md").write_text(
         report, encoding="utf-8"
     )
