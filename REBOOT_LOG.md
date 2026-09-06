@@ -92,3 +92,21 @@ recorded without assigning an unproven cause.
 - Post-reboot boot time: `2026-09-06 19:54:03`
 - Forced reboot attempts by this agent: 0
 - Evidence: `last -x` contains an explicit clean shutdown record before the new boot; pstore is empty. No benchmark was running when this reboot was discovered.
+
+## 2026-09-06 22:21 CST
+
+- Status: completed, clean shutdown observed
+- Initiator: user
+- Reason: the user could not reopen the Codex conversation and manually requested a reboot
+- Command: initiated outside the active agent session; exact command unknown
+- Last known task state: the first control case of the 12-case NOWAIT A/B matrix had completed its 300-second Filebench window and was blocked in post-workload sync; no result row or validation marker had been written
+- Interrupted batch: `/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-filebench-mcsgc-ab/20260906_220951`
+- Pre-reboot boot ID: `390986b2-d5ae-4df5-b72d-9e68d53b9e83`
+- Pre-reboot boot time: `2026-09-06 19:54:03`
+- Shutdown time reported by `last -x`: `2026-09-06 22:19:37`
+- Reboot time reported by the current system: `2026-09-06 22:21:36` (`last` records the boot at `22:21:44`)
+- Discovery time: `2026-09-06T22:35:03+08:00`
+- Post-reboot boot ID: `98aac792-ea21-480d-85b3-7db2062ef3ca`
+- Post-reboot boot time: `2026-09-06 22:21:36`
+- Forced reboot attempts by this agent: 0
+- Notes: the interrupted case is invalid and will not be resumed or included in analysis; the complete 12-case matrix must restart from case 1.
