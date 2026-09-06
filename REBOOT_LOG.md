@@ -75,3 +75,20 @@ recorded without assigning an unproven cause.
 - Post-reboot boot time: `2026-09-05 20:47:18`
 - Forced reboot attempts by this agent: 0
 - Evidence: `last -x` contains no normal shutdown record, pstore is empty, and no previous-boot journal is retained. The preceding benchmark had already completed sync, unmount, analysis, and its success marker, so this reboot is not part of that experiment's measured or teardown interval.
+
+## 2026-09-06 19:54 CST
+
+- Status: completed, clean shutdown observed
+- Initiator: unknown; this agent did not issue a reboot command
+- Reason: unknown
+- Command: unknown
+- Last confirmed pre-reboot observation: `2026-09-06T19:25:30+08:00`
+- Pre-reboot boot ID: `df2718b2-6396-4d68-b6df-53e63d3d0b3f`
+- Pre-reboot boot time: `2026-09-05 20:47:18`
+- Shutdown time reported by `last -x`: `2026-09-06 19:52:47`
+- Reboot time reported by the current system: approximately `2026-09-06 19:54:03` (`last` records the boot at `19:54:10`)
+- Discovery time: `2026-09-06T20:33:15+08:00`
+- Post-reboot boot ID: `390986b2-d5ae-4df5-b72d-9e68d53b9e83`
+- Post-reboot boot time: `2026-09-06 19:54:03`
+- Forced reboot attempts by this agent: 0
+- Evidence: `last -x` contains an explicit clean shutdown record before the new boot; pstore is empty. No benchmark was running when this reboot was discovered.
