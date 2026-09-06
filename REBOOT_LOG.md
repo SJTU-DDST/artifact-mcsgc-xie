@@ -59,3 +59,19 @@ recorded without assigning an unproven cause.
 - Forensic update: `2026-09-05T20:24:12+08:00`
 - The benchmark set `kernel.panic=20` before Filebench. Its target-filesystem `sync -f` began at approximately `19:27:58`; the new boot began at `19:30:31`. This interval is close to the configured 120-second hung-task threshold plus the 20-second panic reboot timeout.
 - This timing supports, but does not prove, an automatic reboot following a fatal kernel path during blocked teardown. The retained audit log has a coverage gap from `17:36:42` until the new boot, pstore is empty, and no previous-boot journal survives, so the panic trigger and initiator remain unproven.
+
+## 2026-09-05 20:47 CST
+
+- Status: completed, cause unknown
+- Initiator: unknown; the active Codex agent did not issue a reboot command
+- Reason: unexpected reboot approximately eight minutes after the 300-second Filebench node-page readahead diagnostic completed successfully
+- Command: unknown
+- Last confirmed task event: the diagnostic batch completed at `2026-09-05T20:38:43+08:00`
+- Pre-reboot boot ID: `fbe749be-287c-4af1-b481-5ca65fae62aa`
+- Pre-reboot boot time: `2026-09-05 19:30:31`
+- Reboot time reported by the current system: approximately `2026-09-05 20:47:18` (`last` records the boot at `20:47:26`)
+- Discovery time: `2026-09-06T14:03:02+08:00`
+- Post-reboot boot ID: `df2718b2-6396-4d68-b6df-53e63d3d0b3f`
+- Post-reboot boot time: `2026-09-05 20:47:18`
+- Forced reboot attempts by this agent: 0
+- Evidence: `last -x` contains no normal shutdown record, pstore is empty, and no previous-boot journal is retained. The preceding benchmark had already completed sync, unmount, analysis, and its success marker, so this reboot is not part of that experiment's measured or teardown interval.
