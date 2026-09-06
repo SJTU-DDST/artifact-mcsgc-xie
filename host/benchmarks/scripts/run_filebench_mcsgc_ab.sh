@@ -26,6 +26,7 @@ STATUS_SAMPLE_INTERVAL=${FILEBENCH_AB_STATUS_SAMPLE_INTERVAL:-5}
 RUNTIME_OVERRIDE=${FILEBENCH_AB_RUNTIME:-}
 KERNEL_PANIC_TIMEOUT_VALUE=${KERNEL_PANIC_TIMEOUT:-20}
 TEARDOWN_DIAGNOSTICS=${FILEBENCH_TEARDOWN_DIAGNOSTICS:-0}
+FSCK_AFTER_CASE=${FILEBENCH_AB_FSCK_AFTER_CASE:-0}
 for diagnostic_interval in "${REPORT_INTERVAL}" "${STATUS_SAMPLE_INTERVAL}"; do
     case "${diagnostic_interval}" in
         ''|*[!0-9]*)
@@ -40,6 +41,10 @@ case "${RUNTIME_OVERRIDE}" in
         echo "ERROR: FILEBENCH_AB_RUNTIME must be a positive integer" >&2
         exit 2
         ;;
+esac
+case "${FSCK_AFTER_CASE}" in
+    0|1) ;;
+    *) echo "ERROR: FILEBENCH_AB_FSCK_AFTER_CASE must be 0 or 1" >&2; exit 2 ;;
 esac
 IFS=',' read -r -a WORKLOADS <<< "${WORKLOAD_FILTER}"
 [ "${#WORKLOADS[@]}" -ge 1 ] || {
@@ -86,6 +91,8 @@ declare -A HOST_BRANCHES=(
     [cp-source]=exp/diagnostic-mcsgc8t-filebench-cp-source-20260905
     [node-readahead]=exp/diagnostic-mcsgc8t-filebench-node-readahead-20260905
     [node-readahead-nowait]=exp/diagnostic-mcsgc8t-filebench-node-readahead-nowait-20260905
+    [node-readahead-ab-control]=exp/diagnostic-mcsgc8t-filebench-node-readahead-ab-20260906
+    [node-readahead-ab-nowait]=exp/diagnostic-mcsgc8t-filebench-node-readahead-ab-20260906
 )
 declare -A HOST_COMMITS=(
     [control]=b6fb9bccbbbe4c3bf7dd666f808fb6f2e1e1c145
@@ -100,6 +107,8 @@ declare -A HOST_COMMITS=(
     [cp-source]=3b53ecbc89404fc8f002ea288d5fec1a59fe5cdf
     [node-readahead]=0b0d37c0d7966f49f247ed52ebe9f8a3e754b1b9
     [node-readahead-nowait]=9d53051cd06af3773a8d47d7adb21d7e089568fb
+    [node-readahead-ab-control]=304ff514692dc27c2501aa90a8a3cdf3f82ebccc
+    [node-readahead-ab-nowait]=304ff514692dc27c2501aa90a8a3cdf3f82ebccc
 )
 declare -A HOST_BASE_COMMITS=(
     [control]=5262b5a3979cc55302ae0300cbd8f24b51c60c24
@@ -114,6 +123,8 @@ declare -A HOST_BASE_COMMITS=(
     [cp-source]=fd0e8dbb546d69115fc82420286971181983cdb2
     [node-readahead]=3b53ecbc89404fc8f002ea288d5fec1a59fe5cdf
     [node-readahead-nowait]=0b0d37c0d7966f49f247ed52ebe9f8a3e754b1b9
+    [node-readahead-ab-control]=9d53051cd06af3773a8d47d7adb21d7e089568fb
+    [node-readahead-ab-nowait]=9d53051cd06af3773a8d47d7adb21d7e089568fb
 )
 declare -A PREFERRED_WORKTREES=(
     [control]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-control-20260831
@@ -128,12 +139,15 @@ declare -A PREFERRED_WORKTREES=(
     [cp-source]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-cp-source-20260905
     [node-readahead]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-node-readahead-20260905
     [node-readahead-nowait]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-node-readahead-nowait-20260905
+    [node-readahead-ab-control]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-node-readahead-ab-20260906
+    [node-readahead-ab-nowait]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-node-readahead-ab-20260906
 )
 declare -A HOST_TREES=()
 declare -A MODULE_PATHS=()
 declare -A MODULE_SRCVERSIONS=()
 declare -A COMMITTED_CONFIG_SHA256S=()
 declare -A BUILD_CONFIG_SHA256S=()
+declare -A BUILT_CONFIGURATION_BY_COMMIT=()
 
 SUDO_KEEPALIVE_PID=""
 BATCH_DIR=""
@@ -141,6 +155,7 @@ CASE_RESULTS=""
 OUTER_START_TICKS=""
 STARTED_AT=""
 NVME_CLI_SHA256=""
+LOADED_NODE_READAHEAD_MODE=unchanged
 
 # Keep every descendant benchmark non-interactive. A detached tmux session
 # cannot answer a sudo prompt, so fail immediately instead of stalling a case.
@@ -177,6 +192,7 @@ Low-overhead F2FS status sampling and periodic Filebench output both default to
 5 seconds. Set FILEBENCH_AB_STATUS_SAMPLE_INTERVAL=0 or
 FILEBENCH_AB_REPORT_INTERVAL=0 to disable the corresponding timeline.
 Set FILEBENCH_AB_RUNTIME to a positive number of seconds for a diagnostic run.
+Set FILEBENCH_AB_FSCK_AFTER_CASE=1 to run an offline check after every case.
 EOF
 }
 
@@ -246,6 +262,7 @@ write_state() {
         printf 'filebench_runtime_override_s=%q\n' "${RUNTIME_OVERRIDE}"
         printf 'kernel_panic_timeout_s=%q\n' "${KERNEL_PANIC_TIMEOUT_VALUE}"
         printf 'teardown_diagnostics=%q\n' "${TEARDOWN_DIAGNOSTICS}"
+        printf 'fsck_after_case=%q\n' "${FSCK_AFTER_CASE}"
         printf 'batch_dir=%q\n' "${BATCH_DIR}"
     } > "${BATCH_DIR}/state.env"
 }
@@ -254,19 +271,31 @@ write_state() {
 show_status() {
     local batch=$1
     local completed=0
+    local validated=0
     local failed=0
     if [ -f "${batch}/case-results.tsv" ]; then
         completed=$(awk -F '\t' 'NR > 1 && $11 == 0 {n++} END {print n + 0}' "${batch}/case-results.tsv")
         failed=$(awk -F '\t' 'NR > 1 && $11 != 0 {n++} END {print n + 0}' "${batch}/case-results.tsv")
     fi
-    printf 'batch=%s\ncompleted=%s/%s\nfailed_rows=%s\n' \
-        "${batch}" "${completed}" "${EXPECTED_CASES}" "${failed}"
+    if [ -d "${batch}/validated" ]; then
+        validated=$(find "${batch}/validated" -maxdepth 1 -type f -name '*.ok' | wc -l)
+    fi
+    printf 'batch=%s\nresult_rows=%s/%s\nvalidated=%s/%s\nfailed_rows=%s\n' \
+        "${batch}" "${completed}" "${EXPECTED_CASES}" \
+        "${validated}" "${EXPECTED_CASES}" "${failed}"
     [ ! -f "${batch}/state.env" ] || sed -n '1,12p' "${batch}/state.env"
 }
 
 # Return success when a case already has a successful result row.
 case_succeeded() {
     local case_id=$1
+    [ -f "${BATCH_DIR}/validated/${case_id}.ok" ] && case_has_success_row "${case_id}"
+}
+
+# Return success when test.sh already emitted a successful result row.
+case_has_success_row() {
+    local case_id=$1
+
     awk -F '\t' -v id="${case_id}" \
         'NR > 1 && $1 == id && $11 == 0 {found=1} END {exit !found}' "${CASE_RESULTS}"
 }
@@ -370,6 +399,26 @@ build_configuration() {
     local commit=${HOST_COMMITS[${configuration}]}
     local module_path="${tree}/fs/f2fs/f2fs.ko"
     local committed_sha build_sha module_sha module_srcversion
+    local reused_from=${BUILT_CONFIGURATION_BY_COMMIT[${commit}]:-}
+
+    if [ -n "${reused_from}" ]; then
+        MODULE_PATHS[${configuration}]=${MODULE_PATHS[${reused_from}]}
+        MODULE_SRCVERSIONS[${configuration}]=${MODULE_SRCVERSIONS[${reused_from}]}
+        COMMITTED_CONFIG_SHA256S[${configuration}]=${COMMITTED_CONFIG_SHA256S[${reused_from}]}
+        BUILD_CONFIG_SHA256S[${configuration}]=${BUILD_CONFIG_SHA256S[${reused_from}]}
+        {
+            printf '\n[build-%s]\n' "${configuration}"
+            printf 'completed_at=%s\n' "$(date --iso-8601=seconds)"
+            printf 'host_tree=%s\nhost_branch=%s\nhost_commit=%s\n' \
+                "${tree}" "${HOST_BRANCHES[${configuration}]}" "${commit}"
+            printf 'reused_from_configuration=%s\n' "${reused_from}"
+            printf 'module_sha256=%s\nmodule_srcversion=%s\n' \
+                "$(sha256sum "${MODULE_PATHS[${reused_from}]}" | awk '{print $1}')" \
+                "${MODULE_SRCVERSIONS[${reused_from}]}"
+        } >> "${BATCH_DIR}/provenance.txt"
+        echo "Reusing ${reused_from} module for ${configuration}; Host commit is identical."
+        return
+    fi
 
     echo "Building ${configuration} from ${commit} at $(date --iso-8601=seconds)"
     git -C "${tree}" show "${commit}:.config" > "${tree}/.config"
@@ -391,6 +440,7 @@ build_configuration() {
     MODULE_SRCVERSIONS[${configuration}]=${module_srcversion}
     COMMITTED_CONFIG_SHA256S[${configuration}]=${committed_sha}
     BUILD_CONFIG_SHA256S[${configuration}]=${build_sha}
+    BUILT_CONFIGURATION_BY_COMMIT[${commit}]=${configuration}
     {
         printf '\n[build-%s]\n' "${configuration}"
         printf 'completed_at=%s\n' "$(date --iso-8601=seconds)"
@@ -432,16 +482,37 @@ load_configuration() {
     local configuration=$1
     local module_path=${MODULE_PATHS[${configuration}]}
     local expected_srcversion=${MODULE_SRCVERSIONS[${configuration}]}
-    local loaded_srcversion
+    local loaded_srcversion parameter_value expected_value
 
     findmnt -rn -S "${DEVICE}" >/dev/null && die "${DEVICE} is mounted before module replacement"
     if lsmod | awk '$1 == "f2fs" {found=1} END {exit !found}'; then
         sudo rmmod f2fs
     fi
-    sudo insmod "${module_path}"
+    LOADED_NODE_READAHEAD_MODE=unchanged
+    case "${configuration}" in
+        node-readahead-ab-control)
+            sudo insmod "${module_path}" csgc_node_readahead_nowait=0
+            expected_value=N
+            ;;
+        node-readahead-ab-nowait)
+            sudo insmod "${module_path}" csgc_node_readahead_nowait=1
+            expected_value=Y
+            ;;
+        *)
+            sudo insmod "${module_path}"
+            expected_value=
+            ;;
+    esac
     loaded_srcversion=$(< /sys/module/f2fs/srcversion)
     [ "${loaded_srcversion^^}" = "${expected_srcversion^^}" ] \
         || die "loaded module does not match ${configuration}"
+    if [ -n "${expected_value}" ]; then
+        parameter_value=$(< /sys/module/f2fs/parameters/csgc_node_readahead_nowait)
+        [ "${parameter_value}" = "${expected_value}" ] \
+            || die "node readahead mode mismatch: expected=${expected_value} actual=${parameter_value}"
+        LOADED_NODE_READAHEAD_MODE=${parameter_value}
+        echo "CSGC_NODE_READAHEAD_MODE configuration=${configuration} enabled=${parameter_value}"
+    fi
 }
 
 # Check the non-destructive environment and exact workload source.
@@ -505,6 +576,7 @@ write_provenance() {
         printf 'filebench_runtime_override_s=%s\n' "${RUNTIME_OVERRIDE}"
         printf 'kernel_panic_timeout_s=%s\nteardown_diagnostics=%s\n' \
             "${KERNEL_PANIC_TIMEOUT_VALUE}" "${TEARDOWN_DIAGNOSTICS}"
+        printf 'fsck_after_case=%s\n' "${FSCK_AFTER_CASE}"
         printf 'openssd_expected_branch=%s\nopenssd_expected_commit=%s\n' \
             "${OPENSSD_BRANCH}" "${OPENSSD_COMMIT}"
         printf 'firmware_identity_limit=source and Vitis hashes do not prove running ELF identity\n'
@@ -516,6 +588,24 @@ write_provenance() {
         | tar -x -C "${BATCH_DIR}/source-snapshot"
     find "${BATCH_DIR}/source-snapshot" -type f -print0 | sort -z | xargs -0 sha256sum \
         > "${BATCH_DIR}/source-snapshot-sha256.txt"
+}
+
+# Run a full offline consistency check after a successful, unmounted case.
+run_offline_fsck() {
+    local output_path=$1 log_path="${output_path}/fsck.log"
+
+    [ "${FSCK_AFTER_CASE}" -eq 1 ] || return
+    ! findmnt -rn -S "${DEVICE}" >/dev/null \
+        || die "cannot run fsck while ${DEVICE} is mounted"
+    echo "Running offline fsck for ${output_path}"
+    # The invoking user owns the output directory; only fsck needs privilege.
+    # shellcheck disable=SC2024
+    sudo fsck.f2fs "${DEVICE}" > "${log_path}" 2>&1 \
+        || die "offline fsck failed for ${output_path}"
+    grep -q '^Done:' "${log_path}" \
+        || die "offline fsck did not finish for ${output_path}"
+    ! grep -aEiq '\[ASSERT\]|\[ERROR\]|Segmentation fault|failed to fix' "${log_path}" \
+        || die "offline fsck reported an anomaly for ${output_path}"
 }
 
 # Reject a completed case with missing output or a high-confidence kernel failure.
@@ -613,13 +703,21 @@ flock -n 9 || die "another candidate matrix is already running"
 
 if [ "${MODE}" = start ]; then
     BATCH_DIR="${RESULT_BASE}/$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "${BATCH_DIR}/generated-configs" "${BATCH_DIR}/raw"
+    mkdir -p "${BATCH_DIR}/generated-configs" "${BATCH_DIR}/raw" \
+        "${BATCH_DIR}/validated"
     write_schedule "${BATCH_DIR}/schedule.tsv"
     printf 'case_id\tmode\tworkload_type\tbmname\tdistribution\tprefill_ratio\tsegs_per_sec\tstarted_at\tended_at\tduration_s\tstatus\toutput_path\n' \
         > "${BATCH_DIR}/case-results.tsv"
+    printf 'case_id\tconfiguration\tmodule_parameter\tmodule_sha256\n' \
+        > "${BATCH_DIR}/runtime-modes.tsv"
 else
     [ -f "${BATCH_DIR}/schedule.tsv" ] || die "resume batch has no schedule.tsv"
     [ -f "${BATCH_DIR}/case-results.tsv" ] || die "resume batch has no case-results.tsv"
+    mkdir -p "${BATCH_DIR}/validated"
+    if [ ! -f "${BATCH_DIR}/runtime-modes.tsv" ]; then
+        printf 'case_id\tconfiguration\tmodule_parameter\tmodule_sha256\n' \
+            > "${BATCH_DIR}/runtime-modes.tsv"
+    fi
 fi
 
 CASE_RESULTS="${BATCH_DIR}/case-results.tsv"
@@ -675,10 +773,25 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
         echo "Skipping completed case ${case_id}"
         continue
     fi
+    if case_has_success_row "${case_id}"; then
+        output_path=$(awk -F '\t' -v id="${case_id}" \
+            '$1 == id && $11 == 0 {path=$12} END {print path}' "${CASE_RESULTS}")
+        echo "Recovering validation for completed test ${case_id}"
+        validate_case "${workload_type}" "${output_path}"
+        run_offline_fsck "${output_path}"
+        printf 'validated_at=%s\noutput_path=%s\n' \
+            "$(date --iso-8601=seconds)" "${output_path}" \
+            > "${BATCH_DIR}/validated/${case_id}.ok"
+        continue
+    fi
 
     verify_openssd_provenance >/dev/null
     verify_nvme_cli
     load_configuration "${configuration}"
+    printf '%s\t%s\t%s\t%s\n' \
+        "${case_id}" "${configuration}" "${LOADED_NODE_READAHEAD_MODE}" \
+        "$(sha256sum "${MODULE_PATHS[${configuration}]}" | awk '{print $1}')" \
+        >> "${BATCH_DIR}/runtime-modes.tsv"
     config_path="${BATCH_DIR}/generated-configs/${case_id}.sh"
     write_case_config "${config_path}" "${workload_type}" "${bmname}" "${distribution}" \
         "${prefill_ratio}" "${segs_per_sec}" "${fio_timebased}"
@@ -697,6 +810,10 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
         '$1 == id && $11 == 0 {path=$12} END {print path}' "${CASE_RESULTS}")
     [ -n "${output_path}" ] || die "no successful result row for ${case_id}"
     validate_case "${workload_type}" "${output_path}"
+    run_offline_fsck "${output_path}"
+    printf 'validated_at=%s\noutput_path=%s\n' \
+        "$(date --iso-8601=seconds)" "${output_path}" \
+        > "${BATCH_DIR}/validated/${case_id}.ok"
     successful=$(awk -F '\t' 'NR > 1 && $11 == 0 {n++} END {print n + 0}' "${CASE_RESULTS}")
     echo "MATRIX_CASE_END id=${case_id} progress=${successful}/${EXPECTED_CASES} at=$(date --iso-8601=seconds)"
 done 8< "${BATCH_DIR}/schedule.tsv"
@@ -704,6 +821,9 @@ done 8< "${BATCH_DIR}/schedule.tsv"
 successful=$(awk -F '\t' 'NR > 1 && $11 == 0 {n++} END {print n + 0}' "${CASE_RESULTS}")
 [ "${successful}" -eq "${EXPECTED_CASES}" ] \
     || die "expected ${EXPECTED_CASES} successful cases, found ${successful}"
+validated=$(find "${BATCH_DIR}/validated" -maxdepth 1 -type f -name '*.ok' | wc -l)
+[ "${validated}" -eq "${EXPECTED_CASES}" ] \
+    || die "expected ${EXPECTED_CASES} validated cases, found ${validated}"
 
 "${SCRIPT_DIR}/analyze_filebench_mcsgc_ab.py" "${BATCH_DIR}"
 COMPLETED_AT=$(date --iso-8601=seconds)

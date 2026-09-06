@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Run the strict same-binary control/NOWAIT Filebench comparison.
+
+SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(cd -- "$(dirname -- "${SCRIPT_PATH}")" && pwd)
+
+export FILEBENCH_AB_PROFILE=repeat
+export FILEBENCH_AB_CONFIGS=node-readahead-ab-control,node-readahead-ab-nowait
+export FILEBENCH_AB_WORKLOADS=filebench-fileserver,filebench-varmail
+export FILEBENCH_AB_REPETITIONS=${FILEBENCH_NODE_RA_REPETITIONS:-3}
+export FILEBENCH_AB_RUNTIME=${FILEBENCH_NODE_RA_RUNTIME:-300}
+export FILEBENCH_AB_REPORT_INTERVAL=${FILEBENCH_NODE_RA_REPORT_INTERVAL:-5}
+export FILEBENCH_AB_STATUS_SAMPLE_INTERVAL=${FILEBENCH_NODE_RA_STATUS_INTERVAL:-5}
+export FILEBENCH_AB_FSCK_AFTER_CASE=${FILEBENCH_NODE_RA_FSCK_AFTER_CASE:-1}
+export FILEBENCH_TEARDOWN_DIAGNOSTICS=${FILEBENCH_NODE_RA_TEARDOWN_DIAGNOSTICS:-1}
+export KERNEL_PANIC_TIMEOUT=${FILEBENCH_NODE_RA_KERNEL_PANIC_TIMEOUT:-0}
+
+exec "${SCRIPT_DIR}/run_filebench_mcsgc_ab.sh" "$@"

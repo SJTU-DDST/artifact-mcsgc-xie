@@ -30,6 +30,8 @@ LABELS = {
     "cp-source": "G: checkpoint-source diagnosis",
     "node-readahead": "H: asynchronous node-page readahead",
     "node-readahead-nowait": "I: shadow-safe NOWAIT node-page readahead",
+    "node-readahead-ab-control": "A: NOWAIT disabled",
+    "node-readahead-ab-nowait": "B: NOWAIT enabled",
 }
 WORKLOAD_LABELS = {
     "filebench-fileserver": "fileserver",
@@ -101,6 +103,7 @@ CP_DIAG_FIELDS = (
     "cp_diag_node_page_ra_present",
     "cp_diag_node_page_ra_busy",
     "cp_diag_node_page_ra_errors",
+    "cp_diag_node_page_ra_disabled",
     "cp_diag_node_page_data_page_alloc",
     "cp_diag_node_page_local_cache_incomplete",
     "cp_diag_origc_data_collectors",
@@ -527,14 +530,22 @@ def write_report(
     samples: List[Mapping[str, object]],
 ) -> str:
     """Build a concise report with explicit A/B denominators."""
+    control = next(
+        (
+            candidate
+            for candidate in ("node-readahead-ab-control", "control")
+            if candidate in stats
+        ),
+        None,
+    )
     configurations = sorted(
         stats,
         key=lambda item: (
-            item != "control",
+            item != control,
             list(LABELS).index(item) if item in LABELS else 99,
         ),
     )
-    has_control = "control" in stats
+    has_control = control is not None
     mean_ratio_heading = "Mean vs A" if has_control else "Mean vs A (not available)"
     median_ratio_heading = (
         "Median vs A" if has_control else "Median vs A (not available)"
@@ -544,10 +555,13 @@ def write_report(
         "",
         f"- Batch: `{batch}`",
         "- Firmware is fixed to SSD1t; all configurations use identical workloads.",
-        "- A is the current Conflict-aware candidate; B restores only standard",
-        "  prefree checkpoints; C adds pre-CSGC sync to B; D retains unsafe",
-        "  reclaim but processes sections sequentially. E1/E2/E4 additionally",
-        "  limit active segment collectors within each section.",
+        (
+            "- A and B use one identical Host module; only the read-only module "
+            "parameter csgc_node_readahead_nowait differs."
+            if control == "node-readahead-ab-control"
+            else "- A is the current Conflict-aware candidate; later configurations "
+            "change one experimental variable."
+        ),
         "",
         "## Throughput",
         "",
@@ -560,8 +574,8 @@ def write_report(
             mean_ratio = "-"
             median_ratio = "-"
             if has_control:
-                control_mean = stats["control"][workload]["mean_ops_s"]
-                control_median = stats["control"][workload]["median_ops_s"]
+                control_mean = stats[control][workload]["mean_ops_s"]
+                control_median = stats[control][workload]["median_ops_s"]
                 mean_ratio = f"{item['mean_ops_s'] / control_mean:.3f}x"
                 median_ratio = f"{item['median_ops_s'] / control_median:.3f}x"
             lines.append(
@@ -575,16 +589,16 @@ def write_report(
     lines.extend(["", "## Single-Variable Comparisons", ""])
     if has_control:
         for configuration in configurations:
-            if configuration == "control":
+            if configuration == control:
                 continue
             mean_ratios = [
                 stats[configuration][workload]["mean_ops_s"]
-                / stats["control"][workload]["mean_ops_s"]
+                / stats[control][workload]["mean_ops_s"]
                 for workload in workloads
             ]
             median_ratios = [
                 stats[configuration][workload]["median_ops_s"]
-                / stats["control"][workload]["median_ops_s"]
+                / stats[control][workload]["median_ops_s"]
                 for workload in workloads
             ]
             details = ", ".join(
@@ -938,6 +952,7 @@ def write_report(
                 "ra_present",
                 "ra_busy",
                 "ra_errors",
+                "ra_disabled",
                 "data_page_alloc",
                 "local_cache_incomplete",
             )
@@ -1288,7 +1303,10 @@ def main() -> None:
 
     payload = {
         "batch": str(batch),
-        "control_available": "control" in grouped,
+        "control_available": any(
+            candidate in grouped
+            for candidate in ("node-readahead-ab-control", "control")
+        ),
         "workloads": ordered_workloads,
         "samples": samples,
         "statistics": stats,
