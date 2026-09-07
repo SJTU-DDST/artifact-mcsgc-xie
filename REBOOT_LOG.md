@@ -110,3 +110,20 @@ recorded without assigning an unproven cause.
 - Post-reboot boot time: `2026-09-06 22:21:36`
 - Forced reboot attempts by this agent: 0
 - Notes: the interrupted case is invalid and will not be resumed or included in analysis; the complete 12-case matrix must restart from case 1.
+
+## 2026-09-07 12:54 CST
+
+- Status: completed; abrupt reboot observed
+- Initiator: user
+- Reason: the user could not reopen the Codex conversation and manually requested a reboot
+- Command: initiated outside the active agent session; exact command unknown
+- Last known task state: the second case (`NOWAIT/fileserver/r1`) of the 12-case node-readahead A/B matrix had completed Filebench, then `cat /sys/kernel/debug/f2fs/status` triggered an Oops in `fs/f2fs/debug.c`; `umount /dev/nvme0n1` was blocked in `synchronize_rcu_expedited()`
+- Interrupted batch: `/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-filebench-mcsgc-ab/20260906_223615`
+- Pre-reboot boot ID: `98aac792-ea21-480d-85b3-7db2062ef3ca`
+- Pre-reboot boot time: `2026-09-06 22:21:36`
+- Reboot time reported by the current system: `2026-09-07 12:54:45` (`last` records the boot at `12:54:53`)
+- Discovery time: `2026-09-07T15:44:31+08:00`
+- Post-reboot boot ID: `c58a64bd-d5a7-48b7-845d-3ea500230b87`
+- Post-reboot boot time: `2026-09-07 12:54:45`
+- Forced reboot attempts by this agent: 0
+- Notes: `last -x` has no clean shutdown event for the preceding boot. The interrupted batch is invalid and must restart from case 1. At discovery time, F2FS was not loaded and no D-state process remained, but `/dev/nvme0n1` was not enumerated.
