@@ -183,13 +183,13 @@ if grep -Eq 'NO VALID RESULTS|Failed to open file|flowop .* failed|Input/output 
     filebench_status=1
 fi
 record_phase_time filebench_end
+stop_f2fs_status_sampler
 echo "======================================================="
 
 record_phase_time teardown_start
 FILEBENCH_TEARDOWN_DIAGNOSTICS="${teardown_diagnostics}" \
     umount_and_get_stat "${devpath}" "${gc_mode}" "${output_path}/stat.log"
 record_phase_time teardown_end
-stop_f2fs_status_sampler
 
 if [ ${fsck_after_run} -ne 0 ]; then
     echo "run fsck"
