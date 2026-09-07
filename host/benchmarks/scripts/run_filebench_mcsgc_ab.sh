@@ -112,8 +112,8 @@ declare -A HOST_COMMITS=(
     [cp-source]=3b53ecbc89404fc8f002ea288d5fec1a59fe5cdf
     [node-readahead]=0b0d37c0d7966f49f247ed52ebe9f8a3e754b1b9
     [node-readahead-nowait]=9d53051cd06af3773a8d47d7adb21d7e089568fb
-    [node-readahead-ab-control]=304ff514692dc27c2501aa90a8a3cdf3f82ebccc
-    [node-readahead-ab-nowait]=304ff514692dc27c2501aa90a8a3cdf3f82ebccc
+    [node-readahead-ab-control]=a830b143cae95e491dffc32fded1ddaf6ee8d089
+    [node-readahead-ab-nowait]=a830b143cae95e491dffc32fded1ddaf6ee8d089
 )
 declare -A HOST_BASE_COMMITS=(
     [control]=5262b5a3979cc55302ae0300cbd8f24b51c60c24
