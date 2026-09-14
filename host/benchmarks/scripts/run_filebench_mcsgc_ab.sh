@@ -96,8 +96,8 @@ declare -A HOST_BRANCHES=(
     [cp-source]=exp/diagnostic-mcsgc8t-filebench-cp-source-20260905
     [node-readahead]=exp/diagnostic-mcsgc8t-filebench-node-readahead-20260905
     [node-readahead-nowait]=exp/diagnostic-mcsgc8t-filebench-node-readahead-nowait-20260905
-    [node-readahead-ab-control]=exp/diagnostic-mcsgc8t-filebench-node-readahead-ab-20260906
-    [node-readahead-ab-nowait]=exp/diagnostic-mcsgc8t-filebench-node-readahead-ab-20260906
+    [node-readahead-ab-control]=exp/fix-mcsgc8t-writeback-lifecycle-20260914
+    [node-readahead-ab-nowait]=exp/fix-mcsgc8t-writeback-lifecycle-20260914
 )
 declare -A HOST_COMMITS=(
     [control]=b6fb9bccbbbe4c3bf7dd666f808fb6f2e1e1c145
@@ -112,8 +112,8 @@ declare -A HOST_COMMITS=(
     [cp-source]=3b53ecbc89404fc8f002ea288d5fec1a59fe5cdf
     [node-readahead]=0b0d37c0d7966f49f247ed52ebe9f8a3e754b1b9
     [node-readahead-nowait]=9d53051cd06af3773a8d47d7adb21d7e089568fb
-    [node-readahead-ab-control]=9f75425881eacba4fad7f8fc6080c0b73c601825
-    [node-readahead-ab-nowait]=9f75425881eacba4fad7f8fc6080c0b73c601825
+    [node-readahead-ab-control]=08ce6e2e02cfc45abbfa7c5f1bd985a4d461e2a1
+    [node-readahead-ab-nowait]=08ce6e2e02cfc45abbfa7c5f1bd985a4d461e2a1
 )
 declare -A HOST_BASE_COMMITS=(
     [control]=5262b5a3979cc55302ae0300cbd8f24b51c60c24
@@ -128,8 +128,8 @@ declare -A HOST_BASE_COMMITS=(
     [cp-source]=fd0e8dbb546d69115fc82420286971181983cdb2
     [node-readahead]=3b53ecbc89404fc8f002ea288d5fec1a59fe5cdf
     [node-readahead-nowait]=0b0d37c0d7966f49f247ed52ebe9f8a3e754b1b9
-    [node-readahead-ab-control]=9d53051cd06af3773a8d47d7adb21d7e089568fb
-    [node-readahead-ab-nowait]=9d53051cd06af3773a8d47d7adb21d7e089568fb
+    [node-readahead-ab-control]=9f75425881eacba4fad7f8fc6080c0b73c601825
+    [node-readahead-ab-nowait]=9f75425881eacba4fad7f8fc6080c0b73c601825
 )
 declare -A PREFERRED_WORKTREES=(
     [control]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-control-20260831
