@@ -24,10 +24,12 @@ WORKLOAD_FILTER=${FILEBENCH_AB_WORKLOADS:-filebench-fileserver,filebench-varmail
 REPORT_INTERVAL=${FILEBENCH_AB_REPORT_INTERVAL:-5}
 STATUS_SAMPLE_INTERVAL=${FILEBENCH_AB_STATUS_SAMPLE_INTERVAL:-5}
 RUNTIME_OVERRIDE=${FILEBENCH_AB_RUNTIME:-}
+SCHEDULE_MODE=${FILEBENCH_AB_SCHEDULE_MODE:-alternating}
 KERNEL_PANIC_TIMEOUT_VALUE=${KERNEL_PANIC_TIMEOUT:-20}
 TEARDOWN_DIAGNOSTICS=${FILEBENCH_TEARDOWN_DIAGNOSTICS:-0}
 FSCK_AFTER_CASE=${FILEBENCH_AB_FSCK_AFTER_CASE:-0}
 CONTINUE_ON_FSCK_FAILURE=${FILEBENCH_AB_CONTINUE_ON_FSCK_FAILURE:-0}
+CHECK_CHECKPOINTS=${FILEBENCH_AB_CHECK_CHECKPOINTS:-0}
 for diagnostic_interval in "${REPORT_INTERVAL}" "${STATUS_SAMPLE_INTERVAL}"; do
     case "${diagnostic_interval}" in
         ''|*[!0-9]*)
@@ -50,6 +52,14 @@ esac
 case "${CONTINUE_ON_FSCK_FAILURE}" in
     0|1) ;;
     *) echo "ERROR: FILEBENCH_AB_CONTINUE_ON_FSCK_FAILURE must be 0 or 1" >&2; exit 2 ;;
+esac
+case "${CHECK_CHECKPOINTS}" in
+    0|1) ;;
+    *) echo "ERROR: FILEBENCH_AB_CHECK_CHECKPOINTS must be 0 or 1" >&2; exit 2 ;;
+esac
+case "${SCHEDULE_MODE}" in
+    alternating|configuration-major) ;;
+    *) echo "ERROR: unsupported FILEBENCH_AB_SCHEDULE_MODE=${SCHEDULE_MODE}" >&2; exit 2 ;;
 esac
 IFS=',' read -r -a WORKLOADS <<< "${WORKLOAD_FILTER}"
 [ "${#WORKLOADS[@]}" -ge 1 ] || {
@@ -98,6 +108,8 @@ declare -A HOST_BRANCHES=(
     [node-readahead-nowait]=exp/diagnostic-mcsgc8t-filebench-node-readahead-nowait-20260905
     [node-readahead-ab-control]=exp/fix-mcsgc8t-writeback-lifecycle-20260914
     [node-readahead-ab-nowait]=exp/fix-mcsgc8t-writeback-lifecycle-20260914
+    [curseg-rollover-control]=exp/fix-mcsgc8t-terminal-curseg-rollover-20260915
+    [curseg-rollover-nowait]=exp/fix-mcsgc8t-terminal-curseg-rollover-20260915
 )
 declare -A HOST_COMMITS=(
     [control]=b6fb9bccbbbe4c3bf7dd666f808fb6f2e1e1c145
@@ -114,6 +126,8 @@ declare -A HOST_COMMITS=(
     [node-readahead-nowait]=9d53051cd06af3773a8d47d7adb21d7e089568fb
     [node-readahead-ab-control]=08ce6e2e02cfc45abbfa7c5f1bd985a4d461e2a1
     [node-readahead-ab-nowait]=08ce6e2e02cfc45abbfa7c5f1bd985a4d461e2a1
+    [curseg-rollover-control]=e465bce60497053afcded3c82491e72198f0b442
+    [curseg-rollover-nowait]=e465bce60497053afcded3c82491e72198f0b442
 )
 declare -A HOST_BASE_COMMITS=(
     [control]=5262b5a3979cc55302ae0300cbd8f24b51c60c24
@@ -130,6 +144,8 @@ declare -A HOST_BASE_COMMITS=(
     [node-readahead-nowait]=0b0d37c0d7966f49f247ed52ebe9f8a3e754b1b9
     [node-readahead-ab-control]=9f75425881eacba4fad7f8fc6080c0b73c601825
     [node-readahead-ab-nowait]=9f75425881eacba4fad7f8fc6080c0b73c601825
+    [curseg-rollover-control]=08ce6e2e02cfc45abbfa7c5f1bd985a4d461e2a1
+    [curseg-rollover-nowait]=08ce6e2e02cfc45abbfa7c5f1bd985a4d461e2a1
 )
 declare -A PREFERRED_WORKTREES=(
     [control]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-control-20260831
@@ -146,6 +162,8 @@ declare -A PREFERRED_WORKTREES=(
     [node-readahead-nowait]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-node-readahead-nowait-20260905
     [node-readahead-ab-control]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-node-readahead-ab-20260906
     [node-readahead-ab-nowait]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-node-readahead-ab-20260906
+    [curseg-rollover-control]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-curseg-rollover-fix-20260915
+    [curseg-rollover-nowait]=/home/xin/work-xie/mcsgc-real/linux-cs-filebench-curseg-rollover-fix-20260915
 )
 declare -A HOST_TREES=()
 declare -A MODULE_PATHS=()
@@ -200,6 +218,8 @@ FILEBENCH_AB_REPORT_INTERVAL=0 to disable the corresponding timeline.
 Set FILEBENCH_AB_RUNTIME to a positive number of seconds for a diagnostic run.
 Set FILEBENCH_AB_FSCK_AFTER_CASE=1 to run an offline check after every case.
 Set FILEBENCH_AB_CONTINUE_ON_FSCK_FAILURE=1 only for fault-isolation matrices.
+Set FILEBENCH_AB_CHECK_CHECKPOINTS=1 to validate both raw checkpoint packs.
+Set FILEBENCH_AB_SCHEDULE_MODE=configuration-major to finish each build in turn.
 EOF
 }
 
@@ -235,6 +255,21 @@ write_schedule() {
     local -a order
 
     printf 'case_id\tconfiguration\tmode\tworkload_type\tbmname\tdistribution\tprefill_ratio\tsegs_per_sec\tfio_timebased\n' > "${path}"
+    if [ "${SCHEDULE_MODE}" = configuration-major ]; then
+        for configuration in "${CONFIGURATIONS[@]}"; do
+            for ((repetition = 1; repetition <= REPETITIONS; repetition++)); do
+                while IFS=$'\t' read -r base_id workload_type bmname distribution prefill_ratio segs_per_sec fio_timebased; do
+                    printf '%s-%s-r%s\t%s\tcs\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                        "${configuration}" "${base_id}" "${repetition}" \
+                        "${configuration}" "${workload_type}" "${bmname}" \
+                        "${distribution}" "${prefill_ratio}" "${segs_per_sec}" \
+                        "${fio_timebased}" >> "${path}"
+                done < <(write_base_cases)
+            done
+        done
+        return
+    fi
+
     for ((repetition = 1; repetition <= REPETITIONS; repetition++)); do
         while IFS=$'\t' read -r base_id workload_type bmname distribution prefill_ratio segs_per_sec fio_timebased; do
             order=("${CONFIGURATIONS[@]}")
@@ -263,6 +298,7 @@ write_state() {
         printf 'outer_start_ticks=%q\n' "${OUTER_START_TICKS}"
         printf 'expected_cases=%q\n' "${EXPECTED_CASES}"
         printf 'run_profile=%q\n' "${RUN_PROFILE}"
+        printf 'schedule_mode=%q\n' "${SCHEDULE_MODE}"
         printf 'workloads=%q\n' "${WORKLOADS[*]}"
         printf 'filebench_report_interval_s=%q\n' "${REPORT_INTERVAL}"
         printf 'f2fs_status_sample_interval_s=%q\n' "${STATUS_SAMPLE_INTERVAL}"
@@ -271,6 +307,7 @@ write_state() {
         printf 'teardown_diagnostics=%q\n' "${TEARDOWN_DIAGNOSTICS}"
         printf 'fsck_after_case=%q\n' "${FSCK_AFTER_CASE}"
         printf 'continue_on_fsck_failure=%q\n' "${CONTINUE_ON_FSCK_FAILURE}"
+        printf 'check_checkpoints=%q\n' "${CHECK_CHECKPOINTS}"
         printf 'batch_dir=%q\n' "${BATCH_DIR}"
     } > "${BATCH_DIR}/state.env"
 }
@@ -498,11 +535,11 @@ load_configuration() {
     fi
     LOADED_NODE_READAHEAD_MODE=unchanged
     case "${configuration}" in
-        node-readahead-ab-control)
+        node-readahead-ab-control|curseg-rollover-control)
             sudo insmod "${module_path}" csgc_node_readahead_nowait=0
             expected_value=N
             ;;
-        node-readahead-ab-nowait)
+        node-readahead-ab-nowait|curseg-rollover-nowait)
             sudo insmod "${module_path}" csgc_node_readahead_nowait=1
             expected_value=Y
             ;;
@@ -579,6 +616,7 @@ write_provenance() {
         printf 'filebench_ab_profile=%s\nrepetitions=%s\nconfigurations=%s\nworkloads=%s\n' \
             "${RUN_PROFILE}" "${REPETITIONS}" "${CONFIGURATIONS[*]}" \
             "${WORKLOADS[*]}"
+        printf 'schedule_mode=%s\n' "${SCHEDULE_MODE}"
         printf 'filebench_report_interval_s=%s\nf2fs_status_sample_interval_s=%s\n' \
             "${REPORT_INTERVAL}" "${STATUS_SAMPLE_INTERVAL}"
         printf 'filebench_runtime_override_s=%s\n' "${RUNTIME_OVERRIDE}"
@@ -586,6 +624,7 @@ write_provenance() {
             "${KERNEL_PANIC_TIMEOUT_VALUE}" "${TEARDOWN_DIAGNOSTICS}"
         printf 'fsck_after_case=%s\n' "${FSCK_AFTER_CASE}"
         printf 'continue_on_fsck_failure=%s\n' "${CONTINUE_ON_FSCK_FAILURE}"
+        printf 'check_checkpoints=%s\n' "${CHECK_CHECKPOINTS}"
         printf 'openssd_expected_branch=%s\nopenssd_expected_commit=%s\n' \
             "${OPENSSD_BRANCH}" "${OPENSSD_COMMIT}"
         printf 'firmware_identity_limit=source and Vitis hashes do not prove running ELF identity\n'
@@ -634,6 +673,30 @@ run_offline_fsck() {
         [ "${CONTINUE_ON_FSCK_FAILURE}" -eq 1 ] \
             || die "offline fsck failed for ${output_path}"
     fi
+}
+
+# Validate both raw checkpoint packs after a clean unmount.
+run_checkpoint_check() {
+    local case_id=$1 output_path=$2
+    local log_path="${output_path}/checkpoint-curseg-check.log"
+    local status=0 result=pass
+
+    [ "${CHECK_CHECKPOINTS}" -eq 1 ] || return
+    ! findmnt -rn -S "${DEVICE}" >/dev/null \
+        || die "cannot inspect checkpoints while ${DEVICE} is mounted"
+    echo "Checking raw checkpoint curseg offsets for ${output_path}"
+    # The output directory is user-owned; only the raw device read needs sudo.
+    # shellcheck disable=SC2024
+    sudo python3 "${SCRIPT_DIR}/check_f2fs_checkpoint_curseg.py" \
+        "${DEVICE}" > "${log_path}" 2>&1 || status=$?
+    if [ "${status}" -ne 0 ]; then
+        result=fail
+    fi
+    printf '%s\t%s\t%s\t%s\n' \
+        "${case_id}" "${result}" "${status}" "${log_path}" \
+        >> "${BATCH_DIR}/checkpoint-results.tsv"
+    [ "${status}" -eq 0 ] \
+        || die "raw checkpoint validation failed for ${output_path}"
 }
 
 # Reject a completed case with missing output or a high-confidence kernel failure.
@@ -740,6 +803,8 @@ if [ "${MODE}" = start ]; then
         > "${BATCH_DIR}/runtime-modes.tsv"
     printf 'case_id\tresult\texit_status\treason\tlog_path\n' \
         > "${BATCH_DIR}/fsck-results.tsv"
+    printf 'case_id\tresult\texit_status\tlog_path\n' \
+        > "${BATCH_DIR}/checkpoint-results.tsv"
 else
     [ -f "${BATCH_DIR}/schedule.tsv" ] || die "resume batch has no schedule.tsv"
     [ -f "${BATCH_DIR}/case-results.tsv" ] || die "resume batch has no case-results.tsv"
@@ -751,6 +816,10 @@ else
     if [ ! -f "${BATCH_DIR}/fsck-results.tsv" ]; then
         printf 'case_id\tresult\texit_status\treason\tlog_path\n' \
             > "${BATCH_DIR}/fsck-results.tsv"
+    fi
+    if [ ! -f "${BATCH_DIR}/checkpoint-results.tsv" ]; then
+        printf 'case_id\tresult\texit_status\tlog_path\n' \
+            > "${BATCH_DIR}/checkpoint-results.tsv"
     fi
 fi
 
@@ -813,6 +882,7 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
         echo "Recovering validation for completed test ${case_id}"
         validate_case "${workload_type}" "${output_path}"
         run_offline_fsck "${case_id}" "${output_path}"
+        run_checkpoint_check "${case_id}" "${output_path}"
         printf 'validated_at=%s\noutput_path=%s\nfsck_result=%s\n' \
             "$(date --iso-8601=seconds)" "${output_path}" "${FSCK_LAST_RESULT}" \
             > "${BATCH_DIR}/validated/${case_id}.ok"
@@ -845,6 +915,7 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
     [ -n "${output_path}" ] || die "no successful result row for ${case_id}"
     validate_case "${workload_type}" "${output_path}"
     run_offline_fsck "${case_id}" "${output_path}"
+    run_checkpoint_check "${case_id}" "${output_path}"
     printf 'validated_at=%s\noutput_path=%s\nfsck_result=%s\n' \
         "$(date --iso-8601=seconds)" "${output_path}" "${FSCK_LAST_RESULT}" \
         > "${BATCH_DIR}/validated/${case_id}.ok"

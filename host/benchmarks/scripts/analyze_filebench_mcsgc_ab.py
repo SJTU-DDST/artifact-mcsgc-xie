@@ -32,6 +32,8 @@ LABELS = {
     "node-readahead-nowait": "I: shadow-safe NOWAIT node-page readahead",
     "node-readahead-ab-control": "A: NOWAIT disabled",
     "node-readahead-ab-nowait": "B: NOWAIT enabled",
+    "curseg-rollover-control": "A: rollover fix, NOWAIT disabled",
+    "curseg-rollover-nowait": "B: rollover fix, NOWAIT enabled",
 }
 WORKLOAD_LABELS = {
     "filebench-fileserver": "fileserver",
@@ -570,7 +572,11 @@ def write_report(
     control = next(
         (
             candidate
-            for candidate in ("node-readahead-ab-control", "control")
+            for candidate in (
+                "curseg-rollover-control",
+                "node-readahead-ab-control",
+                "control",
+            )
             if candidate in stats
         ),
         None,
@@ -595,7 +601,10 @@ def write_report(
         (
             "- A and B use one identical Host module; only the read-only module "
             "parameter csgc_node_readahead_nowait differs."
-            if control == "node-readahead-ab-control"
+            if control in (
+                "curseg-rollover-control",
+                "node-readahead-ab-control",
+            )
             else "- A is the current Conflict-aware candidate; later configurations "
             "change one experimental variable."
         ),
@@ -1343,7 +1352,11 @@ def main() -> None:
         "batch": str(batch),
         "control_available": any(
             candidate in grouped
-            for candidate in ("node-readahead-ab-control", "control")
+            for candidate in (
+                "curseg-rollover-control",
+                "node-readahead-ab-control",
+                "control",
+            )
         ),
         "workloads": ordered_workloads,
         "samples": samples,
