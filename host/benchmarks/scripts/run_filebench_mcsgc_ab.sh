@@ -126,8 +126,8 @@ declare -A HOST_COMMITS=(
     [node-readahead-nowait]=9d53051cd06af3773a8d47d7adb21d7e089568fb
     [node-readahead-ab-control]=08ce6e2e02cfc45abbfa7c5f1bd985a4d461e2a1
     [node-readahead-ab-nowait]=08ce6e2e02cfc45abbfa7c5f1bd985a4d461e2a1
-    [curseg-rollover-control]=e465bce60497053afcded3c82491e72198f0b442
-    [curseg-rollover-nowait]=e465bce60497053afcded3c82491e72198f0b442
+    [curseg-rollover-control]=a84e5bc532e85ef35f3e8db48585f7d2412e73bf
+    [curseg-rollover-nowait]=a84e5bc532e85ef35f3e8db48585f7d2412e73bf
 )
 declare -A HOST_BASE_COMMITS=(
     [control]=5262b5a3979cc55302ae0300cbd8f24b51c60c24
