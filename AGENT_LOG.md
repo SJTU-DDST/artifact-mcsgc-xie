@@ -1,5 +1,20 @@
 # Agent Operation Log
 
+## 2026-09-16 Quiet NOWAIT Euro-Par reproduction preparation
+
+- Host quiet branch: `exp/formal-mcsgc8t-nowait-quiet-20260916`.
+- Host functional base: `a84e5bc532e85ef35f3e8db48585f7d2412e73bf`.
+- Disabled checkpoint-source diagnostics and removed the associated normal-path
+  accounting and notice output.
+- Compiled the NOWAIT node-page readahead path unconditionally and removed its
+  runtime A/B parameter and branch.
+- Added a repetition-major 66-case Euro-Par launcher: 22 paper cases times three,
+  with fio and YCSB before the historically riskier Filebench cases.
+- The launcher records exact provenance, disables automatic panic reboot, checks
+  raw checkpoints before offline fsck, and stops on lifecycle or kernel anomalies.
+- Added repeated-result analysis with per-case dispersion and three-system Figure
+  4 through Figure 8 extensions using the paired ORI/original-CSGC baseline.
+
 ## 2026-09-04 Standard-prefree Filebench incident
 
 - Failed batch: `/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-filebench-mcsgc-ab/20260904_033455`.

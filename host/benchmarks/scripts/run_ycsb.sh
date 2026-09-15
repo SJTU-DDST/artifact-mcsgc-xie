@@ -4,6 +4,14 @@ set -uo pipefail
 
 source ./common.sh
 YCSB_DIR=../ycsb-0.17.0
+kernel_panic_timeout=${KERNEL_PANIC_TIMEOUT:-20}
+
+case "${kernel_panic_timeout}" in
+    ''|*[!0-9]*)
+        echo "ERROR: KERNEL_PANIC_TIMEOUT must be a non-negative integer" >&2
+        exit 2
+        ;;
+esac
 
 mysql_started=0
 
@@ -43,7 +51,7 @@ output_path=${output_path_base}/${workload_type}_${bmname}_s${segs_per_sec}_${pr
 mkdir -p ${output_path}
 
 echo 0 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
-echo 20 | sudo tee /proc/sys/kernel/panic > /dev/null
+printf '%s\n' "${kernel_panic_timeout}" | sudo tee /proc/sys/kernel/panic > /dev/null
 
 # load_f2fs_module $gc_mode
 install_f2fs_tools $gc_mode
@@ -154,4 +162,3 @@ if ! grep -q '\[OVERALL\], Throughput(ops/sec)' "${output_path}/${workload_type}
     echo "ERROR: YCSB log has no final throughput" >&2
     exit 1
 fi
-
