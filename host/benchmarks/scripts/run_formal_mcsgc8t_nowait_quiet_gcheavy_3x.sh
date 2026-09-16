@@ -28,6 +28,7 @@ NVME_CLI_SHA256=73b9a48e3a183fe14743e6f27ec0adc982d0d27e4a6c8a5a5b9d559a62528563
 PREPARE_SCRIPT=${SCRIPT_DIR}/prepare_gc_breakdown_host_module.sh
 RUNNER=${SCRIPT_DIR}/run_gc_breakdown_diagnostic.sh
 READONLY_FSCK=${SCRIPT_DIR}/offline_fsck_readonly.sh
+FSCK_F2FS=/usr/local/sbin/fsck.f2fs
 RUNNER_CONFIGURATION=mcsgc8t-nowait-quiet
 RESULT_BASE=${SCRIPT_DIR}/outputs-formal-mcsgc8t-nowait-quiet-gcheavy-3x
 MINIMUM_FREE_BYTES=$((12 * 1024 * 1024 * 1024))
@@ -302,7 +303,8 @@ run_offline_fsck() {
 
     ! findmnt -rn -S "${DEVICE}" >/dev/null \
         || die "cannot run fsck while ${DEVICE} is mounted"
-    "${READONLY_FSCK}" "${DEVICE}" "${log_path}" 900 20000 \
+    FSCK_F2FS="${FSCK_F2FS}" \
+        "${READONLY_FSCK}" "${DEVICE}" "${log_path}" 900 20000 8 \
         || die "read-only offline fsck failed for ${label}"
 }
 
@@ -449,7 +451,7 @@ esac
 
 [ "${EUID}" -ne 0 ] || die "run this outer script as the login user"
 command -v flock >/dev/null || die "flock is unavailable"
-command -v fsck.f2fs >/dev/null || die "fsck.f2fs is unavailable"
+[ -x "${FSCK_F2FS}" ] || die "project fsck.f2fs is unavailable: ${FSCK_F2FS}"
 [ -x "${READONLY_FSCK}" ] || die "missing read-only fsck helper"
 [ -x "${NVME_CLI}" ] || die "pinned nvme-cli is unavailable: ${NVME_CLI}"
 [ "$(sha256sum "${NVME_CLI}" | awk '{print $1}')" = "${NVME_CLI_SHA256}" ] \

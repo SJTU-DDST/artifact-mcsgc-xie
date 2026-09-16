@@ -22,6 +22,7 @@ NVME_CLI_SHA256=73b9a48e3a183fe14743e6f27ec0adc982d0d27e4a6c8a5a5b9d559a62528563
 PREPARE_SCRIPT=${SCRIPT_DIR}/prepare_gc_breakdown_host_module.sh
 RUNNER=${SCRIPT_DIR}/run_gc_breakdown_diagnostic.sh
 READONLY_FSCK=${SCRIPT_DIR}/offline_fsck_readonly.sh
+FSCK_F2FS=/usr/local/sbin/fsck.f2fs
 PREFLIGHT=${SCRIPT_DIR}/run_formal_mcsgc8t_nowait_quiet_gcheavy_3x.sh
 RESULT_BASE=${SCRIPT_DIR}/outputs-nowait-smallfile-consistency-stages
 BATCH_DIR=""
@@ -148,7 +149,9 @@ run_stage() {
     run_dir=$(<"${result_path}")
     check_kernel_anomalies "${run_dir}"
     set +e
-    "${READONLY_FSCK}" "${DEVICE}" "${BATCH_DIR}/${label}.fsck.log" 900 20000
+    FSCK_F2FS="${FSCK_F2FS}" \
+        "${READONLY_FSCK}" "${DEVICE}" \
+        "${BATCH_DIR}/${label}.fsck.log" 900 20000 8
     fsck_status=$?
     set -e
 
@@ -172,6 +175,7 @@ findmnt -rn -S "${DEVICE}" >/dev/null && die "${DEVICE} is currently mounted"
 sudo -n true || die "passwordless sudo is unavailable"
 [ -x "${RUNNER}" ] || die "benchmark runner is unavailable"
 [ -x "${READONLY_FSCK}" ] || die "read-only fsck helper is unavailable"
+[ -x "${FSCK_F2FS}" ] || die "project fsck.f2fs is unavailable: ${FSCK_F2FS}"
 [ -x "${NVME_CLI}" ] || die "pinned nvme-cli is unavailable: ${NVME_CLI}"
 [ "$(sha256sum "${NVME_CLI}" | awk '{print $1}')" = "${NVME_CLI_SHA256}" ] \
     || die "pinned nvme-cli hash does not match"
@@ -193,7 +197,7 @@ exec > >(tee -a "${BATCH_DIR}/runner.log") 2>&1
     printf 'host_branch=%s\nhost_commit=%s\n' "${HOST_BRANCH}" "${HOST_COMMIT}"
     printf 'device=%s\nworkload=smallfile\n' "${DEVICE}"
     printf 'stages=prefill,precondition,measurement\n'
-    printf 'fsck_mode=force-full-dry-run\n'
+    printf 'fsck_mode=full-dry-run\nfsck_tool=%s\n' "${FSCK_F2FS}"
     printf 'nvme_cli=%s\nnvme_cli_sha256=%s\n' \
         "${NVME_CLI}" "${NVME_CLI_SHA256}"
 } > "${BATCH_DIR}/manifest.txt"
