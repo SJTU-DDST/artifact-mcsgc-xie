@@ -100,8 +100,16 @@ def analyze(batch: Path, quiet_batch: Path) -> Dict[str, object]:
         parsed = parse_case(row)
         if section_text is not None:
             host = parse_key_values(output / "gc-paper-metrics.log")
-            if host["csgc_blocks"] <= 0 or host["csgc_sections"] <= 0:
-                raise ValueError(f"No measured CSGC work in {case_id}")
+            total_blocks = host["csgc_blocks"] + host["origc_blocks"]
+            total_time_ns = host["csgc_time_ns"] + host["origc_time_ns"]
+            if total_blocks <= 0:
+                raise ValueError(f"No measured GC migration work in {case_id}")
+            if host["csgc_blocks"] and host["origc_blocks"]:
+                gc_path = "mixed"
+            elif host["csgc_blocks"]:
+                gc_path = "csgc"
+            else:
+                gc_path = "origc-fallback"
             section_runs.append(
                 {
                     "case_id": case_id,
@@ -109,6 +117,10 @@ def analyze(batch: Path, quiet_batch: Path) -> Dict[str, object]:
                     "repetition": repetition,
                     "throughput_ops_s": float(parsed["throughput_ops_s"]),
                     "bandwidth_mib_s": float(parsed["bandwidth_mib_s"]),
+                    "gc_path": gc_path,
+                    "total_gc_blocks": total_blocks,
+                    "total_gc_time_ns": total_time_ns,
+                    "migration_ns_per_block": total_time_ns / total_blocks,
                     **host,
                     "output_path": str(output),
                 }
@@ -151,9 +163,10 @@ def analyze(batch: Path, quiet_batch: Path) -> Dict[str, object]:
             [float(row["throughput_ops_s"]) for row in samples]
         )
         latency_mean, latency_std = mean_std(
-            [float(row["csgc_avg_ns_per_block"]) / 1000.0 for row in samples]
+            [float(row["migration_ns_per_block"]) / 1000.0 for row in samples]
         )
-        blocks_mean, blocks_std = mean_std([float(row["csgc_blocks"]) for row in samples])
+        blocks_mean, blocks_std = mean_std([float(row["total_gc_blocks"]) for row in samples])
+        gc_paths = sorted({str(row["gc_path"]) for row in samples})
         section_summary.append(
             {
                 "section_size": section_size,
@@ -164,6 +177,7 @@ def analyze(batch: Path, quiet_batch: Path) -> Dict[str, object]:
                 "migration_us_std": latency_std,
                 "migrated_blocks_mean": blocks_mean,
                 "migrated_blocks_std": blocks_std,
+                "gc_paths": ",".join(gc_paths),
             }
         )
 
@@ -231,12 +245,13 @@ def analyze(batch: Path, quiet_batch: Path) -> Dict[str, object]:
         f"- Strict Filebench timelines: {repetition_count} x 300 s, 60 samples per run",
         f"- Section-size-eight throughput difference from quiet build: {overhead_percent:+.2f}%",
         "",
-        "| Section size | Throughput (kop/s) | Migration latency (us/block) |",
-        "|---:|---:|---:|",
+        "| Section size | GC path | Throughput (kop/s) | Migration latency (us/block) |",
+        "|---:|:---|---:|---:|",
     ]
     for row in section_summary:
         markdown.append(
-            f"| {row['section_size']} | {float(row['throughput_ops_s_mean']) / 1000:.3f} "
+            f"| {row['section_size']} | {row['gc_paths']} | "
+            f"{float(row['throughput_ops_s_mean']) / 1000:.3f} "
             f"+/- {float(row['throughput_ops_s_std']) / 1000:.3f} | "
             f"{float(row['migration_us_mean']):.3f} +/- "
             f"{float(row['migration_us_std']):.3f} |"

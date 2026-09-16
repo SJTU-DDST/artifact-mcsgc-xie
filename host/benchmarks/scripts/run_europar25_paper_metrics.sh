@@ -498,7 +498,8 @@ validate_case() {
             ! grep -Eq '(^|[^[:alpha:]])err=[1-9][0-9]*' "${log_path}"
             test -s "${output_path}/gc-paper-metrics.log"
             grep -q 'active=0' "${output_path}/gc-paper-metrics.log"
-            grep -Eq 'csgc_blocks=[1-9][0-9]*' "${output_path}/gc-paper-metrics.log"
+            grep -Eq '(csgc|origc)_blocks=[1-9][0-9]*' \
+                "${output_path}/gc-paper-metrics.log"
             ;;
         ycsb)
             log_path="${output_path}/ycsb.log"
@@ -625,6 +626,13 @@ start_sudo_keepalive
 
 if [ "${MODE}" = start ]; then
     write_provenance
+else
+    {
+        printf '\n[resume]\nresumed_at=%s\nartifact_branch=%s\nartifact_commit=%s\n' \
+            "$(date --iso-8601=seconds)" \
+            "$(git -C "${REPRO_TREE}" branch --show-current)" \
+            "$(git -C "${REPRO_TREE}" rev-parse HEAD)"
+    } >> "${BATCH_DIR}/provenance.txt"
 fi
 build_nvme_cli
 for configuration in "${CONFIGURATIONS[@]}"; do
