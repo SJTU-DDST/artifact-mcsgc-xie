@@ -43,6 +43,7 @@ Configurations:
   mcsgc8t-rolling-lifecycle-fast
   mcsgc8t-conflict-aware-lifecycle-quiet
   mcsgc8t-rolling-lifecycle-quiet
+  mcsgc8t-nowait-quiet
   mcsgc8t-parallel-gc-control
   mcsgc8t-parallel-gc-inode-share
   mcsgc8t-parallel-gc-dnode-safe
@@ -268,6 +269,16 @@ case "${configuration}" in
         expected_branch=exp/formal-mcsgc8t-rolling-lifecycle-quiet-20260825
         prepare_configuration=mcsgc8t-rolling-lifecycle-quiet
         test_mode=formal-mcsgc8t-rolling-lifecycle-quiet-csgc
+        expected_production=1
+        expected_move_plan=1
+        expected_fast_unsafe=1
+        run_breakdown_parser=0
+        diagnostic_workload_stats=0
+        ;;
+    mcsgc8t-nowait-quiet)
+        expected_branch=exp/formal-mcsgc8t-nowait-quiet-20260916
+        prepare_configuration=mcsgc8t-nowait-quiet
+        test_mode=formal-mcsgc8t-nowait-quiet-csgc
         expected_production=1
         expected_move_plan=1
         expected_fast_unsafe=1

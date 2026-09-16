@@ -48,6 +48,8 @@ Configurations:
                         Quiet conflict-aware lifecycle-fixed module
   mcsgc8t-rolling-lifecycle-quiet
                         Quiet rolling lifecycle-fixed module
+  mcsgc8t-nowait-quiet
+                        Quiet NOWAIT lifecycle-fixed module
   mcsgc8t-parallel-gc-control
                         Parallel-GC diagnostic control module
   mcsgc8t-parallel-gc-inode-share
@@ -126,6 +128,9 @@ case "$1" in
         ;;
     mcsgc8t-rolling-lifecycle-quiet)
         expected_branch=exp/formal-mcsgc8t-rolling-lifecycle-quiet-20260825
+        ;;
+    mcsgc8t-nowait-quiet)
+        expected_branch=exp/formal-mcsgc8t-nowait-quiet-20260916
         ;;
     mcsgc8t-parallel-gc-control)
         expected_branch=exp/diagnostic-mcsgc8t-parallel-gc-control-20260821

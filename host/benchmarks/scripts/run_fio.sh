@@ -17,6 +17,7 @@ mntpoint=${MNTPOINT}
 : "${formal_performance_only:=0}"
 : "${collect_diagnostic_workload_stats:=0}"
 : "${csgc_proactive_profile:=none}"
+: "${KERNEL_PANIC_TIMEOUT:=20}"
 csgc_proactive_started=0
 
 # Best-effort shutdown when an interrupted runner leaves the producer enabled.
@@ -55,6 +56,10 @@ if [[ ! "${formal_performance_only}" =~ ^[01]$ ]]; then
 fi
 if [[ ! "${collect_diagnostic_workload_stats}" =~ ^[01]$ ]]; then
     echo "ERROR: collect_diagnostic_workload_stats must be 0 or 1" >&2
+    exit 1
+fi
+if [[ ! "${KERNEL_PANIC_TIMEOUT}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: KERNEL_PANIC_TIMEOUT must be a non-negative integer" >&2
     exit 1
 fi
 case "${csgc_proactive_profile}" in
@@ -688,7 +693,8 @@ fi
 
 
 echo 0 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
-echo 20 > /proc/sys/kernel/panic # dont panic! wait 20s before reboot if kernel panics
+printf '%s\n' "${KERNEL_PANIC_TIMEOUT}" \
+    | sudo tee /proc/sys/kernel/panic > /dev/null
 
 load_f2fs_module $gc_mode
 install_f2fs_tools $gc_mode
