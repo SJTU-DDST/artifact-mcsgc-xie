@@ -28,8 +28,15 @@ echo 20 > /proc/sys/kernel/panic # dont panic! wait 20s before reboot if kernel 
 load_f2fs_module $gc_mode
 install_f2fs_tools $gc_mode
 prepare_device "${devpath}" "${output_path}"
-reset_ssd_config "${devpath}" "${ssd_enable_l2p}" "${ssd_enable_nand_lat}" "${ssd_enable_dsm}"
-mkfs_and_mount "${devpath}" "${mntpoint}" "${segs_per_sec}" "${f2fs_enable_discard}" "${ssd_enable_l2p}"
+if ! reset_ssd_config \
+    "${devpath}" "${ssd_enable_l2p}" "${ssd_enable_nand_lat}" "${ssd_enable_dsm}"; then
+    exit 1
+fi
+if ! mkfs_and_mount \
+    "${devpath}" "${mntpoint}" "${segs_per_sec}" \
+    "${f2fs_enable_discard}" "${ssd_enable_l2p}"; then
+    exit 1
+fi
 setup_gc_config "${gc_mode}" "${nr_cs_cores}" "${csgc_sync}"
 setup_cgroup_mem "${use_cgroup}" "${host_mem_usage}"
 
@@ -105,5 +112,4 @@ if [ ${fsck_after_run} -ne 0 ]; then
 fi
 
 chown -R $(whoami):$(whoami) ${output_path}
-
 

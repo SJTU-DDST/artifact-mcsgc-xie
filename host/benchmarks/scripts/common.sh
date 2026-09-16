@@ -2,7 +2,8 @@
 # common.sh -- common utilities and variables shared by filebench, fio and ycsb scripts
 
 DEBUGFS_PATH=/sys/kernel/debug/f2fs
-NVME_PATH=$(realpath ../../src/nvme-cli/nvme)   # path of nvme-cli
+COMMON_SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+NVME_PATH=${NVME_CLI:-$(realpath -m "${COMMON_SCRIPT_DIR}/../../src/nvme-cli/nvme")}
 CGROUP_NAME=host_gc
 FS_MODE=lfs
 BGGC_ONOFF=off
@@ -143,7 +144,16 @@ reset_ssd_config() {
     local ssd_enable_nand_lat=$3
     local ssd_enable_dsm=$4
     echo "Reset SSD config: l2p=${ssd_enable_l2p}, nand_lat=${ssd_enable_nand_lat}, dsm=${ssd_enable_dsm}"
-    sudo "${NVME_PATH}" ssd-admin "${devpath}" -o 1 --l2p "${ssd_enable_l2p}" --nand "${ssd_enable_nand_lat}" --dsm "${ssd_enable_dsm}"
+    if [ ! -x "${NVME_PATH}" ]; then
+        echo "ERROR: nvme-cli is unavailable or not executable: ${NVME_PATH}" >&2
+        return 1
+    fi
+    if ! sudo "${NVME_PATH}" ssd-admin "${devpath}" -o 1 \
+        --l2p "${ssd_enable_l2p}" --nand "${ssd_enable_nand_lat}" \
+        --dsm "${ssd_enable_dsm}"; then
+        echo "ERROR: failed to reset SSD configuration" >&2
+        return 1
+    fi
 }
 
 reset_ssd_stat() {
@@ -223,11 +233,24 @@ mkfs_and_mount() {
         discard_option="discard"
     fi
     echo "Formatting filesystem with segs_per_sec=${segs_per_sec}"
-    sudo mkfs.f2fs -f -s "${segs_per_sec}" "${devpath}"
+    if ! sudo mkfs.f2fs -f -s "${segs_per_sec}" "${devpath}"; then
+        echo "ERROR: initial mkfs failed for ${devpath}" >&2
+        return 1
+    fi
     if [ $ssd_enable_l2p -eq 2 ]; then # csgc, need to send fs-ready signal and mkfs again
-        sudo "${NVME_PATH}" fs-ready -f 1 "${devpath}"
+        if [ ! -x "${NVME_PATH}" ]; then
+            echo "ERROR: nvme-cli is unavailable or not executable: ${NVME_PATH}" >&2
+            return 1
+        fi
+        if ! sudo "${NVME_PATH}" fs-ready -f 1 "${devpath}"; then
+            echo "ERROR: failed to send fs-ready for ${devpath}" >&2
+            return 1
+        fi
         # need to mkfs again, since when sFTL is enabled, fs-ready will reset the device
-        sudo mkfs.f2fs -f -s "${segs_per_sec}" "${devpath}"
+        if ! sudo mkfs.f2fs -f -s "${segs_per_sec}" "${devpath}"; then
+            echo "ERROR: post-fs-ready mkfs failed for ${devpath}" >&2
+            return 1
+        fi
     fi
     if ! sudo mount -t f2fs \
         -o mode="${FS_MODE}",background_gc="${BGGC_ONOFF}",fsync_mode="${FSYNC_MODE}","${discard_option}" \

@@ -17,6 +17,8 @@ HOST_REPO=/home/xin/work-xie/mcsgc-real/linux-cs
 HOST_BRANCH=exp/formal-mcsgc8t-nowait-quiet-20260916
 HOST_COMMIT=dec1964f0bf196b1929799119e93393bfa6b79fb
 DEVICE=/dev/nvme0n1
+NVME_CLI=/home/xin/artifact-csgc/host/src/nvme-cli/nvme
+NVME_CLI_SHA256=73b9a48e3a183fe14743e6f27ec0adc982d0d27e4a6c8a5a5b9d559a62528563
 PREPARE_SCRIPT=${SCRIPT_DIR}/prepare_gc_breakdown_host_module.sh
 RUNNER=${SCRIPT_DIR}/run_gc_breakdown_diagnostic.sh
 READONLY_FSCK=${SCRIPT_DIR}/offline_fsck_readonly.sh
@@ -139,6 +141,7 @@ run_stage() {
         GC_BREAKDOWN_RESULT_PATH_FILE="${result_path}" \
         KERNEL_PANIC_TIMEOUT=0 \
         FIO_CONSISTENCY_STOP_AFTER="${stop_after}" \
+        NVME_CLI="${NVME_CLI}" \
         "${RUNNER}" mcsgc8t-nowait-quiet smallfile
 
     [ -s "${result_path}" ] || die "result path was not recorded for ${stage}"
@@ -169,6 +172,9 @@ findmnt -rn -S "${DEVICE}" >/dev/null && die "${DEVICE} is currently mounted"
 sudo -n true || die "passwordless sudo is unavailable"
 [ -x "${RUNNER}" ] || die "benchmark runner is unavailable"
 [ -x "${READONLY_FSCK}" ] || die "read-only fsck helper is unavailable"
+[ -x "${NVME_CLI}" ] || die "pinned nvme-cli is unavailable: ${NVME_CLI}"
+[ "$(sha256sum "${NVME_CLI}" | awk '{print $1}')" = "${NVME_CLI_SHA256}" ] \
+    || die "pinned nvme-cli hash does not match"
 
 "${PREFLIGHT}" --preflight
 resolve_host_tree
@@ -188,6 +194,8 @@ exec > >(tee -a "${BATCH_DIR}/runner.log") 2>&1
     printf 'device=%s\nworkload=smallfile\n' "${DEVICE}"
     printf 'stages=prefill,precondition,measurement\n'
     printf 'fsck_mode=force-full-dry-run\n'
+    printf 'nvme_cli=%s\nnvme_cli_sha256=%s\n' \
+        "${NVME_CLI}" "${NVME_CLI_SHA256}"
 } > "${BATCH_DIR}/manifest.txt"
 
 echo "DESTRUCTIVE WARNING: this diagnostic resets and overwrites ${DEVICE} up to three times."

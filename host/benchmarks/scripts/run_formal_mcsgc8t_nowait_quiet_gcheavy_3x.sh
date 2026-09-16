@@ -23,6 +23,8 @@ OPENSSD_REPO=/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc
 OPENSSD_BRANCH=exp/formal-mcsgc-quiet-20260809
 OPENSSD_COMMIT=52831c159c9f7a73f9670c163a6b513750f64b47
 DEVICE=/dev/nvme0n1
+NVME_CLI=/home/xin/artifact-csgc/host/src/nvme-cli/nvme
+NVME_CLI_SHA256=73b9a48e3a183fe14743e6f27ec0adc982d0d27e4a6c8a5a5b9d559a62528563
 PREPARE_SCRIPT=${SCRIPT_DIR}/prepare_gc_breakdown_host_module.sh
 RUNNER=${SCRIPT_DIR}/run_gc_breakdown_diagnostic.sh
 READONLY_FSCK=${SCRIPT_DIR}/offline_fsck_readonly.sh
@@ -323,6 +325,7 @@ run_one() {
     sudo env \
         GC_BREAKDOWN_RESULT_PATH_FILE="${result_path_file}" \
         KERNEL_PANIC_TIMEOUT=0 \
+        NVME_CLI="${NVME_CLI}" \
         "${RUNNER}" "${RUNNER_CONFIGURATION}" "${workload}"
 
     [ -s "${result_path_file}" ] || die "result path was not recorded for ${label}"
@@ -448,6 +451,9 @@ esac
 command -v flock >/dev/null || die "flock is unavailable"
 command -v fsck.f2fs >/dev/null || die "fsck.f2fs is unavailable"
 [ -x "${READONLY_FSCK}" ] || die "missing read-only fsck helper"
+[ -x "${NVME_CLI}" ] || die "pinned nvme-cli is unavailable: ${NVME_CLI}"
+[ "$(sha256sum "${NVME_CLI}" | awk '{print $1}')" = "${NVME_CLI_SHA256}" ] \
+    || die "pinned nvme-cli hash does not match"
 [ -x "${PREPARE_SCRIPT}" ] || die "missing Host preparation script"
 [ -x "${RUNNER}" ] || die "missing benchmark runner"
 [ -b "${DEVICE}" ] || die "block device is unavailable: ${DEVICE}"
@@ -492,6 +498,8 @@ openssd_provenance=$(verify_openssd_provenance)
         "$(sha256sum "${SCRIPT_PATH}" | awk '{print $1}')" "${EXPECTED_RUNS}"
     printf 'kernel_panic_timeout_s=0\nfsck_after_each_run=1\n'
     printf 'fsck_mode=force-full-dry-run\nfsck_timeout_s=900\nfsck_max_log_lines=20000\n'
+    printf 'nvme_cli=%s\nnvme_cli_sha256=%s\n' \
+        "${NVME_CLI}" "${NVME_CLI_SHA256}"
     printf 'smallfile_config=%s\n' \
         "${SCRIPT_DIR}/configs/config24_fio_formal_performance_16t26336file.sh"
     printf 'bigfile_config=%s\n' \
