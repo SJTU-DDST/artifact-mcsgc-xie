@@ -499,7 +499,7 @@ openssd_provenance=$(verify_openssd_provenance)
     printf 'script_sha256=%s\nrun_count=%s\nssd_thread_mode=ssd1t\n' \
         "$(sha256sum "${SCRIPT_PATH}" | awk '{print $1}')" "${EXPECTED_RUNS}"
     printf 'kernel_panic_timeout_s=0\nfsck_after_each_run=1\n'
-    printf 'fsck_mode=force-full-dry-run\nfsck_timeout_s=900\nfsck_max_log_lines=20000\n'
+    printf 'fsck_mode=full-dry-run\nfsck_timeout_s=900\nfsck_max_log_lines=20000\n'
     printf 'nvme_cli=%s\nnvme_cli_sha256=%s\n' \
         "${NVME_CLI}" "${NVME_CLI_SHA256}"
     printf 'smallfile_config=%s\n' \
