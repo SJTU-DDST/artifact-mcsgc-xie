@@ -25,6 +25,7 @@ OPENSSD_COMMIT=52831c159c9f7a73f9670c163a6b513750f64b47
 DEVICE=/dev/nvme0n1
 PREPARE_SCRIPT=${SCRIPT_DIR}/prepare_gc_breakdown_host_module.sh
 RUNNER=${SCRIPT_DIR}/run_gc_breakdown_diagnostic.sh
+READONLY_FSCK=${SCRIPT_DIR}/offline_fsck_readonly.sh
 RUNNER_CONFIGURATION=mcsgc8t-nowait-quiet
 RESULT_BASE=${SCRIPT_DIR}/outputs-formal-mcsgc8t-nowait-quiet-gcheavy-3x
 MINIMUM_FREE_BYTES=$((12 * 1024 * 1024 * 1024))
@@ -296,17 +297,11 @@ extract_fio_metrics() {
 run_offline_fsck() {
     local label=$1
     local log_path=${BATCH_DIR}/${label}.fsck.log
-    local status=0
 
     ! findmnt -rn -S "${DEVICE}" >/dev/null \
         || die "cannot run fsck while ${DEVICE} is mounted"
-    # The invoking user owns the batch directory; only fsck needs privilege.
-    # shellcheck disable=SC2024
-    sudo fsck.f2fs "${DEVICE}" > "${log_path}" 2>&1 || status=$?
-    [ "${status}" -eq 0 ] || die "offline fsck failed for ${label}: status=${status}"
-    grep -q '^Done:' "${log_path}" || die "fsck did not complete for ${label}"
-    ! grep -aEiq '\[ASSERT\]|\[ERROR\]|Segmentation fault|failed to fix' "${log_path}" \
-        || die "fsck reported an anomaly for ${label}"
+    "${READONLY_FSCK}" "${DEVICE}" "${log_path}" 900 20000 \
+        || die "read-only offline fsck failed for ${label}"
 }
 
 # Run one destructive workload and persist its metrics and provenance.
@@ -452,6 +447,7 @@ esac
 [ "${EUID}" -ne 0 ] || die "run this outer script as the login user"
 command -v flock >/dev/null || die "flock is unavailable"
 command -v fsck.f2fs >/dev/null || die "fsck.f2fs is unavailable"
+[ -x "${READONLY_FSCK}" ] || die "missing read-only fsck helper"
 [ -x "${PREPARE_SCRIPT}" ] || die "missing Host preparation script"
 [ -x "${RUNNER}" ] || die "missing benchmark runner"
 [ -b "${DEVICE}" ] || die "block device is unavailable: ${DEVICE}"
@@ -495,6 +491,7 @@ openssd_provenance=$(verify_openssd_provenance)
     printf 'script_sha256=%s\nrun_count=%s\nssd_thread_mode=ssd1t\n' \
         "$(sha256sum "${SCRIPT_PATH}" | awk '{print $1}')" "${EXPECTED_RUNS}"
     printf 'kernel_panic_timeout_s=0\nfsck_after_each_run=1\n'
+    printf 'fsck_mode=force-full-dry-run\nfsck_timeout_s=900\nfsck_max_log_lines=20000\n'
     printf 'smallfile_config=%s\n' \
         "${SCRIPT_DIR}/configs/config24_fio_formal_performance_16t26336file.sh"
     printf 'bigfile_config=%s\n' \

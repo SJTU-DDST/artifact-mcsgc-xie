@@ -18,6 +18,7 @@ mntpoint=${MNTPOINT}
 : "${collect_diagnostic_workload_stats:=0}"
 : "${csgc_proactive_profile:=none}"
 : "${KERNEL_PANIC_TIMEOUT:=20}"
+: "${FIO_CONSISTENCY_STOP_AFTER:=none}"
 csgc_proactive_started=0
 
 # Best-effort shutdown when an interrupted runner leaves the producer enabled.
@@ -67,6 +68,14 @@ case "${csgc_proactive_profile}" in
         ;;
     *)
         echo "ERROR: unsupported CSGC proactive profile: ${csgc_proactive_profile}" >&2
+        exit 1
+        ;;
+esac
+case "${FIO_CONSISTENCY_STOP_AFTER}" in
+    none|prefill|precondition)
+        ;;
+    *)
+        echo "ERROR: unsupported FIO consistency stop stage: ${FIO_CONSISTENCY_STOP_AFTER}" >&2
         exit 1
         ;;
 esac
@@ -142,6 +151,38 @@ emit_kernel_marker() {
     printf '<6>IN BASH %s %s [%s] %s\n' \
         "${ts_local}" "${host_local}" "${ts_upt}" "${message}" \
         | sudo tee /dev/kmsg >/dev/null
+}
+
+# Cleanly unmount after a requested setup stage so offline fsck can localize
+# the first phase that introduces an on-disk consistency error.
+finish_consistency_stage_if_requested() {
+    local stage=$1
+    local stage_file
+    local output_uid
+    local output_gid
+
+    if [ "${FIO_CONSISTENCY_STOP_AFTER}" != "${stage}" ]; then
+        return 0
+    fi
+
+    stage_file="${output_path}/consistency-stage.env"
+    emit_kernel_marker "CSGC_CONSISTENCY_STAGE_END stage=${stage}"
+    {
+        printf 'stage=%s\n' "${stage}"
+        printf 'completed_at=%s\n' "$(date --iso-8601=seconds)"
+    } > "${stage_file}"
+
+    if ! umount_and_get_stat \
+        "${devpath}" "${gc_mode}" "${output_path}/stat.log" 0; then
+        echo "ERROR: failed to unmount after consistency stage ${stage}" >&2
+        exit 1
+    fi
+
+    output_uid=${SUDO_UID:-$(id -u)}
+    output_gid=${SUDO_GID:-$(id -g)}
+    chown -R "${output_uid}:${output_gid}" "${output_path}"
+    echo "Consistency stage completed: ${stage}"
+    exit 0
 }
 
 # Reject a fio run that recreated or laid out the prefilled data file.
@@ -798,6 +839,8 @@ if [ "${bmname}" == "randwrite" ]; then
         "--allow_file_create=0"
     )
 
+    finish_consistency_stage_if_requested prefill
+
     if [ "${formal_performance_only}" -eq 1 ]; then
         fio_flags+=(
             "--eta=always"
@@ -854,6 +897,7 @@ if [ "${bmname}" == "randwrite" ]; then
         fi
 
         sudo dmesg -c > "${output_path}/dmesg.precondition.log"
+        finish_consistency_stage_if_requested precondition
     fi
 fi
 
@@ -947,6 +991,8 @@ if [[ "${bmname}" == rw*file ]]; then
         echo "Prefill skipped: should_prefill=${should_prefill}"
     fi
 
+    finish_consistency_stage_if_requested prefill
+
     if [ "${smallfile_layout}" = "partitioned" ] \
         && [ "${fio_gc_precondition}" -eq 1 ]; then
         precondition_log="${output_path}/${workload_type}.precondition.log"
@@ -981,6 +1027,7 @@ if [[ "${bmname}" == rw*file ]]; then
             echo "Free segments after small-file precondition: $(<"${f2fs_sysfs_dir}/free_segments")"
         fi
         sudo dmesg -c > "${output_path}/dmesg.precondition.log"
+        finish_consistency_stage_if_requested precondition
     fi
 
 else

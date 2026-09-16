@@ -14,6 +14,7 @@ fi
 diagnostic_script_path=${GC_BREAKDOWN_DIAGNOSTIC_SCRIPT_PATH}
 script_dir=$(cd -- "$(dirname -- "${diagnostic_script_path}")" && pwd)
 host_repo=/home/xin/work-xie/mcsgc-real/linux-cs
+consistency_stop_after=${FIO_CONSISTENCY_STOP_AFTER:-none}
 source "${script_dir}/formal_host_worktree.sh"
 
 # Print supported diagnostic configurations and workloads.
@@ -463,6 +464,36 @@ chmod 0644 "${saved_external_log}"
 
 summary_path="${run_dir}/gc-breakdown-diagnostic-result.txt"
 crop_path="${run_dir}/measured-fio-dmesg.log"
+
+# Setup-stage consistency probes intentionally stop before the measured fio
+# window, so they have no measurement markers for the regular parser.
+if [ "${consistency_stop_after}" != "none" ]; then
+    {
+        printf 'consistency_stop_after=%s\n' "${consistency_stop_after}"
+        printf 'host_branch=%s\n' "${actual_branch}"
+        printf 'host_commit=%s\n' "${host_commit}"
+        printf 'module_sha256=%s\n' "${module_sha256}"
+        printf 'test_status=%s\n' "${test_status}"
+    } > "${summary_path}"
+
+    if [ -n "${GC_BREAKDOWN_RESULT_PATH_FILE:-}" ]; then
+        result_path_parent=$(dirname -- "${GC_BREAKDOWN_RESULT_PATH_FILE}")
+        if [ ! -d "${result_path_parent}" ]; then
+            echo "ERROR: result path directory is unavailable: ${result_path_parent}" >&2
+            exit 1
+        fi
+        printf '%s\n' "${run_dir}" > "${GC_BREAKDOWN_RESULT_PATH_FILE}"
+    fi
+
+    echo "Consistency-stage output directory: ${run_dir}"
+    echo "Consistency-stage summary: ${summary_path}"
+    if [ "${test_status}" -ne 0 ]; then
+        echo "ERROR: consistency-stage benchmark exited with status ${test_status}." >&2
+        exit "${test_status}"
+    fi
+    exit 0
+fi
+
 python3 "${script_dir}/draw-xie/analyze-gc-breakdown-diagnostic.py" \
     "${saved_external_log}" "${summary_path}" --crop-output "${crop_path}"
 
