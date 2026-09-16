@@ -5,10 +5,44 @@ set -uo pipefail
 source ./common.sh
 mntpoint=${MNTPOINT}
 kernel_panic_timeout=${KERNEL_PANIC_TIMEOUT:-20}
+gc_paper_metrics=${GC_PAPER_METRICS:-0}
+gc_paper_metrics_path=""
+gc_paper_metrics_started=0
+
+# Stop only the measurement epoch started by this invocation.
+stop_gc_paper_metrics() {
+    local output_file=${1:-}
+
+    if [ "${gc_paper_metrics_started}" -ne 1 ]; then
+        return
+    fi
+    printf 'stop\n' | sudo tee "${gc_paper_metrics_path}" >/dev/null || true
+    gc_paper_metrics_started=0
+    if [ -n "${output_file}" ]; then
+        sudo cat "${gc_paper_metrics_path}" > "${output_file}" || true
+    fi
+}
+
+# Preserve the benchmark status while closing an active metrics epoch.
+cleanup_fio_run() {
+    local status=$?
+
+    stop_gc_paper_metrics "${output_path:-.}/gc-paper-metrics-abort.log"
+    return "${status}"
+}
+
+trap cleanup_fio_run EXIT
 
 case "${kernel_panic_timeout}" in
     ''|*[!0-9]*)
         echo "ERROR: KERNEL_PANIC_TIMEOUT must be a non-negative integer" >&2
+        exit 2
+        ;;
+esac
+case "${gc_paper_metrics}" in
+    0|1) ;;
+    *)
+        echo "ERROR: GC_PAPER_METRICS must be 0 or 1" >&2
         exit 2
         ;;
 esac
@@ -76,6 +110,18 @@ fi
     
 reset_ssd_stat "${devpath}"
 
+if [ "${gc_paper_metrics}" -eq 1 ]; then
+    gc_paper_metrics_path="/sys/fs/f2fs/$(basename -- "${devpath}")/gc_paper_metrics"
+    sudo test -f "${gc_paper_metrics_path}" || {
+        echo "ERROR: missing GC paper metrics interface: ${gc_paper_metrics_path}" >&2
+        exit 1
+    }
+    sudo cat "${gc_paper_metrics_path}" > "${output_path}/gc-paper-metrics-before.log"
+    printf 'start\n' | sudo tee "${gc_paper_metrics_path}" >/dev/null
+    gc_paper_metrics_started=1
+    sudo cat "${gc_paper_metrics_path}" > "${output_path}/gc-paper-metrics-start.log"
+fi
+
 fio_status=0
 if [ ${use_cgroup} -eq 1 ]; then
     sudo cgexec -g memory:${CGROUP_NAME} fio ${fio_flags} ${runtime_flag} "${workload_path}" \
@@ -84,6 +130,7 @@ else
     fio ${fio_flags} "${workload_path}" \
         2>&1 | tee -a "${output_path}/${workload_type}.log" || fio_status=$?
 fi
+stop_gc_paper_metrics "${output_path}/gc-paper-metrics.log"
 echo "======================================================="
 
 umount_and_get_stat "${devpath}" "${gc_mode}" "${output_path}/stat.log"
