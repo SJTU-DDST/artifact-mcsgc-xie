@@ -50,16 +50,16 @@ MINIMUM_FREE_BYTES=$((5 * 1024 * 1024 * 1024))
 
 declare -a CONFIGURATIONS=(nowait-quiet)
 declare -A HOST_BRANCHES=(
-    [nowait-quiet]=exp/formal-mcsgc8t-nowait-quiet-20260916
+    [nowait-quiet]=exp/formal-mcsgc8t-nowait-secs16-quiet-20260917
 )
 declare -A HOST_COMMITS=(
-    [nowait-quiet]=dec1964f0bf196b1929799119e93393bfa6b79fb
+    [nowait-quiet]=9b3f8f2ce3077d5ccc010ce22363deffe1efbf2c
 )
 declare -A HOST_BASE_COMMITS=(
     [nowait-quiet]=a84e5bc532e85ef35f3e8db48585f7d2412e73bf
 )
 declare -A PREFERRED_WORKTREES=(
-    [nowait-quiet]=/home/xin/work-xie/mcsgc-real/linux-cs-nowait-quiet-20260916
+    [nowait-quiet]=/home/xin/work-xie/mcsgc-real/linux-cs-nowait-secs16-quiet-20260917
 )
 declare -A HOST_TREES=()
 declare -A MODULE_PATHS=()
@@ -125,14 +125,20 @@ write_base_cases() {
         # Run the historically stable fio cases before stateful application loads.
         printf 'fio-overall-uniform\tfio\trandwrite\trandom\t0.86\t8\t0\n'
         printf 'fio-overall-zipf11\tfio\trandwrite\tzipf:1.1\t0.86\t8\t1\n'
+    else
+        # Exercise the widest section first so an unsafe lane mapping fails fast.
+        printf 'fio-section-16\tfio\trandwrite\trandom\t0.86\t16\t0\n'
     fi
 
     for util in 0.6 0.7 0.8 0.9 0.95; do
         printf 'fio-util-%s\tfio\trandwrite\trandom\t%s\t8\t0\n' "${util}" "${util}"
     done
-    for sec in 1 2 4 8 16; do
+    for sec in 1 2 4 8; do
         printf 'fio-section-%s\tfio\trandwrite\trandom\t0.86\t%s\t0\n' "${sec}" "${sec}"
     done
+    if [ "${RUN_PROFILE}" = full ]; then
+        printf 'fio-section-16\tfio\trandwrite\trandom\t0.86\t16\t0\n'
+    fi
     for skew in random zipf:0.3 zipf:0.7 zipf:0.9 zipf:1.1; do
         case "${skew}" in
             random) skew_id=uniform ;;
@@ -465,7 +471,7 @@ write_provenance() {
             "$(git -C "${REPRO_TREE}" rev-parse HEAD)" "${SOURCE_COMMIT}"
         printf 'baseline_batch=%s\n' "${BASELINE_BATCH}"
         if [ "${RUN_PROFILE}" = paper-waf ]; then
-            printf 'case_order=fio-util,fio-section,fio-skew\n'
+            printf 'case_order=fio-section-16,fio-util,fio-section-1-8,fio-skew\n'
         else
             printf 'case_order=fio,ycsb,filebench\n'
         fi
