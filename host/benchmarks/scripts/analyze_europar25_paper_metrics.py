@@ -149,15 +149,26 @@ def analyze(batch: Path, quiet_batch: Path) -> Dict[str, object]:
     if repetitions != list(range(1, len(repetitions) + 1)):
         raise ValueError(f"Non-contiguous repetitions: {repetitions}")
     repetition_count = len(repetitions)
-    expected_section_runs = 5 * repetition_count
-    expected_timeline_rows = repetition_count * 60
+    section_sizes = sorted({int(row["section_size"]) for row in section_runs})
+    expected_section_runs = len(section_sizes) * repetition_count
+    expected_timeline_rows = repetition_count * 60 if timeline_runs else 0
     if len(section_runs) != expected_section_runs:
         raise ValueError(f"Expected {expected_section_runs} section runs, found {len(section_runs)}")
     if len(timeline_runs) != expected_timeline_rows:
         raise ValueError(f"Expected {expected_timeline_rows} timeline rows, found {len(timeline_runs)}")
+    for section_size in section_sizes:
+        observed = sorted(
+            int(row["repetition"])
+            for row in section_runs
+            if row["section_size"] == section_size
+        )
+        if observed != repetitions:
+            raise ValueError(
+                f"Unbalanced section-size {section_size} repetitions: {observed}"
+            )
 
     section_summary: List[Dict[str, object]] = []
-    for section_size in (1, 2, 4, 8, 16):
+    for section_size in section_sizes:
         samples = [row for row in section_runs if row["section_size"] == section_size]
         throughput_mean, throughput_std = mean_std(
             [float(row["throughput_ops_s"]) for row in samples]
@@ -182,49 +193,34 @@ def analyze(batch: Path, quiet_batch: Path) -> Dict[str, object]:
         )
 
     timeline_summary: List[Dict[str, object]] = []
-    for sample_index in range(1, 61):
-        samples = [row for row in timeline_runs if row["sample_index"] == sample_index]
-        throughput_mean, throughput_std = mean_std(
-            [float(row["throughput_ops_s"]) for row in samples]
-        )
-        timeline_summary.append(
-            {
-                "sample_index": sample_index,
-                "elapsed_s": statistics.fmean(float(row["elapsed_s"]) for row in samples),
-                "throughput_ops_s_mean": throughput_mean,
-                "throughput_ops_s_std": throughput_std,
-            }
-        )
+    if timeline_runs:
+        for sample_index in range(1, 61):
+            samples = [row for row in timeline_runs if row["sample_index"] == sample_index]
+            throughput_mean, throughput_std = mean_std(
+                [float(row["throughput_ops_s"]) for row in samples]
+            )
+            timeline_summary.append(
+                {
+                    "sample_index": sample_index,
+                    "elapsed_s": statistics.fmean(float(row["elapsed_s"]) for row in samples),
+                    "throughput_ops_s_mean": throughput_mean,
+                    "throughput_ops_s_std": throughput_std,
+                }
+            )
 
-    quiet_samples = read_quiet_section8(quiet_batch)
-    metrics_samples = [
-        float(row["throughput_ops_s"]) for row in section_runs if row["section_size"] == 8
-    ]
-    quiet_mean, quiet_std = mean_std(quiet_samples)
-    metrics_mean, metrics_std = mean_std(metrics_samples)
-    overhead_percent = (metrics_mean / quiet_mean - 1.0) * 100.0
-
-    analysis_dir = batch / "analysis"
-    analysis_dir.mkdir(exist_ok=True)
-    write_csv(analysis_dir / "section-metrics-runs.csv", section_runs[0].keys(), section_runs)
-    write_csv(
-        analysis_dir / "section-metrics-summary.csv", section_summary[0].keys(), section_summary
-    )
-    write_csv(analysis_dir / "filebench-timeline-runs.csv", timeline_runs[0].keys(), timeline_runs)
-    write_csv(
-        analysis_dir / "filebench-timeline-summary.csv",
-        timeline_summary[0].keys(),
-        timeline_summary,
-    )
-
-    summary: Dict[str, object] = {
-        "batch": str(batch),
-        "quiet_batch": str(quiet_batch),
-        "section_runs": len(section_runs),
-        "filebench_timeline_runs": repetition_count,
-        "filebench_samples_per_run": 60,
-        "section_summary": section_summary,
-        "section8_overhead_check": {
+    overhead_check: Dict[str, object]
+    if 8 in section_sizes:
+        quiet_samples = read_quiet_section8(quiet_batch)
+        metrics_samples = [
+            float(row["throughput_ops_s"])
+            for row in section_runs
+            if row["section_size"] == 8
+        ]
+        quiet_mean, quiet_std = mean_std(quiet_samples)
+        metrics_mean, metrics_std = mean_std(metrics_samples)
+        overhead_percent = (metrics_mean / quiet_mean - 1.0) * 100.0
+        overhead_check = {
+            "status": "measured",
             "quiet_samples_ops_s": quiet_samples,
             "metrics_samples_ops_s": metrics_samples,
             "quiet_mean_ops_s": quiet_mean,
@@ -232,7 +228,41 @@ def analyze(batch: Path, quiet_batch: Path) -> Dict[str, object]:
             "metrics_mean_ops_s": metrics_mean,
             "metrics_std_ops_s": metrics_std,
             "difference_percent": overhead_percent,
-        },
+        }
+    else:
+        overhead_check = {
+            "status": "not-applicable",
+            "reason": "section-size-eight was not part of this focused batch",
+        }
+
+    analysis_dir = batch / "analysis"
+    analysis_dir.mkdir(exist_ok=True)
+    if not section_runs:
+        raise ValueError("No section metrics were collected")
+    write_csv(analysis_dir / "section-metrics-runs.csv", section_runs[0].keys(), section_runs)
+    write_csv(
+        analysis_dir / "section-metrics-summary.csv", section_summary[0].keys(), section_summary
+    )
+    if timeline_runs:
+        write_csv(
+            analysis_dir / "filebench-timeline-runs.csv",
+            timeline_runs[0].keys(),
+            timeline_runs,
+        )
+        write_csv(
+            analysis_dir / "filebench-timeline-summary.csv",
+            timeline_summary[0].keys(),
+            timeline_summary,
+        )
+
+    summary: Dict[str, object] = {
+        "batch": str(batch),
+        "quiet_batch": str(quiet_batch),
+        "section_runs": len(section_runs),
+        "filebench_timeline_runs": len(timeline_runs) // 60,
+        "filebench_samples_per_run": 60,
+        "section_summary": section_summary,
+        "section8_overhead_check": overhead_check,
     }
     (analysis_dir / "paper-metrics-summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -242,12 +272,17 @@ def analyze(batch: Path, quiet_batch: Path) -> Dict[str, object]:
         "",
         f"- Batch: `{batch}`",
         f"- Section-size runs: {len(section_runs)}",
-        f"- Strict Filebench timelines: {repetition_count} x 300 s, 60 samples per run",
-        f"- Section-size-eight throughput difference from quiet build: {overhead_percent:+.2f}%",
+        f"- Strict Filebench timelines: {len(timeline_runs) // 60} x 300 s, 60 samples per run",
         "",
         "| Section size | GC path | Throughput (kop/s) | Migration latency (us/block) |",
         "|---:|:---|---:|---:|",
     ]
+    if overhead_check["status"] == "measured":
+        markdown.insert(
+            5,
+            "- Section-size-eight throughput difference from quiet build: "
+            f"{float(overhead_check['difference_percent']):+.2f}%",
+        )
     for row in section_summary:
         markdown.append(
             f"| {row['section_size']} | {row['gc_paths']} | "

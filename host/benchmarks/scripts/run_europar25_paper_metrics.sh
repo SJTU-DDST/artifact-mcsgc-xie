@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# Collect Host-only paper metrics from the pinned quiet NOWAIT candidate.
+# Collect low-overhead paper metrics from a pinned NOWAIT candidate.
 
 SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 SCRIPT_DIR=$(cd -- "$(dirname -- "${SCRIPT_PATH}")" && pwd)
@@ -13,12 +13,36 @@ NVME_CLI_PATH=${NVME_CLI_DIR}/nvme
 HOST_REPO=/home/xin/work-xie/mcsgc-real/linux-cs
 OPENSSD_HOST=192.168.98.31
 OPENSSD_TREE=/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc
-OPENSSD_BRANCH=exp/formal-mcsgc-quiet-20260809
-OPENSSD_COMMIT=52831c159c9f7a73f9670c163a6b513750f64b47
 DEVICE=/dev/nvme0n1
-RESULT_BASE=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-nowait-paper-metrics
 DEFAULT_BASELINE_BATCH=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-original-reproduction/20260828_185514
 BASELINE_BATCH=${EUROPAR_BASELINE_BATCH:-${DEFAULT_BASELINE_BATCH}}
+RUN_PROFILE=${PAPER_METRICS_PROFILE:-full}
+case "${RUN_PROFILE}" in
+    full)
+        OPENSSD_BRANCH=exp/formal-mcsgc-quiet-20260809
+        OPENSSD_COMMIT=52831c159c9f7a73f9670c163a6b513750f64b47
+        RESULT_BASE=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-nowait-paper-metrics
+        CASES_PER_REPETITION=6
+        HOST_BRANCH=exp/diagnostic-mcsgc8t-nowait-paper-metrics-20260917
+        HOST_COMMIT=d772d6c0092aab0343f01cacac26330ebb28050b
+        HOST_BASE_COMMIT=dec1964f0bf196b1929799119e93393bfa6b79fb
+        PREFERRED_WORKTREE=/home/xin/work-xie/mcsgc-real/linux-cs-nowait-paper-metrics-20260917
+        ;;
+    section16)
+        OPENSSD_BRANCH=exp/diagnostic-mcsgc-paper-waf-20260917
+        OPENSSD_COMMIT=ca8a6dd48ee72c67d1945703bec0430ca4a8a76d
+        RESULT_BASE=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-nowait-section16-paper-metrics
+        CASES_PER_REPETITION=1
+        HOST_BRANCH=exp/diagnostic-mcsgc8t-nowait-secs16-paper-metrics-20260918
+        HOST_COMMIT=f85761e7e5e6a4357c82324981ae2aaa2c8348a7
+        HOST_BASE_COMMIT=dec1964f0bf196b1929799119e93393bfa6b79fb
+        PREFERRED_WORKTREE=/home/xin/work-xie/mcsgc-real/linux-cs-nowait-secs16-paper-metrics-20260918
+        ;;
+    *)
+        echo "ERROR: unsupported PAPER_METRICS_PROFILE: ${RUN_PROFILE}" >&2
+        exit 2
+        ;;
+esac
 REPETITIONS=${PAPER_METRICS_REPETITIONS:-3}
 case "${REPETITIONS}" in
     ''|*[!0-9]*|0)
@@ -26,21 +50,21 @@ case "${REPETITIONS}" in
         exit 2
         ;;
 esac
-EXPECTED_CASES=$((6 * REPETITIONS))
+EXPECTED_CASES=$((CASES_PER_REPETITION * REPETITIONS))
 MINIMUM_FREE_BYTES=$((5 * 1024 * 1024 * 1024))
 
 declare -a CONFIGURATIONS=(paper-metrics)
 declare -A HOST_BRANCHES=(
-    [paper-metrics]=exp/diagnostic-mcsgc8t-nowait-paper-metrics-20260917
+    [paper-metrics]=${HOST_BRANCH}
 )
 declare -A HOST_COMMITS=(
-    [paper-metrics]=d772d6c0092aab0343f01cacac26330ebb28050b
+    [paper-metrics]=${HOST_COMMIT}
 )
 declare -A HOST_BASE_COMMITS=(
-    [paper-metrics]=dec1964f0bf196b1929799119e93393bfa6b79fb
+    [paper-metrics]=${HOST_BASE_COMMIT}
 )
 declare -A PREFERRED_WORKTREES=(
-    [paper-metrics]=/home/xin/work-xie/mcsgc-real/linux-cs-nowait-paper-metrics-20260917
+    [paper-metrics]=${PREFERRED_WORKTREE}
 )
 declare -A HOST_TREES=()
 declare -A MODULE_PATHS=()
@@ -72,10 +96,11 @@ Usage:
   ./$(basename -- "${SCRIPT_PATH}") --preflight
   ./$(basename -- "${SCRIPT_PATH}") --dry-run
 
-The default command builds one pinned quiet NOWAIT Host candidate and runs five
-section-size fio cases and one strict 300-second Filebench timeline three times,
-for 18 destructive cases total. Each repetition runs fio first and Filebench
-last. Every case resets, formats, and overwrites ${DEVICE}. No interactive
+This command builds one pinned NOWAIT Host metrics candidate and runs profile
+'${RUN_PROFILE}' for ${EXPECTED_CASES} destructive cases. The full profile has
+five section-size fio cases and one strict 300-second Filebench timeline per
+repetition. The section16 profile has only the corrected widest-section fio
+case. Every case resets, formats, and overwrites ${DEVICE}. No interactive
 prompt is used. Run this script as the regular login user; it invokes sudo
 internally.
 
@@ -99,6 +124,10 @@ die() {
 write_base_cases() {
     local sec
 
+    if [ "${RUN_PROFILE}" = section16 ]; then
+        printf 'fio-section-16\tfio\trandwrite\trandom\t0.86\t16\t0\n'
+        return
+    fi
     for sec in 1 2 4 8 16; do
         printf 'fio-section-%s\tfio\trandwrite\trandom\t0.86\t%s\t0\n' "${sec}" "${sec}"
     done
@@ -106,7 +135,7 @@ write_base_cases() {
     printf 'filebench-period\tfilebench\tfileserver_4t_60G_1M_54k_period\trandom\t0.86\t8\t0\n'
 }
 
-# Complete one full six-case matrix before starting the next repetition.
+# Complete one full selected matrix before starting the next repetition.
 write_schedule() {
     local path=$1
     local repetition
@@ -356,9 +385,13 @@ preflight() {
     sudo -n true || sudo -v
     [ -b "${DEVICE}" ] || die "missing block device: ${DEVICE}"
     findmnt -rn -S "${DEVICE}" >/dev/null && die "${DEVICE} is mounted"
-    for process in fio filebench java mysqld; do
-        ! pgrep -x "${process}" >/dev/null || die "process is already running: ${process}"
-    done
+    ! pgrep -x fio >/dev/null || die "process is already running: fio"
+    if [ "${RUN_PROFILE}" = full ]; then
+        for process in filebench java mysqld; do
+            ! pgrep -x "${process}" >/dev/null \
+                || die "process is already running: ${process}"
+        done
+    fi
     if [ -r /sys/module/f2fs/refcnt ] && [ "$(< /sys/module/f2fs/refcnt)" -ne 0 ]; then
         die "f2fs has active references"
     fi
@@ -374,16 +407,23 @@ preflight() {
     for configuration in "${CONFIGURATIONS[@]}"; do
         git -C "${HOST_REPO}" cat-file -e "${HOST_COMMITS[${configuration}]}^{commit}"
     done
-    for process in fio filebench java python2 cgexec bc mysqladmin flock; do
+    for process in fio cgexec bc flock; do
         command -v "${process}" >/dev/null || die "required command is missing: ${process}"
     done
     [ -x "${SCRIPT_DIR}/../file_writer/build.sh" ] || die "file writer build script is missing"
-    [ -x "${SCRIPT_DIR}/../ycsb-0.17.0/bin/ycsb" ] || die "YCSB is missing"
     [ -f "${NVME_CLI_DIR}/Makefile" ] || die "nvme-cli source tree is missing"
-    sudo test -f /var/lib/mysql/ycsb_db/usertable.ibd || die "preloaded YCSB database is missing"
-    grep -Rqs '^datadir[[:space:]]*=[[:space:]]*/mnt/openssd_f2fs/mysql' /etc/mysql \
-        || die "MySQL datadir is not configured for the OpenSSD mount"
-    ! systemctl is-active --quiet mysql || die "MySQL must be stopped"
+    if [ "${RUN_PROFILE}" = full ]; then
+        for process in filebench java python2 mysqladmin; do
+            command -v "${process}" >/dev/null \
+                || die "required command is missing: ${process}"
+        done
+        [ -x "${SCRIPT_DIR}/../ycsb-0.17.0/bin/ycsb" ] || die "YCSB is missing"
+        sudo test -f /var/lib/mysql/ycsb_db/usertable.ibd \
+            || die "preloaded YCSB database is missing"
+        grep -Rqs '^datadir[[:space:]]*=[[:space:]]*/mnt/openssd_f2fs/mysql' /etc/mysql \
+            || die "MySQL datadir is not configured for the OpenSSD mount"
+        ! systemctl is-active --quiet mysql || die "MySQL must be stopped"
+    fi
     [ -f "${BASELINE_BATCH}/case-results.tsv" ] || die "baseline batch is incomplete: ${BASELINE_BATCH}"
     available_bytes=$(df -B1 --output=avail "${RESULT_BASE}" 2>/dev/null | tail -n 1 | tr -d ' ')
     if [ -z "${available_bytes}" ]; then
@@ -406,8 +446,13 @@ write_provenance() {
         printf 'artifact_branch=%s\nartifact_commit=%s\nsource_commit=%s\n' \
             "$(git -C "${REPRO_TREE}" branch --show-current)" \
             "$(git -C "${REPRO_TREE}" rev-parse HEAD)" "${SOURCE_COMMIT}"
+        printf 'run_profile=%s\n' "${RUN_PROFILE}"
         printf 'baseline_batch=%s\n' "${BASELINE_BATCH}"
-        printf 'case_order=section-size-fio,filebench-300s\n'
+        if [ "${RUN_PROFILE}" = section16 ]; then
+            printf 'case_order=section-size-16-fio\n'
+        else
+            printf 'case_order=section-size-fio,filebench-300s\n'
+        fi
         printf 'fsck_after_case=1\ncheck_checkpoints=1\n'
         printf 'filebench_runtime_s=300\nfilebench_report_interval_s=5\n'
         printf 'f2fs_status_sample_interval_s=0\n'
