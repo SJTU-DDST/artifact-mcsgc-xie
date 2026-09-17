@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# Collect low-overhead paper metrics from a pinned NOWAIT candidate.
+# Collect low-overhead paper metrics from one pinned Host/device pair.
 
 SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 SCRIPT_DIR=$(cd -- "$(dirname -- "${SCRIPT_PATH}")" && pwd)
@@ -27,6 +27,11 @@ case "${RUN_PROFILE}" in
         HOST_COMMIT=d772d6c0092aab0343f01cacac26330ebb28050b
         HOST_BASE_COMMIT=dec1964f0bf196b1929799119e93393bfa6b79fb
         PREFERRED_WORKTREE=/home/xin/work-xie/mcsgc-real/linux-cs-nowait-paper-metrics-20260917
+        HOST_CONFIG_TEMPLATE=
+        HOST_CONFIG_SHA256=
+        COLLECT_GC_PAPER_METRICS=1
+        ANALYZER_SCRIPT=${SCRIPT_DIR}/analyze_europar25_paper_metrics.py
+        PROFILE_DESCRIPTION="five section-size fio cases and one strict 300-second Filebench timeline"
         ;;
     section16)
         OPENSSD_BRANCH=exp/diagnostic-mcsgc-paper-waf-20260917
@@ -37,6 +42,41 @@ case "${RUN_PROFILE}" in
         HOST_COMMIT=f85761e7e5e6a4357c82324981ae2aaa2c8348a7
         HOST_BASE_COMMIT=dec1964f0bf196b1929799119e93393bfa6b79fb
         PREFERRED_WORKTREE=/home/xin/work-xie/mcsgc-real/linux-cs-nowait-secs16-paper-metrics-20260918
+        HOST_CONFIG_TEMPLATE=
+        HOST_CONFIG_SHA256=
+        COLLECT_GC_PAPER_METRICS=1
+        ANALYZER_SCRIPT=${SCRIPT_DIR}/analyze_europar25_paper_metrics.py
+        PROFILE_DESCRIPTION="the corrected widest-section fio case"
+        ;;
+    section16-quiet)
+        OPENSSD_BRANCH=exp/formal-mcsgc-quiet-20260809
+        OPENSSD_COMMIT=52831c159c9f7a73f9670c163a6b513750f64b47
+        RESULT_BASE=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-nowait-section16-quiet
+        CASES_PER_REPETITION=1
+        HOST_BRANCH=exp/formal-mcsgc8t-nowait-secs16-quiet-20260917
+        HOST_COMMIT=9b3f8f2ce3077d5ccc010ce22363deffe1efbf2c
+        HOST_BASE_COMMIT=dec1964f0bf196b1929799119e93393bfa6b79fb
+        PREFERRED_WORKTREE=/home/xin/work-xie/mcsgc-real/linux-cs-nowait-secs16-quiet-20260917
+        HOST_CONFIG_TEMPLATE=
+        HOST_CONFIG_SHA256=
+        COLLECT_GC_PAPER_METRICS=0
+        ANALYZER_SCRIPT=${SCRIPT_DIR}/analyze_europar25_nowait_section16_quiet.py
+        PROFILE_DESCRIPTION="the corrected widest-section fio case using the quiet Host build"
+        ;;
+    original)
+        OPENSSD_BRANCH=formal-original-csgc-main-20260809
+        OPENSSD_COMMIT=463e8b0b13ad345ed99c2176b1f81ad34d3c986a
+        RESULT_BASE=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-original-paper-metrics
+        CASES_PER_REPETITION=12
+        HOST_BRANCH=exp/diagnostic-original-paper-metrics-20260918
+        HOST_COMMIT=3620ae3298fade7062fa50457df7fc97cba81368
+        HOST_BASE_COMMIT=ecfcc36c89b8ecb29ded364257f672dd9ff363e2
+        PREFERRED_WORKTREE=/home/xin/work-xie/mcsgc-real/linux-cs-original-paper-metrics-20260918
+        HOST_CONFIG_TEMPLATE=/home/xin/work-xie/mcsgc-real/linux-cs-formal-original-lifecycle-fix-20260828/.config
+        HOST_CONFIG_SHA256=db1bcdafeff95fcde20d12ab60ba84fd4ce7c2a0349f451d363a887a4ad82a18
+        COLLECT_GC_PAPER_METRICS=1
+        ANALYZER_SCRIPT=${SCRIPT_DIR}/analyze_europar25_original_paper_metrics.py
+        PROFILE_DESCRIPTION="ORI and original CSGC section-size fio cases plus strict 300-second Filebench timelines"
         ;;
     *)
         echo "ERROR: unsupported PAPER_METRICS_PROFILE: ${RUN_PROFILE}" >&2
@@ -96,11 +136,9 @@ Usage:
   ./$(basename -- "${SCRIPT_PATH}") --preflight
   ./$(basename -- "${SCRIPT_PATH}") --dry-run
 
-This command builds one pinned NOWAIT Host metrics candidate and runs profile
-'${RUN_PROFILE}' for ${EXPECTED_CASES} destructive cases. The full profile has
-five section-size fio cases and one strict 300-second Filebench timeline per
-repetition. The section16 profile has only the corrected widest-section fio
-case. Every case resets, formats, and overwrites ${DEVICE}. No interactive
+This command builds one pinned Host candidate and runs profile '${RUN_PROFILE}'
+for ${EXPECTED_CASES} destructive cases. Each repetition contains
+${PROFILE_DESCRIPTION}. Every case resets, formats, and overwrites ${DEVICE}. No interactive
 prompt is used. Run this script as the regular login user; it invokes sudo
 internally.
 
@@ -124,7 +162,7 @@ die() {
 write_base_cases() {
     local sec
 
-    if [ "${RUN_PROFILE}" = section16 ]; then
+    if [ "${RUN_PROFILE}" = section16 ] || [ "${RUN_PROFILE}" = section16-quiet ]; then
         printf 'fio-section-16\tfio\trandwrite\trandom\t0.86\t16\t0\n'
         return
     fi
@@ -139,16 +177,34 @@ write_base_cases() {
 write_schedule() {
     local path=$1
     local repetition
-    local base_id workload_type bmname distribution prefill_ratio segs_per_sec fio_timebased
+    local base_id mode workload_type bmname distribution prefill_ratio segs_per_sec fio_timebased
 
     printf 'case_id\tconfiguration\tmode\tworkload_type\tbmname\tdistribution\tprefill_ratio\tsegs_per_sec\tfio_timebased\n' > "${path}"
     for ((repetition = 1; repetition <= REPETITIONS; repetition++)); do
-        while IFS=$'\t' read -r base_id workload_type bmname distribution prefill_ratio segs_per_sec fio_timebased; do
-            printf 'paper-metrics-%s-r%s\tpaper-metrics\tcs\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-                "${base_id}" "${repetition}" "${workload_type}" \
-                "${bmname}" "${distribution}" "${prefill_ratio}" \
-                "${segs_per_sec}" "${fio_timebased}" >> "${path}"
-        done < <(write_base_cases)
+        if [ "${RUN_PROFILE}" = original ]; then
+            for mode in cs ori; do
+                while IFS=$'\t' read -r base_id workload_type bmname distribution prefill_ratio segs_per_sec fio_timebased; do
+                    printf 'original-paper-metrics-%s-%s-r%s\tpaper-metrics\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                        "${mode}" "${base_id}" "${repetition}" "${mode}" \
+                        "${workload_type}" "${bmname}" "${distribution}" \
+                        "${prefill_ratio}" "${segs_per_sec}" "${fio_timebased}" >> "${path}"
+                done < <(write_base_cases)
+            done
+        else
+            while IFS=$'\t' read -r base_id workload_type bmname distribution prefill_ratio segs_per_sec fio_timebased; do
+                if [ "${RUN_PROFILE}" = section16-quiet ]; then
+                    printf 'nowait-section16-quiet-%s-r%s\tpaper-metrics\tcs\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                        "${base_id}" "${repetition}" "${workload_type}" \
+                        "${bmname}" "${distribution}" "${prefill_ratio}" \
+                        "${segs_per_sec}" "${fio_timebased}" >> "${path}"
+                else
+                    printf 'paper-metrics-%s-r%s\tpaper-metrics\tcs\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                        "${base_id}" "${repetition}" "${workload_type}" \
+                        "${bmname}" "${distribution}" "${prefill_ratio}" \
+                        "${segs_per_sec}" "${fio_timebased}" >> "${path}"
+                fi
+            done < <(write_base_cases)
+        fi
     done
 }
 
@@ -302,10 +358,20 @@ build_configuration() {
     local tree=${HOST_TREES[${configuration}]}
     local commit=${HOST_COMMITS[${configuration}]}
     local module_path="${tree}/fs/f2fs/f2fs.ko"
-    local committed_sha build_sha module_sha module_srcversion
+    local committed_sha build_sha module_sha module_srcversion config_origin
 
     echo "Building ${configuration} from ${commit} at $(date --iso-8601=seconds)"
-    git -C "${tree}" show "${commit}:.config" > "${tree}/.config"
+    if [ -n "${HOST_CONFIG_TEMPLATE}" ]; then
+        [ -r "${HOST_CONFIG_TEMPLATE}" ] \
+            || die "Host config template is missing: ${HOST_CONFIG_TEMPLATE}"
+        [ "$(sha256sum "${HOST_CONFIG_TEMPLATE}" | awk '{print $1}')" = "${HOST_CONFIG_SHA256}" ] \
+            || die "Host config template changed: ${HOST_CONFIG_TEMPLATE}"
+        cp -- "${HOST_CONFIG_TEMPLATE}" "${tree}/.config"
+        config_origin=${HOST_CONFIG_TEMPLATE}
+    else
+        git -C "${tree}" show "${commit}:.config" > "${tree}/.config"
+        config_origin="${commit}:.config"
+    fi
     committed_sha=$(sha256sum "${tree}/.config" | awk '{print $1}')
     "${tree}/scripts/config" --file "${tree}/.config" --enable F2FS_STAT_FS
     make -s -C "${tree}" olddefconfig LOCALVERSION=-csgcmt
@@ -316,6 +382,12 @@ build_configuration() {
         sudo ./build_f2fs.sh
     )
     [ -r "${module_path}" ] || die "module was not produced: ${module_path}"
+    if [ "${COLLECT_GC_PAPER_METRICS}" -eq 1 ]; then
+        grep -aFq 'gc_paper_metrics' "${module_path}" \
+            || die "module does not contain the GC paper metrics interface"
+    elif grep -aFq 'gc_paper_metrics' "${module_path}"; then
+        die "quiet module unexpectedly contains the GC paper metrics interface"
+    fi
     module_sha=$(sha256sum "${module_path}" | awk '{print $1}')
     module_srcversion=$(modinfo -F srcversion "${module_path}")
     [ -n "${module_srcversion}" ] || die "module has no srcversion: ${module_path}"
@@ -327,10 +399,11 @@ build_configuration() {
         printf 'completed_at=%s\n' "$(date --iso-8601=seconds)"
         printf 'host_tree=%s\nhost_branch=%s\nhost_commit=%s\n' \
             "${tree}" "${HOST_BRANCHES[${configuration}]}" "${commit}"
+        printf 'config_origin=%s\n' "${config_origin}"
         printf 'committed_config_sha256=%s\nbuild_config_sha256=%s\n' \
             "${committed_sha}" "${build_sha}"
         printf 'comparison_config_override=CONFIG_F2FS_STAT_FS=y\n'
-        printf 'paper_metrics_macro=CONFIG_F2FS_GC_PAPER_METRICS\n'
+        printf 'paper_metrics_enabled=%s\n' "${COLLECT_GC_PAPER_METRICS}"
         printf 'module_sha256=%s\nmodule_srcversion=%s\n' "${module_sha}" "${module_srcversion}"
     } >> "${BATCH_DIR}/provenance.txt"
 }
@@ -386,8 +459,12 @@ preflight() {
     [ -b "${DEVICE}" ] || die "missing block device: ${DEVICE}"
     findmnt -rn -S "${DEVICE}" >/dev/null && die "${DEVICE} is mounted"
     ! pgrep -x fio >/dev/null || die "process is already running: fio"
+    if [ "${RUN_PROFILE}" = full ] || [ "${RUN_PROFILE}" = original ]; then
+        ! pgrep -x filebench >/dev/null \
+            || die "process is already running: filebench"
+    fi
     if [ "${RUN_PROFILE}" = full ]; then
-        for process in filebench java mysqld; do
+        for process in java mysqld; do
             ! pgrep -x "${process}" >/dev/null \
                 || die "process is already running: ${process}"
         done
@@ -410,6 +487,7 @@ preflight() {
     for process in fio cgexec bc flock; do
         command -v "${process}" >/dev/null || die "required command is missing: ${process}"
     done
+    [ -x "${ANALYZER_SCRIPT}" ] || die "analysis script is missing: ${ANALYZER_SCRIPT}"
     [ -x "${SCRIPT_DIR}/../file_writer/build.sh" ] || die "file writer build script is missing"
     [ -f "${NVME_CLI_DIR}/Makefile" ] || die "nvme-cli source tree is missing"
     if [ "${RUN_PROFILE}" = full ]; then
@@ -423,6 +501,9 @@ preflight() {
         grep -Rqs '^datadir[[:space:]]*=[[:space:]]*/mnt/openssd_f2fs/mysql' /etc/mysql \
             || die "MySQL datadir is not configured for the OpenSSD mount"
         ! systemctl is-active --quiet mysql || die "MySQL must be stopped"
+    fi
+    if [ "${RUN_PROFILE}" = original ]; then
+        command -v filebench >/dev/null || die "required command is missing: filebench"
     fi
     [ -f "${BASELINE_BATCH}/case-results.tsv" ] || die "baseline batch is incomplete: ${BASELINE_BATCH}"
     available_bytes=$(df -B1 --output=avail "${RESULT_BASE}" 2>/dev/null | tail -n 1 | tr -d ' ')
@@ -448,14 +529,17 @@ write_provenance() {
             "$(git -C "${REPRO_TREE}" rev-parse HEAD)" "${SOURCE_COMMIT}"
         printf 'run_profile=%s\n' "${RUN_PROFILE}"
         printf 'baseline_batch=%s\n' "${BASELINE_BATCH}"
-        if [ "${RUN_PROFILE}" = section16 ]; then
+        if [ "${RUN_PROFILE}" = section16 ] || [ "${RUN_PROFILE}" = section16-quiet ]; then
             printf 'case_order=section-size-16-fio\n'
+        elif [ "${RUN_PROFILE}" = original ]; then
+            printf 'case_order=original-csgc-section-fio,filebench-300s,ori-section-fio,filebench-300s\n'
         else
             printf 'case_order=section-size-fio,filebench-300s\n'
         fi
         printf 'fsck_after_case=1\ncheck_checkpoints=1\n'
         printf 'filebench_runtime_s=300\nfilebench_report_interval_s=5\n'
         printf 'f2fs_status_sample_interval_s=0\n'
+        printf 'gc_paper_metrics_enabled=%s\n' "${COLLECT_GC_PAPER_METRICS}"
         printf 'kernel_panic_timeout_s=0\n'
         printf 'openssd_expected_branch=%s\nopenssd_expected_commit=%s\n' \
             "${OPENSSD_BRANCH}" "${OPENSSD_COMMIT}"
@@ -541,10 +625,12 @@ validate_case() {
             log_path="${output_path}/fio.log"
             grep -q 'Run status group' "${log_path}"
             ! grep -Eq '(^|[^[:alpha:]])err=[1-9][0-9]*' "${log_path}"
-            test -s "${output_path}/gc-paper-metrics.log"
-            grep -q 'active=0' "${output_path}/gc-paper-metrics.log"
-            grep -Eq '(csgc|origc)_blocks=[1-9][0-9]*' \
-                "${output_path}/gc-paper-metrics.log"
+            if [ "${COLLECT_GC_PAPER_METRICS}" -eq 1 ]; then
+                test -s "${output_path}/gc-paper-metrics.log"
+                grep -q 'active=0' "${output_path}/gc-paper-metrics.log"
+                grep -Eq '(csgc|origc)_blocks=[1-9][0-9]*' \
+                    "${output_path}/gc-paper-metrics.log"
+            fi
             ;;
         ycsb)
             log_path="${output_path}/ycsb.log"
@@ -726,7 +812,7 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
     FILEBENCH_REPORT_INTERVAL=$([ "${workload_type}" = filebench ] && echo 5 || echo 0) \
     FILEBENCH_RUNTIME_OVERRIDE=$([ "${workload_type}" = filebench ] && echo 300 || echo '') \
     F2FS_STATUS_SAMPLE_INTERVAL=0 \
-    GC_PAPER_METRICS=$([ "${workload_type}" = fio ] && echo 1 || echo 0) \
+    GC_PAPER_METRICS=$([ "${workload_type}" = fio ] && echo "${COLLECT_GC_PAPER_METRICS}" || echo 0) \
     KERNEL_PANIC_TIMEOUT=0 \
         "${SCRIPT_DIR}/test.sh" "${mode}" "${config_path}"
 
@@ -757,7 +843,7 @@ COMPLETED_AT=$(date --iso-8601=seconds)
 printf 'started_at=%s\ncompleted_at=%s\nsuccessful_cases=%s\nvalidated_cases=%s\nfsck_failures=%s\n' \
     "${STARTED_AT}" "${COMPLETED_AT}" "${successful}" "${validated}" \
     "${fsck_failures}" > "${BATCH_DIR}/completed.env"
-"${SCRIPT_DIR}/analyze_europar25_paper_metrics.py" "${BATCH_DIR}"
+"${ANALYZER_SCRIPT}" "${BATCH_DIR}"
 write_state success
 stop_sudo_keepalive
 trap - EXIT
