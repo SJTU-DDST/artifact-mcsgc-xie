@@ -2,10 +2,11 @@
 
 set -euo pipefail
 
-# Run the pinned quiet NOWAIT candidate against the exact Euro-Par matrix.
+# Run the pinned quiet NOWAIT candidate against an exact Euro-Par matrix.
 
 SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}")
 SCRIPT_DIR=$(cd -- "$(dirname -- "${SCRIPT_PATH}")" && pwd)
+LAUNCHER_NAME=${EUROPAR_NOWAIT_LAUNCHER_NAME:-$(basename -- "${SCRIPT_PATH}")}
 REPRO_TREE=$(cd -- "${SCRIPT_DIR}/../../.." && pwd)
 SOURCE_COMMIT=0271b907ec00ed643fd139403b726817c9fe8c32
 NVME_CLI_DIR=${REPRO_TREE}/host/src/nvme-cli
@@ -13,12 +14,30 @@ NVME_CLI_PATH=${NVME_CLI_DIR}/nvme
 HOST_REPO=/home/xin/work-xie/mcsgc-real/linux-cs
 OPENSSD_HOST=192.168.98.31
 OPENSSD_TREE=/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc
-OPENSSD_BRANCH=exp/formal-mcsgc-quiet-20260809
-OPENSSD_COMMIT=52831c159c9f7a73f9670c163a6b513750f64b47
 DEVICE=/dev/nvme0n1
-RESULT_BASE=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-mcsgc-nowait-reproduction
 DEFAULT_BASELINE_BATCH=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-original-reproduction/20260828_185514
 BASELINE_BATCH=${EUROPAR_BASELINE_BATCH:-${DEFAULT_BASELINE_BATCH}}
+RUN_PROFILE=${EUROPAR_NOWAIT_PROFILE:-full}
+case "${RUN_PROFILE}" in
+    full)
+        OPENSSD_BRANCH=exp/formal-mcsgc-quiet-20260809
+        OPENSSD_COMMIT=52831c159c9f7a73f9670c163a6b513750f64b47
+        RESULT_BASE=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-mcsgc-nowait-reproduction
+        CASE_PREFIX=nowait-quiet
+        CASES_PER_REPETITION=22
+        ;;
+    paper-waf)
+        OPENSSD_BRANCH=exp/diagnostic-mcsgc-paper-waf-20260917
+        OPENSSD_COMMIT=ca8a6dd48ee72c67d1945703bec0430ca4a8a76d
+        RESULT_BASE=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-nowait-paper-waf
+        CASE_PREFIX=nowait-paper-waf
+        CASES_PER_REPETITION=15
+        ;;
+    *)
+        echo "ERROR: unsupported EUROPAR_NOWAIT_PROFILE: ${RUN_PROFILE}" >&2
+        exit 2
+        ;;
+esac
 REPETITIONS=${EUROPAR_NOWAIT_REPETITIONS:-3}
 case "${REPETITIONS}" in
     ''|*[!0-9]*|0)
@@ -26,7 +45,7 @@ case "${REPETITIONS}" in
         exit 2
         ;;
 esac
-EXPECTED_CASES=$((22 * REPETITIONS))
+EXPECTED_CASES=$((CASES_PER_REPETITION * REPETITIONS))
 MINIMUM_FREE_BYTES=$((5 * 1024 * 1024 * 1024))
 
 declare -a CONFIGURATIONS=(nowait-quiet)
@@ -66,17 +85,18 @@ export -f sudo
 usage() {
     cat <<EOF
 Usage:
-  ./$(basename -- "${SCRIPT_PATH}")
-  ./$(basename -- "${SCRIPT_PATH}") --resume BATCH_DIR
-  ./$(basename -- "${SCRIPT_PATH}") --status BATCH_DIR
-  ./$(basename -- "${SCRIPT_PATH}") --preflight
-  ./$(basename -- "${SCRIPT_PATH}") --dry-run
+  ./${LAUNCHER_NAME}
+  ./${LAUNCHER_NAME} --resume BATCH_DIR
+  ./${LAUNCHER_NAME} --status BATCH_DIR
+  ./${LAUNCHER_NAME} --preflight
+  ./${LAUNCHER_NAME} --dry-run
 
-The default command builds one pinned quiet NOWAIT Host candidate and runs the
-same 22 Euro-Par artifact cases three times, for 66 destructive cases total.
-Each repetition runs fio first, YCSB second, and Filebench last. Every case
-resets, formats, and overwrites ${DEVICE}. No interactive prompt is used. Run
-this script as the regular login user; it invokes sudo internally.
+This command builds one pinned quiet NOWAIT Host candidate and runs profile
+'${RUN_PROFILE}' for ${EXPECTED_CASES} destructive cases. The full profile has
+all 22 Euro-Par cases. The paper-waf profile has the 15 fio points used by
+Figures 6 through 8. Every case resets, formats, and overwrites ${DEVICE}. No
+interactive prompt is used. Run this script as the regular login user; it
+invokes sudo internally.
 
 Expected OpenSSD source:
   ${OPENSSD_BRANCH}@${OPENSSD_COMMIT}
@@ -94,16 +114,18 @@ die() {
     exit 1
 }
 
-# Emit the 22 cases using the public artifact configuration.
+# Emit the selected cases using the public artifact configuration.
 write_base_cases() {
     local util
     local sec
     local skew
     local skew_id
 
-    # Run the historically stable fio cases before stateful application loads.
-    printf 'fio-overall-uniform\tfio\trandwrite\trandom\t0.86\t8\t0\n'
-    printf 'fio-overall-zipf11\tfio\trandwrite\tzipf:1.1\t0.86\t8\t1\n'
+    if [ "${RUN_PROFILE}" = full ]; then
+        # Run the historically stable fio cases before stateful application loads.
+        printf 'fio-overall-uniform\tfio\trandwrite\trandom\t0.86\t8\t0\n'
+        printf 'fio-overall-zipf11\tfio\trandwrite\tzipf:1.1\t0.86\t8\t1\n'
+    fi
 
     for util in 0.6 0.7 0.8 0.9 0.95; do
         printf 'fio-util-%s\tfio\trandwrite\trandom\t%s\t8\t0\n' "${util}" "${util}"
@@ -119,16 +141,18 @@ write_base_cases() {
         printf 'fio-skew-%s\tfio\trandwrite\t%s\t0.86\t8\t1\n' "${skew_id}" "${skew}"
     done
 
-    printf 'ycsb-a\tycsb\tworkloada\trandom\t0.86\t8\t0\n'
-    printf 'ycsb-f\tycsb\tworkloadf\trandom\t0.8\t8\t0\n'
+    if [ "${RUN_PROFILE}" = full ]; then
+        printf 'ycsb-a\tycsb\tworkloada\trandom\t0.86\t8\t0\n'
+        printf 'ycsb-f\tycsb\tworkloadf\trandom\t0.8\t8\t0\n'
 
-    # Filebench previously exposed lifecycle bugs, so keep it last.
-    printf 'filebench-period\tfilebench\tfileserver_4t_60G_1M_54k_period\trandom\t0.86\t8\t0\n'
-    printf 'filebench-fileserver\tfilebench\tfileserver_4t_60G_1M_54k\trandom\t0.86\t8\t0\n'
-    printf 'filebench-varmail\tfilebench\tvarmail_4t_60G_1M_54k\trandom\t0.86\t8\t0\n'
+        # Filebench previously exposed lifecycle bugs, so keep it last.
+        printf 'filebench-period\tfilebench\tfileserver_4t_60G_1M_54k_period\trandom\t0.86\t8\t0\n'
+        printf 'filebench-fileserver\tfilebench\tfileserver_4t_60G_1M_54k\trandom\t0.86\t8\t0\n'
+        printf 'filebench-varmail\tfilebench\tvarmail_4t_60G_1M_54k\trandom\t0.86\t8\t0\n'
+    fi
 }
 
-# Complete one full 22-case matrix before starting the next repetition.
+# Complete one full selected matrix before starting the next repetition.
 write_schedule() {
     local path=$1
     local repetition
@@ -137,8 +161,8 @@ write_schedule() {
     printf 'case_id\tconfiguration\tmode\tworkload_type\tbmname\tdistribution\tprefill_ratio\tsegs_per_sec\tfio_timebased\n' > "${path}"
     for ((repetition = 1; repetition <= REPETITIONS; repetition++)); do
         while IFS=$'\t' read -r base_id workload_type bmname distribution prefill_ratio segs_per_sec fio_timebased; do
-            printf 'nowait-quiet-%s-r%s\tnowait-quiet\tcs\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-                "${base_id}" "${repetition}" "${workload_type}" \
+            printf '%s-%s-r%s\tnowait-quiet\tcs\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "${CASE_PREFIX}" "${base_id}" "${repetition}" "${workload_type}" \
                 "${bmname}" "${distribution}" "${prefill_ratio}" \
                 "${segs_per_sec}" "${fio_timebased}" >> "${path}"
         done < <(write_base_cases)
@@ -215,23 +239,28 @@ EOF
 read_openssd_provenance() {
     ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
         -o StrictHostKeyChecking=yes "${OPENSSD_HOST}" \
-        "repo='${OPENSSD_TREE}'; git -C \"\${repo}\" branch --show-current; git -C \"\${repo}\" rev-parse HEAD; if test -n \"\$(git -C \"\${repo}\" status --porcelain --untracked-files=no)\"; then echo dirty; else echo clean; fi"
+        "repo='${OPENSSD_TREE}'; git -C \"\${repo}\" branch --show-current; git -C \"\${repo}\" rev-parse HEAD; if test -n \"\$(git -C \"\${repo}\" status --porcelain --untracked-files=no)\"; then echo dirty; else echo clean; fi; awk '/^#define CONFIG_OPENSSD_PAPER_WAF_STATS / { print \$3; found=1 } END { if (!found) print 0 }' \"\${repo}/src/shared/config.h\""
 }
 
 # Require the pinned mCSGC source before every destructive case.
 verify_openssd_provenance() {
-    local output branch commit dirty
+    local output branch commit dirty paper_waf_stats
     output=$(read_openssd_provenance) || die "cannot read OpenSSD provenance"
     branch=$(sed -n '1p' <<< "${output}")
     commit=$(sed -n '2p' <<< "${output}")
     dirty=$(sed -n '3p' <<< "${output}")
+    paper_waf_stats=$(sed -n '4p' <<< "${output}")
     [ "${branch}" = "${OPENSSD_BRANCH}" ] \
         || die "wrong OpenSSD branch: expected=${OPENSSD_BRANCH} actual=${branch}"
     [ "${commit}" = "${OPENSSD_COMMIT}" ] \
         || die "wrong OpenSSD commit: expected=${OPENSSD_COMMIT} actual=${commit}"
     [ "${dirty}" = clean ] || die "OpenSSD tracked tree is dirty"
-    printf 'openssd_branch=%s\nopenssd_commit=%s\nopenssd_tracked_state=%s\n' \
-        "${branch}" "${commit}" "${dirty}"
+    if [ "${RUN_PROFILE}" = paper-waf ]; then
+        [ "${paper_waf_stats}" = 1 ] \
+            || die "OpenSSD paper WAF source switch is not enabled"
+    fi
+    printf 'openssd_branch=%s\nopenssd_commit=%s\nopenssd_tracked_state=%s\nopenssd_paper_waf_stats=%s\n' \
+        "${branch}" "${commit}" "${dirty}" "${paper_waf_stats}"
 }
 
 # Resolve or create a worktree at one exact pinned Host revision.
@@ -395,16 +424,22 @@ preflight() {
     for configuration in "${CONFIGURATIONS[@]}"; do
         git -C "${HOST_REPO}" cat-file -e "${HOST_COMMITS[${configuration}]}^{commit}"
     done
-    for process in fio filebench java python2 cgexec bc mysqladmin flock; do
+    for process in fio python3 cgexec bc flock; do
         command -v "${process}" >/dev/null || die "required command is missing: ${process}"
     done
     [ -x "${SCRIPT_DIR}/../file_writer/build.sh" ] || die "file writer build script is missing"
-    [ -x "${SCRIPT_DIR}/../ycsb-0.17.0/bin/ycsb" ] || die "YCSB is missing"
     [ -f "${NVME_CLI_DIR}/Makefile" ] || die "nvme-cli source tree is missing"
-    sudo test -f /var/lib/mysql/ycsb_db/usertable.ibd || die "preloaded YCSB database is missing"
-    grep -Rqs '^datadir[[:space:]]*=[[:space:]]*/mnt/openssd_f2fs/mysql' /etc/mysql \
-        || die "MySQL datadir is not configured for the OpenSSD mount"
-    ! systemctl is-active --quiet mysql || die "MySQL must be stopped"
+    if [ "${RUN_PROFILE}" = full ]; then
+        for process in filebench java python2 mysqladmin; do
+            command -v "${process}" >/dev/null || die "required command is missing: ${process}"
+        done
+        [ -x "${SCRIPT_DIR}/../ycsb-0.17.0/bin/ycsb" ] || die "YCSB is missing"
+        sudo test -f /var/lib/mysql/ycsb_db/usertable.ibd \
+            || die "preloaded YCSB database is missing"
+        grep -Rqs '^datadir[[:space:]]*=[[:space:]]*/mnt/openssd_f2fs/mysql' /etc/mysql \
+            || die "MySQL datadir is not configured for the OpenSSD mount"
+        ! systemctl is-active --quiet mysql || die "MySQL must be stopped"
+    fi
     [ -f "${BASELINE_BATCH}/case-results.tsv" ] || die "baseline batch is incomplete: ${BASELINE_BATCH}"
     available_bytes=$(df -B1 --output=avail "${RESULT_BASE}" 2>/dev/null | tail -n 1 | tr -d ' ')
     if [ -z "${available_bytes}" ]; then
@@ -424,11 +459,16 @@ write_provenance() {
         printf 'operator=%s\n' "${USER}"
         printf 'outer_script=%s\nrepetitions=%s\nstarted_at=%s\n' \
             "${SCRIPT_PATH}" "${REPETITIONS}" "${STARTED_AT}"
+        printf 'run_profile=%s\n' "${RUN_PROFILE}"
         printf 'artifact_branch=%s\nartifact_commit=%s\nsource_commit=%s\n' \
             "$(git -C "${REPRO_TREE}" branch --show-current)" \
             "$(git -C "${REPRO_TREE}" rev-parse HEAD)" "${SOURCE_COMMIT}"
         printf 'baseline_batch=%s\n' "${BASELINE_BATCH}"
-        printf 'case_order=fio,ycsb,filebench\n'
+        if [ "${RUN_PROFILE}" = paper-waf ]; then
+            printf 'case_order=fio-util,fio-section,fio-skew\n'
+        else
+            printf 'case_order=fio,ycsb,filebench\n'
+        fi
         printf 'fsck_after_case=1\ncheck_checkpoints=1\n'
         printf 'filebench_report_interval_s=original-workload\nf2fs_status_sample_interval_s=0\n'
         printf 'kernel_panic_timeout_s=0\n'
@@ -528,6 +568,48 @@ validate_case() {
     fi
 }
 
+# Validate and persist the three byte counters used to derive physical WAF.
+validate_paper_waf() {
+    local case_id=$1 output_path=$2 stat_path="${output_path}/stat.log"
+    local host_write nand_write csgc_write reported_waf computed_waf
+
+    [ "${RUN_PROFILE}" = paper-waf ] || return 0
+    [ -s "${stat_path}" ] || die "missing SSD statistics: ${stat_path}"
+    grep -Eq 'paper_waf_stats:[[:space:]]*enabled=1' "${stat_path}" \
+        || die "running firmware does not expose enabled paper WAF statistics"
+    host_write=$(sed -n 's/.*host_normal_write_bytes:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+        "${stat_path}" | tail -n 1)
+    nand_write=$(sed -n 's/.*nand_write_bytes:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+        "${stat_path}" | tail -n 1)
+    csgc_write=$(sed -n 's/.*nand_cs_write_bytes:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+        "${stat_path}" | tail -n 1)
+    reported_waf=$(sed -n 's/.*physical WAF:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+        "${stat_path}" | tail -n 1)
+    if [ -z "${host_write}" ] || [ -z "${nand_write}" ] \
+            || [ -z "${csgc_write}" ] || [ -z "${reported_waf}" ]; then
+        die "incomplete paper WAF counters in ${stat_path}"
+    fi
+    [ "${host_write}" -gt 0 ] || die "zero Host write bytes in ${stat_path}"
+    [ "${nand_write}" -ge "${host_write}" ] \
+        || die "NAND write bytes are smaller than Host write bytes in ${stat_path}"
+    [ "${csgc_write}" -gt 0 ] \
+        || die "zero CSGC write bytes in ${stat_path}"
+    [ "${csgc_write}" -le "${nand_write}" ] \
+        || die "CSGC write bytes exceed total NAND write bytes in ${stat_path}"
+    computed_waf=$((nand_write * 1000 / (1 + host_write)))
+    [ "${reported_waf}" -eq "${computed_waf}" ] \
+        || die "physical WAF mismatch in ${stat_path}: reported=${reported_waf} computed=${computed_waf}"
+
+    if ! awk -F '\t' -v id="${case_id}" \
+            'NR > 1 && $1 == id {found=1} END {exit !found}' \
+            "${BATCH_DIR}/waf-results.tsv"; then
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "${case_id}" "${host_write}" "${nand_write}" "${csgc_write}" \
+            "${reported_waf}" "${computed_waf}" "${stat_path}" \
+            >> "${BATCH_DIR}/waf-results.tsv"
+    fi
+}
+
 # Keep sudo credentials alive during the multi-hour matrix.
 start_sudo_keepalive() {
     sudo -v
@@ -594,6 +676,8 @@ if [ "${MODE}" = start ]; then
         > "${BATCH_DIR}/fsck-results.tsv"
     printf 'case_id\tresult\texit_status\tlog_path\n' \
         > "${BATCH_DIR}/checkpoint-results.tsv"
+    printf 'case_id\thost_normal_write_bytes\tnand_write_bytes\tnand_cs_write_bytes\treported_waf_x1000\tcomputed_waf_x1000\tstat_path\n' \
+        > "${BATCH_DIR}/waf-results.tsv"
 else
     [ -f "${BATCH_DIR}/schedule.tsv" ] || die "resume batch has no schedule.tsv"
     [ -f "${BATCH_DIR}/case-results.tsv" ] || die "resume batch has no case-results.tsv"
@@ -609,6 +693,10 @@ else
     if [ ! -f "${BATCH_DIR}/checkpoint-results.tsv" ]; then
         printf 'case_id\tresult\texit_status\tlog_path\n' \
             > "${BATCH_DIR}/checkpoint-results.tsv"
+    fi
+    if [ ! -f "${BATCH_DIR}/waf-results.tsv" ]; then
+        printf 'case_id\thost_normal_write_bytes\tnand_write_bytes\tnand_cs_write_bytes\treported_waf_x1000\tcomputed_waf_x1000\tstat_path\n' \
+            > "${BATCH_DIR}/waf-results.tsv"
     fi
 fi
 
@@ -661,6 +749,7 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
             '$1 == id && $11 == 0 {path=$12} END {print path}' "${CASE_RESULTS}")
         echo "Recovering validation for completed test ${case_id}"
         validate_case "${workload_type}" "${output_path}"
+        validate_paper_waf "${case_id}" "${output_path}"
         run_checkpoint_check "${case_id}" "${output_path}"
         run_offline_fsck "${case_id}" "${output_path}"
         printf 'validated_at=%s\noutput_path=%s\nfsck_result=%s\n' \
@@ -694,6 +783,7 @@ while IFS=$'\t' read -r case_id configuration mode workload_type bmname distribu
         '$1 == id && $11 == 0 {path=$12} END {print path}' "${CASE_RESULTS}")
     [ -n "${output_path}" ] || die "no successful result row for ${case_id}"
     validate_case "${workload_type}" "${output_path}"
+    validate_paper_waf "${case_id}" "${output_path}"
     run_checkpoint_check "${case_id}" "${output_path}"
     run_offline_fsck "${case_id}" "${output_path}"
     printf 'validated_at=%s\noutput_path=%s\nfsck_result=%s\n' \
@@ -717,8 +807,13 @@ COMPLETED_AT=$(date --iso-8601=seconds)
 printf 'started_at=%s\ncompleted_at=%s\nsuccessful_cases=%s\nvalidated_cases=%s\nfsck_failures=%s\n' \
     "${STARTED_AT}" "${COMPLETED_AT}" "${successful}" "${validated}" \
     "${fsck_failures}" > "${BATCH_DIR}/completed.env"
-"${SCRIPT_DIR}/analyze_europar25_mcsgc_nowait_matrix.py" \
-    "${BATCH_DIR}" --baseline-batch "${BASELINE_BATCH}"
+if [ "${RUN_PROFILE}" = paper-waf ]; then
+    "${SCRIPT_DIR}/analyze_europar25_nowait_paper_waf.py" \
+        "${BATCH_DIR}" --baseline-batch "${BASELINE_BATCH}"
+else
+    "${SCRIPT_DIR}/analyze_europar25_mcsgc_nowait_matrix.py" \
+        "${BATCH_DIR}" --baseline-batch "${BASELINE_BATCH}"
+fi
 write_state success
 stop_sudo_keepalive
 trap - EXIT

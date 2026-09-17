@@ -136,8 +136,9 @@ def parse_case(row: Dict[str, str]) -> Dict[str, object]:
     if stat_path.exists():
         stat = read_text(stat_path)
         basic_stats = last_match(r"openssd_perf:.*?basic_stats=(\d+)", stat)
+        paper_waf_stats = last_match(r"paper_waf_stats:\s*enabled=(\d+)", stat)
         waf = last_match(r"physical WAF:\s+(\d+)", stat)
-        if basic_stats != "0" and waf is not None:
+        if (basic_stats != "0" or paper_waf_stats == "1") and waf is not None:
             metrics["waf"] = float(waf) / 1000.0
         stat_tag = "CSGC" if row["mode"] == "cs" else "ORIGC"
         migration = last_match(
