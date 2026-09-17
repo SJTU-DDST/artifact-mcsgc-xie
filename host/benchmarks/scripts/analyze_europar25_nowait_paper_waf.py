@@ -171,6 +171,7 @@ def build_summary(
         for label, suffix in zip(labels, suffixes):
             runs = candidate[suffix]
             waf_values = [metric(run, "waf") for run in runs]
+            throughput_values = [metric(run, "throughput_ops_s") for run in runs]
             bandwidth_values = [metric(run, "bandwidth_mib_s") for run in runs]
             csgc_shares = [
                 100.0
@@ -194,6 +195,16 @@ def build_summary(
                     "nowait_waf_min": min(waf_values),
                     "nowait_waf_max": max(waf_values),
                     "nowait_over_original_csgc": mean_waf / csgc_waf,
+                    "nowait_throughput_ops_s_mean": statistics.fmean(
+                        throughput_values
+                    ),
+                    "nowait_throughput_ops_s_stdev": statistics.stdev(
+                        throughput_values
+                    )
+                    if len(throughput_values) > 1
+                    else 0.0,
+                    "nowait_throughput_ops_s_min": min(throughput_values),
+                    "nowait_throughput_ops_s_max": max(throughput_values),
                     "nowait_bandwidth_mib_s_mean": statistics.fmean(bandwidth_values),
                     "csgc_fraction_of_nand_percent_mean": statistics.fmean(csgc_shares),
                 }
@@ -209,6 +220,7 @@ def write_runs_csv(
         "case_id",
         "suffix",
         "output_path",
+        "throughput_ops_s",
         "bandwidth_mib_s",
         "host_normal_write_bytes",
         "nand_write_bytes",
@@ -350,6 +362,7 @@ physical WAF: 1498
         suffix: [
             {
                 "waf": 1.2 + repetition / 100,
+                "throughput_ops_s": 6400.0 + repetition,
                 "bandwidth_mib_s": 400.0 + repetition,
                 "nand_cs_write_bytes": 250,
                 "nand_write_bytes": 1250,

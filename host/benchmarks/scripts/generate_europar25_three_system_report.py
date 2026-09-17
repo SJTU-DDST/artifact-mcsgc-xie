@@ -51,6 +51,14 @@ DEFAULT_PAPER_METRICS = Path(
     "/home/xin/artifact-csgc/host/benchmarks/scripts/"
     "outputs-europar25-nowait-paper-metrics/20260917_030310/analysis"
 )
+DEFAULT_SECTION16_METRICS = Path(
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/"
+    "outputs-europar25-nowait-section16-paper-metrics/20260918_025234/analysis"
+)
+DEFAULT_WAF_ANALYSIS = Path(
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/"
+    "outputs-europar25-nowait-paper-waf/20260917_220250/analysis-paper-waf"
+)
 DEFAULT_HISTORICAL_CSGC = Path(
     "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-cs"
 )
@@ -104,6 +112,59 @@ def load_json(path: Path) -> Dict[str, object]:
 def read_csv(path: Path) -> List[Dict[str, str]]:
     with path.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
+
+
+# Add measured NOWAIT WAF to the in-memory quiet-performance result set.
+def apply_nowait_waf(
+    combined: Dict[str, object], waf_rows: Sequence[Mapping[str, str]]
+) -> Dict[str, Mapping[str, str]]:
+    waf_by_suffix = {row["suffix"]: row for row in waf_rows}
+    expected = {
+        *(f"fio-util-{value}" for value in ("0.6", "0.7", "0.8", "0.9", "0.95")),
+        *(f"fio-section-{value}" for value in ("1", "2", "4", "8", "16")),
+        "fio-skew-uniform",
+        *(f"fio-skew-{value}" for value in ("0.3", "0.7", "0.9", "1.1")),
+    }
+    if set(waf_by_suffix) != expected:
+        raise ValueError(
+            f"NOWAIT WAF suffix mismatch: {sorted(set(waf_by_suffix) ^ expected)}"
+        )
+    systems = combined["systems"]
+    for suffix, row in waf_by_suffix.items():
+        systems["nowait-quiet"][suffix]["waf"] = float(row["nowait_waf_mean"])
+    return waf_by_suffix
+
+
+# Replace the invalid wide-section fallback point with corrected CSGC runs.
+def apply_corrected_section16(
+    combined: Dict[str, object], base_metrics_dir: Path, metrics_dir: Path
+) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
+    summary_rows = read_csv(metrics_dir / "section-metrics-summary.csv")
+    run_rows = read_csv(metrics_dir / "section-metrics-runs.csv")
+    selected_summary = [row for row in summary_rows if row["section_size"] == "16"]
+    selected_runs = [row for row in run_rows if row["section_size"] == "16"]
+    if len(selected_summary) != 1 or len(selected_runs) < 2:
+        raise ValueError("Corrected section-size-16 metrics are incomplete")
+    if any(int(row["csgc_blocks"]) <= 0 for row in selected_runs):
+        raise ValueError("Corrected section-size-16 run did not execute CSGC")
+    summary = selected_summary[0]
+    systems = combined["systems"]
+    repetitions = combined["nowait_repetitions"]
+    systems["nowait-quiet"]["fio-section-16"].update(
+        {
+            "sample_count": len(selected_runs),
+            "throughput_ops_s": float(summary["throughput_ops_s_mean"]),
+            "bandwidth_mib_s": statistics.fmean(
+                float(row["bandwidth_mib_s"]) for row in selected_runs
+            ),
+        }
+    )
+    repetitions["fio-section-16"] = [dict(row) for row in selected_runs]
+    base_rows = read_csv(base_metrics_dir / "section-metrics-summary.csv")
+    merged_rows = [row for row in base_rows if row["section_size"] != "16"]
+    merged_rows.append(summary)
+    merged_rows.sort(key=lambda row: int(row["section_size"]))
+    return merged_rows, summary
 
 
 # Write dictionaries with a stable field order.
@@ -385,10 +446,11 @@ def plot_full_nowait_timeline(
     save_figure(fig, output)
 
 
-# Draw one throughput/WAF sweep and preserve missing NOWAIT WAF as explicit N/A.
+# Draw one throughput/WAF sweep with low-overhead NOWAIT WAF measurements.
 def plot_sweep(
     systems: Mapping[str, Mapping[str, Mapping[str, object]]],
     repetitions: Mapping[str, Sequence[Mapping[str, object]]],
+    nowait_waf: Mapping[str, Mapping[str, str]],
     x_labels: Sequence[str],
     suffixes: Sequence[str],
     x_axis_label: str,
@@ -417,13 +479,20 @@ def plot_sweep(
         else:
             left.plot(x, throughput, **style)
         waf_values = [systems[system][suffix].get("waf") for suffix in suffixes]
-        right.plot(
-            x,
-            [float(value) if value is not None else math.nan for value in waf_values],
-            **style,
-        )
-        for label, suffix, value, error, waf in zip(
-            x_labels, suffixes, throughput, errors, waf_values
+        if system == "nowait-quiet":
+            waf_errors = [float(nowait_waf[suffix]["nowait_waf_stdev"]) for suffix in suffixes]
+            right.errorbar(
+                x,
+                [float(value) for value in waf_values],
+                yerr=waf_errors,
+                capsize=2.5,
+                **style,
+            )
+        else:
+            waf_errors = [0.0] * len(suffixes)
+            right.plot(x, [float(value) for value in waf_values], **style)
+        for label, suffix, value, error, waf, waf_error in zip(
+            x_labels, suffixes, throughput, errors, waf_values, waf_errors
         ):
             rows.append(
                 {
@@ -432,7 +501,8 @@ def plot_sweep(
                     "system": LABELS[system],
                     "throughput_kops": value,
                     "throughput_stddev_kops": error,
-                    "physical_waf": "" if waf is None else float(waf),
+                    "physical_waf": float(waf),
+                    "physical_waf_stddev": waf_error,
                 }
             )
     left.set_xticks(x, x_labels)
@@ -460,16 +530,6 @@ def plot_sweep(
         bbox_to_anchor=(0.5, 1.04),
         frameon=False,
         fontsize=8,
-    )
-    right.text(
-        0.98,
-        0.96,
-        "mCSGC WAF: N/A",
-        transform=right.transAxes,
-        ha="right",
-        va="top",
-        fontsize=8,
-        color=COLORS["nowait-quiet"],
     )
     save_figure(fig, output)
     return rows
@@ -510,6 +570,7 @@ def historical_ori_migration(path: Path) -> float:
 def plot_section_size(
     systems: Mapping[str, Mapping[str, Mapping[str, object]]],
     repetitions: Mapping[str, Sequence[Mapping[str, object]]],
+    nowait_waf: Mapping[str, Mapping[str, str]],
     section_metrics: Sequence[Mapping[str, str]],
     csgc_migration: Mapping[int, float],
     ori_s8_migration: float,
@@ -553,14 +614,6 @@ def plot_section_size(
         capsize=2.5,
         label=LABELS["nowait-quiet"],
     )
-    axes[0].annotate(
-        "ORI fallback",
-        xy=(4, nowait_migration[-1]),
-        xytext=(3.05, nowait_migration[-1] + 13),
-        fontsize=7,
-        arrowprops={"arrowstyle": "->", "linewidth": 0.6},
-    )
-
     for system in SYSTEMS:
         throughput = [metric(systems, system, suffix, "throughput_ops_s") / 1000 for suffix in suffixes]
         style = {
@@ -575,22 +628,15 @@ def plot_section_size(
             axes[1].errorbar(x, throughput, yerr=errors, capsize=2.5, **style)
         else:
             axes[1].plot(x, throughput, **style)
-        waf = [systems[system][suffix].get("waf") for suffix in suffixes]
-        axes[2].plot(
-            x,
-            [float(value) if value is not None else math.nan for value in waf],
-            **style,
-        )
-    axes[2].text(
-        0.98,
-        0.92,
-        "mCSGC WAF: N/A",
-        transform=axes[2].transAxes,
-        ha="right",
-        va="top",
-        fontsize=8,
-        color=COLORS["nowait-quiet"],
-    )
+        waf = [float(systems[system][suffix]["waf"]) for suffix in suffixes]
+        if system == "nowait-quiet":
+            waf_errors = [
+                float(nowait_waf[suffix]["nowait_waf_stdev"])
+                for suffix in suffixes
+            ]
+            axes[2].errorbar(x, waf, yerr=waf_errors, capsize=2.5, **style)
+        else:
+            axes[2].plot(x, waf, **style)
     ylabels = ("Migration latency (us)", "Throughput (kop/s)", "Write amplification")
     for index, (axis, ylabel) in enumerate(zip(axes, ylabels)):
         axis.set_xticks(x, [str(size) for size in sizes])
@@ -627,7 +673,10 @@ def plot_section_size(
                 / 1000,
                 "ori_physical_waf": systems["ori"][suffix].get("waf"),
                 "original_csgc_physical_waf": systems["original-csgc"][suffix].get("waf"),
-                "nowait_physical_waf": "",
+                "nowait_physical_waf": systems["nowait-quiet"][suffix].get("waf"),
+                "nowait_physical_waf_stddev": float(
+                    nowait_waf[suffix]["nowait_waf_stdev"]
+                ),
             }
         )
     return rows
@@ -818,7 +867,14 @@ def build_summary(
             / gc_index[(LABELS["ori"], "smallfile")]["mean_mib_s"],
         },
         "measurement_limits": {
-            "nowait_physical_waf": "not collected by the current quiet OpenSSD firmware",
+            "nowait_physical_waf": (
+                "measured separately with the low-overhead OpenSSD paper-WAF build; "
+                "throughput remains sourced from quiet runs except corrected section-size 16"
+            ),
+            "nowait_section16": (
+                "corrected CSGC point measured with low-overhead Host and OpenSSD metrics; "
+                "a formal quiet-build confirmation remains pending"
+            ),
             "strict_300s_baseline_timeline": "ORI and original CSGC are available for 60 seconds only",
             "ori_section_migration": "only the s=8 historical raw statistic is available",
             "original_csgc_section_migration": "historical paper-era raw logs, not the 2026 paired baseline",
@@ -834,6 +890,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--combined-json", type=Path, default=DEFAULT_COMBINED)
     parser.add_argument("--paper-metrics", type=Path, default=DEFAULT_PAPER_METRICS)
+    parser.add_argument(
+        "--section16-metrics", type=Path, default=DEFAULT_SECTION16_METRICS
+    )
+    parser.add_argument("--waf-analysis", type=Path, default=DEFAULT_WAF_ANALYSIS)
     parser.add_argument("--historical-csgc-root", type=Path, default=DEFAULT_HISTORICAL_CSGC)
     parser.add_argument("--historical-ori-stat", type=Path, default=DEFAULT_HISTORICAL_ORI_STAT)
     parser.add_argument(
@@ -846,6 +906,13 @@ def main() -> None:
     args = parser.parse_args()
 
     combined = load_json(args.combined_json.resolve())
+    paper_metrics = args.paper_metrics.resolve()
+    section16_metrics = args.section16_metrics.resolve()
+    waf_analysis = args.waf_analysis.resolve()
+    nowait_waf = apply_nowait_waf(combined, read_csv(waf_analysis / "waf-summary.csv"))
+    section_metrics, section16_summary = apply_corrected_section16(
+        combined, paper_metrics, section16_metrics
+    )
     systems = combined["systems"]
     repetitions = combined["nowait_repetitions"]
     output = args.output.resolve()
@@ -854,9 +921,8 @@ def main() -> None:
     figures.mkdir(parents=True, exist_ok=True)
     data.mkdir(parents=True, exist_ok=True)
 
-    section_metrics_path = args.paper_metrics / "section-metrics-summary.csv"
-    timeline_path = args.paper_metrics / "filebench-timeline-summary.csv"
-    section_metrics = read_csv(section_metrics_path)
+    section_metrics_path = paper_metrics / "section-metrics-summary.csv"
+    timeline_path = paper_metrics / "filebench-timeline-summary.csv"
     strict_timeline = read_csv(timeline_path)
     csgc_migration, csgc_migration_sources = historical_csgc_migration(
         args.historical_csgc_root.resolve()
@@ -877,6 +943,7 @@ def main() -> None:
     utilization_rows = plot_sweep(
         systems,
         repetitions,
+        nowait_waf,
         ("0.60", "0.70", "0.80", "0.90", "0.95"),
         tuple(f"fio-util-{value}" for value in ("0.6", "0.7", "0.8", "0.9", "0.95")),
         "Storage utilization",
@@ -885,6 +952,7 @@ def main() -> None:
     section_rows = plot_section_size(
         systems,
         repetitions,
+        nowait_waf,
         section_metrics,
         csgc_migration,
         ori_s8_migration,
@@ -893,6 +961,7 @@ def main() -> None:
     skew_rows = plot_sweep(
         systems,
         repetitions,
+        nowait_waf,
         ("uni.", "z/0.3", "z/0.7", "z/0.9", "z/1.1"),
         ("fio-skew-uniform", "fio-skew-0.3", "fio-skew-0.7", "fio-skew-0.9", "fio-skew-1.1"),
         "Write distribution",
@@ -925,6 +994,7 @@ def main() -> None:
             "throughput_kops",
             "throughput_stddev_kops",
             "physical_waf",
+            "physical_waf_stddev",
         ),
         utilization_rows,
     )
@@ -944,6 +1014,7 @@ def main() -> None:
             "ori_physical_waf",
             "original_csgc_physical_waf",
             "nowait_physical_waf",
+            "nowait_physical_waf_stddev",
         ),
         section_rows,
     )
@@ -956,6 +1027,7 @@ def main() -> None:
             "throughput_kops",
             "throughput_stddev_kops",
             "physical_waf",
+            "physical_waf_stddev",
         ),
         skew_rows,
     )
@@ -975,7 +1047,13 @@ def main() -> None:
     source_paths: Dict[str, object] = {
         "combined_results": str(args.combined_json.resolve()),
         "paper_metrics_section": str(section_metrics_path.resolve()),
+        "paper_metrics_section16_corrected": str(
+            (section16_metrics / "section-metrics-summary.csv").resolve()
+        ),
+        "paper_metrics_section16_summary": section16_summary,
         "paper_metrics_timeline": str(timeline_path.resolve()),
+        "paper_waf_summary": str((waf_analysis / "waf-summary.csv").resolve()),
+        "paper_waf_runs": str((waf_analysis / "waf-runs.csv").resolve()),
         "historical_csgc_migration": csgc_migration_sources,
         "historical_ori_s8_migration": str(args.historical_ori_stat.resolve()),
         "nowait_gc_heavy": [str(path.resolve()) for path in args.nowait_gc_heavy],
