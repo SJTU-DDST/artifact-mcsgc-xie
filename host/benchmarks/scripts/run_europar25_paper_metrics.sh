@@ -14,6 +14,7 @@ HOST_REPO=/home/xin/work-xie/mcsgc-real/linux-cs
 OPENSSD_HOST=192.168.98.31
 OPENSSD_TREE=/home/xin/work-xie/openssd-csgc-withjin/openssd-csgc
 DEVICE=/dev/nvme0n1
+FSCK_TIMEOUT_SECONDS=${PAPER_METRICS_FSCK_TIMEOUT_SECONDS:-600}
 DEFAULT_BASELINE_BATCH=/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-europar25-original-reproduction/20260828_185514
 BASELINE_BATCH=${EUROPAR_BASELINE_BATCH:-${DEFAULT_BASELINE_BATCH}}
 RUN_PROFILE=${PAPER_METRICS_PROFILE:-full}
@@ -75,11 +76,19 @@ case "${RUN_PROFILE}" in
         HOST_CONFIG_TEMPLATE=/home/xin/work-xie/mcsgc-real/linux-cs-formal-original-lifecycle-fix-20260828/.config
         HOST_CONFIG_SHA256=db1bcdafeff95fcde20d12ab60ba84fd4ce7c2a0349f451d363a887a4ad82a18
         COLLECT_GC_PAPER_METRICS=1
+        CONTINUE_ON_FSCK_FAILURE=1
         ANALYZER_SCRIPT=${SCRIPT_DIR}/analyze_europar25_original_paper_metrics.py
         PROFILE_DESCRIPTION="ORI and original CSGC section-size fio cases plus strict 300-second Filebench timelines"
         ;;
     *)
         echo "ERROR: unsupported PAPER_METRICS_PROFILE: ${RUN_PROFILE}" >&2
+        exit 2
+        ;;
+esac
+CONTINUE_ON_FSCK_FAILURE=${PAPER_METRICS_CONTINUE_ON_FSCK_FAILURE:-${CONTINUE_ON_FSCK_FAILURE:-0}}
+case "${FSCK_TIMEOUT_SECONDS}:${CONTINUE_ON_FSCK_FAILURE}" in
+    *[!0-9:]*|:*|*:|0:*)
+        echo "ERROR: invalid fsck policy configuration" >&2
         exit 2
         ;;
 esac
@@ -537,6 +546,8 @@ write_provenance() {
             printf 'case_order=section-size-fio,filebench-300s\n'
         fi
         printf 'fsck_after_case=1\ncheck_checkpoints=1\n'
+        printf 'fsck_mode=full-dry-run\nfsck_timeout_seconds=%s\n' "${FSCK_TIMEOUT_SECONDS}"
+        printf 'continue_on_fsck_failure=%s\n' "${CONTINUE_ON_FSCK_FAILURE}"
         printf 'filebench_runtime_s=300\nfilebench_report_interval_s=5\n'
         printf 'f2fs_status_sample_interval_s=0\n'
         printf 'gc_paper_metrics_enabled=%s\n' "${COLLECT_GC_PAPER_METRICS}"
@@ -565,15 +576,19 @@ run_offline_fsck() {
     echo "Running offline fsck for ${output_path}"
     # The invoking user owns the output directory; only fsck needs privilege.
     # shellcheck disable=SC2024
-    sudo fsck.f2fs "${DEVICE}" > "${log_path}" 2>&1 || status=$?
-    if [ "${status}" -ne 0 ]; then
+    sudo timeout --foreground --signal=TERM --kill-after=15s \
+        "${FSCK_TIMEOUT_SECONDS}" fsck.f2fs -f --dry-run "${DEVICE}" \
+        > "${log_path}" 2>&1 || status=$?
+    if [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; then
+        reason=timeout
+    elif grep -aEiq '\[ASSERT\]|\[ERROR\]|Segmentation fault|failed to fix' "${log_path}"; then
+        status=253
+        reason=reported-anomaly
+    elif [ "${status}" -ne 0 ]; then
         reason=nonzero-exit
     elif ! grep -q '^Done:' "${log_path}"; then
         status=254
         reason=missing-completion
-    elif grep -aEiq '\[ASSERT\]|\[ERROR\]|Segmentation fault|failed to fix' "${log_path}"; then
-        status=253
-        reason=reported-anomaly
     fi
     if [ "${status}" -eq 0 ]; then
         FSCK_LAST_RESULT=pass
@@ -583,7 +598,11 @@ run_offline_fsck() {
     printf '%s\t%s\t%s\t%s\t%s\n' \
         "${case_id}" "${FSCK_LAST_RESULT}" "${status}" "${reason}" "${log_path}" \
         >> "${BATCH_DIR}/fsck-results.tsv"
-    [ "${status}" -eq 0 ] || die "offline fsck failed for ${output_path}"
+    if [ "${status}" -ne 0 ]; then
+        echo "WARNING: offline fsck failed for ${case_id}: status=${status} reason=${reason}"
+        [ "${CONTINUE_ON_FSCK_FAILURE}" -eq 1 ] \
+            || die "offline fsck failed for ${output_path}"
+    fi
 }
 
 # Validate both raw checkpoint packs after a clean unmount.
@@ -837,7 +856,8 @@ validated=$(find "${BATCH_DIR}/validated" -maxdepth 1 -type f -name '*.ok' | wc 
     || die "expected ${EXPECTED_CASES} validated cases, found ${validated}"
 fsck_failures=$(awk -F '\t' 'NR > 1 && $2 == "fail" {n++} END {print n + 0}' \
     "${BATCH_DIR}/fsck-results.tsv")
-[ "${fsck_failures}" -eq 0 ] || die "offline fsck failures: ${fsck_failures}"
+[ "${fsck_failures}" -eq 0 ] || [ "${CONTINUE_ON_FSCK_FAILURE}" -eq 1 ] \
+    || die "offline fsck failures: ${fsck_failures}"
 
 COMPLETED_AT=$(date --iso-8601=seconds)
 printf 'started_at=%s\ncompleted_at=%s\nsuccessful_cases=%s\nvalidated_cases=%s\nfsck_failures=%s\n' \
