@@ -7,7 +7,6 @@ import argparse
 import csv
 import json
 import math
-import re
 import statistics
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -55,16 +54,17 @@ DEFAULT_SECTION16_METRICS = Path(
     "/home/xin/artifact-csgc/host/benchmarks/scripts/"
     "outputs-europar25-nowait-section16-paper-metrics/20260918_025234/analysis"
 )
+DEFAULT_SECTION16_QUIET = Path(
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/"
+    "outputs-europar25-nowait-section16-quiet/20260918_125938/analysis"
+)
+DEFAULT_ORIGINAL_METRICS = Path(
+    "/home/xin/artifact-csgc/host/benchmarks/scripts/"
+    "outputs-europar25-original-paper-metrics/20260918_161447/analysis"
+)
 DEFAULT_WAF_ANALYSIS = Path(
     "/home/xin/artifact-csgc/host/benchmarks/scripts/"
     "outputs-europar25-nowait-paper-waf/20260917_220250/analysis-paper-waf"
-)
-DEFAULT_HISTORICAL_CSGC = Path(
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-cs"
-)
-DEFAULT_HISTORICAL_ORI_STAT = Path(
-    "/home/xin/artifact-csgc/host/benchmarks/scripts/outputs-ori/"
-    "20250512_162204/fio_randwrite_s8_0.86_random/stat.log"
 )
 DEFAULT_NOWAIT_GC_HEAVY = (
     Path(
@@ -135,9 +135,12 @@ def apply_nowait_waf(
     return waf_by_suffix
 
 
-# Replace the invalid wide-section fallback point with corrected CSGC runs.
+# Replace the invalid wide-section fallback point with formal quiet throughput.
 def apply_corrected_section16(
-    combined: Dict[str, object], base_metrics_dir: Path, metrics_dir: Path
+    combined: Dict[str, object],
+    base_metrics_dir: Path,
+    metrics_dir: Path,
+    quiet_dir: Path,
 ) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
     summary_rows = read_csv(metrics_dir / "section-metrics-summary.csv")
     run_rows = read_csv(metrics_dir / "section-metrics-runs.csv")
@@ -148,23 +151,87 @@ def apply_corrected_section16(
     if any(int(row["csgc_blocks"]) <= 0 for row in selected_runs):
         raise ValueError("Corrected section-size-16 run did not execute CSGC")
     summary = selected_summary[0]
+    quiet_summary = load_json(quiet_dir / "section16-quiet-summary.json")
+    quiet_runs = read_csv(quiet_dir / "section16-quiet-runs.csv")
+    if len(quiet_runs) != 3:
+        raise ValueError("Corrected section-size-16 quiet runs are incomplete")
+
     systems = combined["systems"]
     repetitions = combined["nowait_repetitions"]
     systems["nowait-quiet"]["fio-section-16"].update(
         {
-            "sample_count": len(selected_runs),
-            "throughput_ops_s": float(summary["throughput_ops_s_mean"]),
-            "bandwidth_mib_s": statistics.fmean(
-                float(row["bandwidth_mib_s"]) for row in selected_runs
-            ),
+            "sample_count": len(quiet_runs),
+            "throughput_ops_s": float(quiet_summary["throughput_ops_s_mean"]),
+            "bandwidth_mib_s": statistics.fmean(float(row["bandwidth_mib_s"]) for row in quiet_runs),
         }
     )
-    repetitions["fio-section-16"] = [dict(row) for row in selected_runs]
+    repetitions["fio-section-16"] = [dict(row) for row in quiet_runs]
     base_rows = read_csv(base_metrics_dir / "section-metrics-summary.csv")
     merged_rows = [row for row in base_rows if row["section_size"] != "16"]
     merged_rows.append(summary)
     merged_rows.sort(key=lambda row: int(row["section_size"]))
     return merged_rows, summary
+
+
+# Index the matched ORI and original-CSGC migration summaries by system and size.
+def load_original_migration(
+    metrics_dir: Path,
+) -> Dict[str, Dict[int, Dict[str, float]]]:
+    indexed: Dict[str, Dict[int, Dict[str, float]]] = {
+        "ori": {},
+        "original-csgc": {},
+    }
+    mode_to_system = {"ori": "ori", "cs": "original-csgc"}
+    for row in read_csv(metrics_dir / "section-metrics-summary.csv"):
+        system = mode_to_system.get(row["mode"])
+        if system is None:
+            continue
+        size = int(row["section_size"])
+        indexed[system][size] = {
+            "mean": float(row["migration_us_mean"]),
+            "stddev": float(row["migration_us_std"]),
+        }
+    expected = {1, 2, 4, 8, 16}
+    for system, values in indexed.items():
+        if set(values) != expected:
+            raise ValueError(f"Incomplete {system} migration series: {sorted(values)}")
+    return indexed
+
+
+# Merge strict 300-second Filebench summaries from the three metric builds.
+def load_strict_timelines(
+    original_metrics_dir: Path, nowait_metrics_dir: Path
+) -> Dict[str, List[Dict[str, float]]]:
+    timelines: Dict[str, List[Dict[str, float]]] = {
+        "ori": [],
+        "original-csgc": [],
+        "nowait-quiet": [],
+    }
+    mode_to_system = {"ori": "ori", "cs": "original-csgc"}
+    for row in read_csv(original_metrics_dir / "filebench-timeline-summary.csv"):
+        system = mode_to_system.get(row["mode"])
+        if system is None:
+            continue
+        timelines[system].append(
+            {
+                "elapsed_s": float(row["elapsed_s"]),
+                "mean": float(row["throughput_ops_s_mean"]),
+                "stddev": float(row["throughput_ops_s_std"]),
+            }
+        )
+    for row in read_csv(nowait_metrics_dir / "filebench-timeline-summary.csv"):
+        timelines["nowait-quiet"].append(
+            {
+                "elapsed_s": float(row["elapsed_s"]),
+                "mean": float(row["throughput_ops_s_mean"]),
+                "stddev": float(row["throughput_ops_s_std"]),
+            }
+        )
+    for system, rows in timelines.items():
+        rows.sort(key=lambda row: row["elapsed_s"])
+        if len(rows) != 60:
+            raise ValueError(f"Expected 60 timeline samples for {system}, found {len(rows)}")
+    return timelines
 
 
 # Write dictionaries with a stable field order.
@@ -291,77 +358,49 @@ def plot_overall(
     return rows
 
 
-# Normalize an original timeline so each 5-second interval ends at 5, 10, ... seconds.
-def normalize_legacy_timeline(timeline: Sequence[Sequence[float]]) -> List[Tuple[float, float]]:
-    if not timeline:
-        return []
-    origin = float(timeline[0][0])
-    return [
-        (float(stamp) - origin + 5.0, float(value) / 1000.0)
-        for stamp, value in timeline
-    ]
-
-
-# Draw the common 60-second fileserver window and YCSB-A latency panel.
+# Draw the strict 300-second fileserver window and YCSB-A latency panel.
 def plot_timeline_and_latency(
     systems: Mapping[str, Mapping[str, Mapping[str, object]]],
     repetitions: Mapping[str, Sequence[Mapping[str, object]]],
-    strict_timeline: Sequence[Mapping[str, str]],
+    strict_timelines: Mapping[str, Sequence[Mapping[str, float]]],
     output: Path,
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
     fig, (left, right) = plt.subplots(1, 2, figsize=(10.0, 2.8))
     timeline_rows: List[Dict[str, object]] = []
-    for system in ("ori", "original-csgc"):
-        timeline = normalize_legacy_timeline(
-            systems[system]["filebench-period"].get("timeline") or []
-        )
-        for elapsed, throughput in timeline:
+    for system in SYSTEMS:
+        timeline = strict_timelines[system]
+        elapsed = [float(row["elapsed_s"]) for row in timeline]
+        throughput = [float(row["mean"]) / 1000 for row in timeline]
+        stddev = [float(row["stddev"]) / 1000 for row in timeline]
+        for stamp, value, error in zip(elapsed, throughput, stddev):
             timeline_rows.append(
                 {
-                    "elapsed_s": elapsed,
+                    "elapsed_s": stamp,
                     "system": LABELS[system],
-                    "throughput_kops": throughput,
-                    "sample_stddev_kops": 0.0,
-                    "window": "legacy-60s",
+                    "throughput_kops": value,
+                    "sample_stddev_kops": error,
+                    "window": "strict-300s",
                 }
             )
         left.plot(
-            [item[0] for item in timeline],
-            [item[1] for item in timeline],
+            elapsed,
+            throughput,
             color=COLORS[system],
             marker=MARKERS[system],
+            markevery=6,
             label=LABELS[system],
         )
-
-    strict_points = [
-        (
-            float(row["elapsed_s"]),
-            float(row["throughput_ops_s_mean"]) / 1000,
-            float(row["throughput_ops_s_std"]) / 1000,
+        lower = [max(0.0, value - error) for value, error in zip(throughput, stddev)]
+        upper = [value + error for value, error in zip(throughput, stddev)]
+        left.fill_between(
+            elapsed,
+            lower,
+            upper,
+            color=COLORS[system],
+            alpha=0.10,
+            linewidth=0,
         )
-        for row in strict_timeline
-    ]
-    common_points = [point for point in strict_points if point[0] <= 60.1]
-    left.errorbar(
-        [point[0] for point in common_points],
-        [point[1] for point in common_points],
-        yerr=[point[2] for point in common_points],
-        color=COLORS["nowait-quiet"],
-        marker=MARKERS["nowait-quiet"],
-        capsize=2,
-        label=LABELS["nowait-quiet"],
-    )
-    for elapsed, throughput, error in strict_points:
-        timeline_rows.append(
-            {
-                "elapsed_s": elapsed,
-                "system": LABELS["nowait-quiet"],
-                "throughput_kops": throughput,
-                "sample_stddev_kops": error,
-                "window": "strict-300s",
-            }
-        )
-    left.set_xlim(0, 62)
+    left.set_xlim(0, 305)
     left.set_ylim(bottom=0)
     left.set_xlabel("Time (s)\n(a)")
     left.set_ylabel("Throughput (kop/s)")
@@ -418,25 +457,28 @@ def plot_timeline_and_latency(
     return timeline_rows, latency_rows
 
 
-# Draw the complete 300-second NOWAIT fileserver trace as a supplementary figure.
-def plot_full_nowait_timeline(
-    strict_timeline: Sequence[Mapping[str, str]], output: Path
+# Draw the complete three-system 300-second fileserver trace.
+def plot_strict_timeline(
+    strict_timelines: Mapping[str, Sequence[Mapping[str, float]]], output: Path
 ) -> None:
-    elapsed = [float(row["elapsed_s"]) for row in strict_timeline]
-    mean = [float(row["throughput_ops_s_mean"]) / 1000 for row in strict_timeline]
-    stddev = [float(row["throughput_ops_s_std"]) / 1000 for row in strict_timeline]
-    lower = [max(0.0, value - error) for value, error in zip(mean, stddev)]
-    upper = [value + error for value, error in zip(mean, stddev)]
     fig, ax = plt.subplots(figsize=(6.0, 2.6))
-    ax.plot(
-        elapsed,
-        mean,
-        color=COLORS["nowait-quiet"],
-        marker=MARKERS["nowait-quiet"],
-        markersize=3.0,
-        label=LABELS["nowait-quiet"],
-    )
-    ax.fill_between(elapsed, lower, upper, color=COLORS["nowait-quiet"], alpha=0.18)
+    for system in SYSTEMS:
+        rows = strict_timelines[system]
+        elapsed = [float(row["elapsed_s"]) for row in rows]
+        mean = [float(row["mean"]) / 1000 for row in rows]
+        stddev = [float(row["stddev"]) / 1000 for row in rows]
+        lower = [max(0.0, value - error) for value, error in zip(mean, stddev)]
+        upper = [value + error for value, error in zip(mean, stddev)]
+        ax.plot(
+            elapsed,
+            mean,
+            color=COLORS[system],
+            marker=MARKERS[system],
+            markersize=3.0,
+            markevery=6,
+            label=LABELS[system],
+        )
+        ax.fill_between(elapsed, lower, upper, color=COLORS[system], alpha=0.10)
     ax.set_xlim(0, 305)
     ax.set_ylim(bottom=0)
     ax.set_xlabel("Time (s)")
@@ -535,45 +577,13 @@ def plot_sweep(
     return rows
 
 
-# Extract the last paper-era CSGC migration statistic for each section size.
-def historical_csgc_migration(root: Path) -> Tuple[Dict[int, float], Dict[int, str]]:
-    values: Dict[int, Tuple[str, float, str]] = {}
-    pattern = re.compile(r"<CSGC STAT>.*block migration:\s+(\d+)\s+ns")
-    date_pattern = re.compile(r"/(\d{8}_\d{6})/")
-    for size in (1, 2, 4, 8, 16):
-        for path in root.glob(f"*/fio_randwrite_s{size}_0.86_random/stat.log"):
-            match = pattern.search(path.read_text(encoding="utf-8", errors="ignore"))
-            if not match:
-                continue
-            date_match = date_pattern.search(str(path))
-            stamp = date_match.group(1) if date_match else ""
-            value = float(match.group(1)) / 1000.0
-            previous = values.get(size)
-            if previous is None or stamp > previous[0]:
-                values[size] = (stamp, value, str(path))
-    return (
-        {size: item[1] for size, item in values.items()},
-        {size: item[2] for size, item in values.items()},
-    )
-
-
-# Extract one legacy ORI block-migration statistic from a selected raw log.
-def historical_ori_migration(path: Path) -> float:
-    pattern = re.compile(r"<ORIGC STAT>.*block migration:\s+(\d+)\s+ns")
-    match = pattern.search(path.read_text(encoding="utf-8", errors="ignore"))
-    if not match:
-        raise ValueError(f"Missing ORIGC migration statistic in {path}")
-    return float(match.group(1)) / 1000.0
-
-
-# Draw section-size sensitivity, including provenance-aware migration latency.
+# Draw section-size sensitivity using complete low-overhead migration series.
 def plot_section_size(
     systems: Mapping[str, Mapping[str, Mapping[str, object]]],
     repetitions: Mapping[str, Sequence[Mapping[str, object]]],
     nowait_waf: Mapping[str, Mapping[str, str]],
     section_metrics: Sequence[Mapping[str, str]],
-    csgc_migration: Mapping[int, float],
-    ori_s8_migration: float,
+    original_migration: Mapping[str, Mapping[int, Mapping[str, float]]],
     output: Path,
 ) -> List[Dict[str, object]]:
     sizes = (1, 2, 4, 8, 16)
@@ -582,25 +592,18 @@ def plot_section_size(
     nowait_by_size = {int(row["section_size"]): row for row in section_metrics}
     fig, axes = plt.subplots(1, 3, figsize=(9.5, 2.6))
 
-    axes[0].plot(
-        x,
-        [csgc_migration.get(size, math.nan) for size in sizes],
-        color=COLORS["original-csgc"],
-        marker=MARKERS["original-csgc"],
-        markeredgecolor="black",
-        markeredgewidth=0.4,
-        label=LABELS["original-csgc"],
-    )
-    axes[0].plot(
-        x,
-        [ori_s8_migration if size == 8 else math.nan for size in sizes],
-        color=COLORS["ori"],
-        marker=MARKERS["ori"],
-        markeredgecolor="black",
-        markeredgewidth=0.4,
-        linestyle="none",
-        label=f"{LABELS['ori']} (s=8 only)",
-    )
+    for system in ("ori", "original-csgc"):
+        axes[0].errorbar(
+            x,
+            [original_migration[system][size]["mean"] for size in sizes],
+            yerr=[original_migration[system][size]["stddev"] for size in sizes],
+            color=COLORS[system],
+            marker=MARKERS[system],
+            markeredgecolor="black",
+            markeredgewidth=0.4,
+            capsize=2.5,
+            label=LABELS[system],
+        )
     nowait_migration = [float(nowait_by_size[size]["migration_us_mean"]) for size in sizes]
     nowait_migration_error = [float(nowait_by_size[size]["migration_us_std"]) for size in sizes]
     axes[0].errorbar(
@@ -653,8 +656,10 @@ def plot_section_size(
         rows.append(
             {
                 "section_size": size,
-                "ori_migration_us": ori_s8_migration if size == 8 else "",
-                "original_csgc_migration_us": csgc_migration.get(size, ""),
+                "ori_migration_us": original_migration["ori"][size]["mean"],
+                "ori_migration_stddev_us": original_migration["ori"][size]["stddev"],
+                "original_csgc_migration_us": original_migration["original-csgc"][size]["mean"],
+                "original_csgc_migration_stddev_us": original_migration["original-csgc"][size]["stddev"],
                 "nowait_migration_us": float(nowait_row["migration_us_mean"]),
                 "nowait_migration_stddev_us": float(nowait_row["migration_us_std"]),
                 "nowait_gc_path": nowait_row["gc_paths"],
@@ -805,7 +810,7 @@ def plot_gc_heavy(
 # Build a machine-readable summary for the bilingual narrative reports.
 def build_summary(
     combined: Mapping[str, object],
-    strict_timeline: Sequence[Mapping[str, str]],
+    strict_timelines: Mapping[str, Sequence[Mapping[str, float]]],
     section_rows: Sequence[Mapping[str, object]],
     gc_heavy_rows: Sequence[Mapping[str, object]],
     source_paths: Mapping[str, object],
@@ -833,7 +838,16 @@ def build_summary(
                 "nowait_vs_ori": nowait / ori,
             }
         )
-    strict_values = [float(row["throughput_ops_s_mean"]) for row in strict_timeline]
+    timeline_summary: Dict[str, Dict[str, float]] = {}
+    for system, rows in strict_timelines.items():
+        values = [float(row["mean"]) for row in rows]
+        timeline_summary[system] = {
+            "sample_count": float(len(values)),
+            "interval_s": 5.0,
+            "mean_kops": statistics.fmean(values) / 1000,
+            "minimum_kops": min(values) / 1000,
+            "maximum_kops": max(values) / 1000,
+        }
     gc_index = {
         (row["system"], row["workload"]): row for row in gc_heavy_rows
     }
@@ -841,13 +855,7 @@ def build_summary(
         "headline": headline,
         "headline_geomean_nowait_vs_original_csgc": geometric_mean(ratios_original),
         "headline_geomean_nowait_vs_ori": geometric_mean(ratios_ori),
-        "strict_fileserver_300s": {
-            "sample_count": len(strict_values),
-            "interval_s": 5,
-            "mean_kops": statistics.fmean(strict_values) / 1000,
-            "minimum_kops": min(strict_values) / 1000,
-            "maximum_kops": max(strict_values) / 1000,
-        },
+        "strict_fileserver_300s": timeline_summary,
         "section_size": list(section_rows),
         "gc_heavy": list(gc_heavy_rows),
         "gc_heavy_key_ratios": {
@@ -869,15 +877,19 @@ def build_summary(
         "measurement_limits": {
             "nowait_physical_waf": (
                 "measured separately with the low-overhead OpenSSD paper-WAF build; "
-                "throughput remains sourced from quiet runs except corrected section-size 16"
+                "all formal throughput remains sourced from quiet runs"
             ),
             "nowait_section16": (
-                "corrected CSGC point measured with low-overhead Host and OpenSSD metrics; "
-                "a formal quiet-build confirmation remains pending"
+                "formal throughput is the corrected three-run quiet result; migration latency "
+                "is measured separately with the low-overhead paper-metrics build"
             ),
-            "strict_300s_baseline_timeline": "ORI and original CSGC are available for 60 seconds only",
-            "ori_section_migration": "only the s=8 historical raw statistic is available",
-            "original_csgc_section_migration": "historical paper-era raw logs, not the 2026 paired baseline",
+            "strict_300s_timeline": (
+                "all three systems have three-run 300-second traces from low-overhead metrics builds"
+            ),
+            "section_migration": (
+                "all three systems have complete three-run section-size series; ORI/original CSGC "
+                "and NOWAIT were collected in separate firmware phases"
+            ),
             "iplfs": "not evaluated in the current three-system study",
         },
         "sources": source_paths,
@@ -893,9 +905,9 @@ def main() -> None:
     parser.add_argument(
         "--section16-metrics", type=Path, default=DEFAULT_SECTION16_METRICS
     )
+    parser.add_argument("--section16-quiet", type=Path, default=DEFAULT_SECTION16_QUIET)
+    parser.add_argument("--original-metrics", type=Path, default=DEFAULT_ORIGINAL_METRICS)
     parser.add_argument("--waf-analysis", type=Path, default=DEFAULT_WAF_ANALYSIS)
-    parser.add_argument("--historical-csgc-root", type=Path, default=DEFAULT_HISTORICAL_CSGC)
-    parser.add_argument("--historical-ori-stat", type=Path, default=DEFAULT_HISTORICAL_ORI_STAT)
     parser.add_argument(
         "--nowait-gc-heavy", type=Path, nargs="+", default=list(DEFAULT_NOWAIT_GC_HEAVY)
     )
@@ -908,10 +920,12 @@ def main() -> None:
     combined = load_json(args.combined_json.resolve())
     paper_metrics = args.paper_metrics.resolve()
     section16_metrics = args.section16_metrics.resolve()
+    section16_quiet = args.section16_quiet.resolve()
+    original_metrics = args.original_metrics.resolve()
     waf_analysis = args.waf_analysis.resolve()
     nowait_waf = apply_nowait_waf(combined, read_csv(waf_analysis / "waf-summary.csv"))
     section_metrics, section16_summary = apply_corrected_section16(
-        combined, paper_metrics, section16_metrics
+        combined, paper_metrics, section16_metrics, section16_quiet
     )
     systems = combined["systems"]
     repetitions = combined["nowait_repetitions"]
@@ -923,23 +937,19 @@ def main() -> None:
 
     section_metrics_path = paper_metrics / "section-metrics-summary.csv"
     timeline_path = paper_metrics / "filebench-timeline-summary.csv"
-    strict_timeline = read_csv(timeline_path)
-    csgc_migration, csgc_migration_sources = historical_csgc_migration(
-        args.historical_csgc_root.resolve()
-    )
-    ori_s8_migration = historical_ori_migration(args.historical_ori_stat.resolve())
-    if set(csgc_migration) != {1, 2, 4, 8, 16}:
-        raise ValueError(f"Incomplete historical CSGC migration series: {csgc_migration}")
+    original_timeline_path = original_metrics / "filebench-timeline-summary.csv"
+    strict_timelines = load_strict_timelines(original_metrics, paper_metrics)
+    original_migration = load_original_migration(original_metrics)
 
     configure_plot_style()
     overall_rows = plot_overall(systems, repetitions, figures / "figure4_performance_overview")
     timeline_rows, latency_rows = plot_timeline_and_latency(
         systems,
         repetitions,
-        strict_timeline,
+        strict_timelines,
         figures / "figure5_timeline_and_latency",
     )
-    plot_full_nowait_timeline(strict_timeline, figures / "figure5a_nowait_strict_300s")
+    plot_strict_timeline(strict_timelines, figures / "figure5a_strict_300s")
     utilization_rows = plot_sweep(
         systems,
         repetitions,
@@ -954,8 +964,7 @@ def main() -> None:
         repetitions,
         nowait_waf,
         section_metrics,
-        csgc_migration,
-        ori_s8_migration,
+        original_migration,
         figures / "figure7_section_size",
     )
     skew_rows = plot_sweep(
@@ -1003,7 +1012,9 @@ def main() -> None:
         (
             "section_size",
             "ori_migration_us",
+            "ori_migration_stddev_us",
             "original_csgc_migration_us",
+            "original_csgc_migration_stddev_us",
             "nowait_migration_us",
             "nowait_migration_stddev_us",
             "nowait_gc_path",
@@ -1051,16 +1062,21 @@ def main() -> None:
             (section16_metrics / "section-metrics-summary.csv").resolve()
         ),
         "paper_metrics_section16_summary": section16_summary,
-        "paper_metrics_timeline": str(timeline_path.resolve()),
+        "section16_quiet_summary": str(
+            (section16_quiet / "section16-quiet-summary.json").resolve()
+        ),
+        "nowait_paper_metrics_timeline": str(timeline_path.resolve()),
+        "original_paper_metrics_section": str(
+            (original_metrics / "section-metrics-summary.csv").resolve()
+        ),
+        "original_paper_metrics_timeline": str(original_timeline_path.resolve()),
         "paper_waf_summary": str((waf_analysis / "waf-summary.csv").resolve()),
         "paper_waf_runs": str((waf_analysis / "waf-runs.csv").resolve()),
-        "historical_csgc_migration": csgc_migration_sources,
-        "historical_ori_s8_migration": str(args.historical_ori_stat.resolve()),
         "nowait_gc_heavy": [str(path.resolve()) for path in args.nowait_gc_heavy],
         "original_gc_heavy": [str(path.resolve()) for path in args.original_gc_heavy],
     }
     summary = build_summary(
-        combined, strict_timeline, section_rows, gc_heavy_rows, source_paths
+        combined, strict_timelines, section_rows, gc_heavy_rows, source_paths
     )
     (data / "analysis-summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
