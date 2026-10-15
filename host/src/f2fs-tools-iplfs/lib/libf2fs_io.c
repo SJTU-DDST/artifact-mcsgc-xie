@@ -129,6 +129,11 @@ int dev_write(void *buf, __u64 offset, size_t len)
 {
 	int fd;
 
+	if (c.ro) {
+		errno = EROFS;
+		return -1;
+	}
+
 	if (c.sparse_mode)
 		return dev_write_sparse(buf, offset, len);
 
@@ -160,6 +165,11 @@ int dev_write_dump(void *buf, __u64 offset, size_t len)
 int dev_fill(void *buf, __u64 offset, size_t len)
 {
 	int fd;
+
+	if (c.ro) {
+		errno = EROFS;
+		return -1;
+	}
 
 	if (c.sparse_mode)
 		return 0;
@@ -216,7 +226,7 @@ void f2fs_finalize_device(void)
 	 * in the block device page cache.
 	 */
 	for (i = 0; i < c.ndevs; i++) {
-		if (fsync(c.devices[i].fd) < 0)
+		if (!c.ro && fsync(c.devices[i].fd) < 0)
 			MSG(0, "\tError: Could not conduct fsync!!!\n");
 
 		if (close(c.devices[i].fd) < 0)

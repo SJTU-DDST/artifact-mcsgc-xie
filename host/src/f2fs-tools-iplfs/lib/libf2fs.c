@@ -721,7 +721,7 @@ int get_device_info(int i)
 	if (c.sparse_mode) {
 		fd = open((char *)dev->path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0644);
 	} else {
-		fd = open((char *)dev->path, O_RDWR);
+		fd = open((char *)dev->path, c.ro ? O_RDONLY : O_RDWR);
 	}
 	if (fd < 0) {
 		MSG(0, "\tError: Failed to open the device!\n");

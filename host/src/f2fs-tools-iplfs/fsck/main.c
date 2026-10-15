@@ -28,6 +28,7 @@ void fsck_usage()
 	MSG(0, "  -a check/fix potential corruption, reported by f2fs\n");
 	MSG(0, "  -d debug level [default:0]\n");
 	MSG(0, "  -f check/fix entire partition\n");
+	MSG(0, "  -n read-only, non-interactive check; never repair\n");
 	MSG(0, "  -p preen mode [default:0 the same as -a [0|1]]\n");
 	MSG(0, "  -t show directory tree\n");
 	exit(1);
@@ -116,11 +117,14 @@ void f2fs_parse_options(int argc, char *argv[])
 	}
 
 	if (!strcmp("fsck.f2fs", prog)) {
-		const char *option_string = ":ad:fp:t";
+		const char *option_string = ":ad:fnp:t";
 
 		c.func = FSCK;
 		while ((option = getopt(argc, argv, option_string)) != EOF) {
 			switch (option) {
+			case 'n':
+				c.ro = 1;
+				break;
 			case 'a':
 				c.auto_fix = 1;
 				MSG(0, "Info: Fix the reported corruption.\n");
@@ -440,7 +444,8 @@ static void do_fsck(struct f2fs_sb_info *sbi)
 		 *     we set fix_on = 1 here, so that fsck can fix errors
 		 *     automatically
 		*/
-		c.fix_on = 1;
+		if (!c.ro)
+			c.fix_on = 1;
 	}
 
 	fsck_chk_orphan_node(sbi);
@@ -572,6 +577,10 @@ int main(int argc, char **argv)
 	f2fs_init_configuration();
 
 	f2fs_parse_options(argc, argv);
+	if (c.ro && (c.fix_on || c.auto_fix || c.preen_mode || c.sparse_mode)) {
+		MSG(0, "Error: read-only checking cannot be combined with repair modes\n");
+		return 2;
+	}
 
 	if (f2fs_devs_are_umounted() < 0) {
 		if (errno == EBUSY)
@@ -650,7 +659,7 @@ retry:
 	f2fs_finalize_device();
 
 	printf("\nDone.\n");
-	return 0;
+	return c.func == FSCK && c.ro && c.bug_on ? 1 : 0;
 
 out_err:
 	if (sbi->ckpt)

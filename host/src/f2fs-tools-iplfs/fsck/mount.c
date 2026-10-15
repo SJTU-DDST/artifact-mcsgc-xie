@@ -372,6 +372,11 @@ static inline int sanity_check_area_boundary(struct f2fs_super_block *sb,
 	} else if (main_end_blkaddr < seg_end_blkaddr) {
 		int err;
 
+		if (c.ro) {
+			MSG(0, "Error: Segment alignment requires repair; read-only check stopped\n");
+			return -1;
+		}
+
 		set_sb(segment_count, (main_end_blkaddr -
 				segment0_blkaddr) >> log_blocks_per_seg);
 
@@ -465,7 +470,7 @@ int validate_super_block(struct f2fs_sb_info *sbi, int block)
 		MSG(0, "Info: MKFS version\n  \"%s\"\n", c.init_version);
 		MSG(0, "Info: FSCK version\n  from \"%s\"\n    to \"%s\"\n",
 					c.sb_version, c.version);
-		if (memcmp(c.sb_version, c.version, VERSION_LEN)) {
+		if (!c.ro && memcmp(c.sb_version, c.version, VERSION_LEN)) {
 			int ret;
 
 			memcpy(sbi->raw_super->version,
@@ -2029,7 +2034,8 @@ void build_nat_area_bitmap(struct f2fs_sb_info *sbi)
 				 */
 				ASSERT_MSG("Invalid nat entry[0]: "
 					"blk_addr[0x%x]\n", ni.blk_addr);
-				c.fix_on = 1;
+				if (!c.ro)
+					c.fix_on = 1;
 				fsck->chk.valid_nat_entry_cnt--;
 			}
 

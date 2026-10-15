@@ -147,3 +147,61 @@
 - Filebench completed at `493.080 ops/s`; the early and late interval means were `1835.087` and `28.890 ops/s`. Sustained collapse began near 55 seconds while 65 complete free sections remained.
 - The common curseg repair prevented the earlier allocator/SIT corruption. There was no Oops, SIT warning, NVMe timeout, or residual mount, and sync eventually completed.
 - Teardown took `471.574` seconds and emitted three hung-sync reports. The runner now records a completed slow sync as a lifecycle warning when teardown reached `teardown_end` and the namespace is unmounted; unresolved waits and all correctness signatures remain fatal.
+
+## 2026-10-15 to 2026-10-16: Prepare the IPLFS paper matrix
+
+- Scope: preparation only. No namespace formatting, mounts, benchmark runs,
+  reboots, device admin commands, server31 operations, global installation or
+  system-configuration changes were performed.
+- Created this independent worktree on
+  `exp/taco-iplfs-evaluation-preparation-20261015`, based on artifact commit
+  `c9823728e67c8869644b2bba083790783a3469d2`. The original artifact worktree and
+  its existing modifications were preserved. Remote tracking was checked
+  before choosing the base; no divergent history was merged.
+- Audited the original artifact, saved F2FS/WeaveGC inputs, and pinned firmware
+  `463e8b0b13ad345ed99c2176b1f81ad34d3c986a`. Implemented the fixed 63-run matrix,
+  an eight-case short smoke suite, read-only readiness checks, exact command and
+  version provenance, bounded teardown, failure-stop behavior and offline
+  analysis. Workload generation preserves the original measurement boundaries.
+- Built the full IPLFS kernel and modules in a private source/output tree as
+  `5.11.0-iplfs-paper-20261016`; did not install them. The installed
+  `5.11.0-iplfs` configuration matches the original source configuration and its
+  F2FS srcversion matches this fresh build. Old whole-kernel build provenance
+  remains unknown. Installed image/module hashes are pinned locally.
+- Added a read-only, noninteractive `-n` mode to the private IPLFS fsck source.
+  Built private mkfs/fsck and file_writer; froze the other executable inputs.
+  Checked O_RDONLY behavior and unchanged contents on an invalid regular-file
+  fixture, never on the target namespace. Valid IPLFS fsck acceptance still
+  requires the future smoke test.
+- Found that the pinned firmware reads a complete 4-KiB DSM parameter page.
+  Added a dedicated, aligned-page DSM helper for the raw smoke test rather
+  than the generic single-range CLI's 16-byte mapping. The IPLFS kernel already
+  maps the full page; no kernel or firmware change was needed for this issue.
+- Implemented archive-first server31 synchronization and operator startup
+  receipts. Exercised archive preservation and link rejection only in local
+  fixtures; did not run the deployment utility on server31.
+- Confirmed existing integer WAF counters in firmware and historical IPLFS
+  logs. The matrix collects them during formal runs, without a new firmware
+  build or a separate 30-run WAF batch. Runtime validation remains pending.
+- Passed 18 offline tests, shell syntax, Python parsing and whitespace checks.
+  Build attempts, test fixtures and local configuration are retained under
+  ignored `iplfs-paper-preparation/`; failed/intermediate build directories were
+  not deleted. The final evidence directory is recorded in the paper guide.
+- Read-only preflight correctly blocks execution: current kernel is
+  `6.1.54-csgcmt-csgcmt`, ASLR is 2 rather than historical 0, and the firmware
+  startup receipt/UART path are not configured. No system settings were changed.
+- Added the operator README and updated the paper integration guide and handoff.
+  No new performance data, manuscript revision, staging, commit or push occurred
+  in this preparation task.
+
+### Authorized publication
+
+- The user subsequently authorized add, commit and push of the current work.
+  Fresh fetches found no divergence; the new experiment branch did not yet
+  exist on origin. Publication excludes private builds, generated results,
+  archives and modifications in other worktrees.
+- Recorded the user's explicit authorization to overwrite the dedicated
+  `/dev/nvme0n1` during this IPLFS evaluation. Deployment prerequisites remain;
+  no experiment or system-setting change is part of this publication task.
+- Commit and remote equality are verified after push. The earlier unpublished
+  statement describes the preparation stage, not the subsequent publication.
